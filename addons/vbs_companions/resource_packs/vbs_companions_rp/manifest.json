@@ -1,0 +1,39 @@
+{
+  "format_version": 2,
+  "header": {
+    "name": "VBS Companions §7[Resource]",
+    "description": "Model 3D, tekstur 1024x1024 dan animasi untuk kelima karakter.",
+    "uuid": "b5872873-2873-40c9-8d5b-424bc5592785",
+    "version": [
+      1,
+      0,
+      0
+    ],
+    "min_engine_version": [
+      1,
+      21,
+      0
+    ]
+  },
+  "modules": [
+    {
+      "type": "resources",
+      "uuid": "7306a655-02d7-42bb-9774-3656d90404da",
+      "version": [
+        1,
+        0,
+        0
+      ]
+    }
+  ],
+  "dependencies": [
+    {
+      "uuid": "e980994d-a9a6-469e-af1b-a31c3e9f7838",
+      "version": [
+        1,
+        0,
+        0
+      ]
+    }
+  ]
+}

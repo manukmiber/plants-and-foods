@@ -1,0 +1,44 @@
+{
+  "format_version": "1.10.0",
+  "minecraft:client_entity": {
+    "description": {
+      "identifier": "vbs:an",
+      "min_engine_version": "1.21.0",
+      "materials": {
+        "default": "entity_alphatest"
+      },
+      "textures": {
+        "default": "textures/entity/vbs_companions/an"
+      },
+      "geometry": {
+        "default": "geometry.vbs_companion.an"
+      },
+      "animations": {
+        "look_at_target": "animation.vbs_companion.look_at_target",
+        "idle": "animation.vbs_companion.idle",
+        "walk": "animation.vbs_companion.walk",
+        "hair": "animation.vbs_companion.hair",
+        "combat": "animation.vbs_companion.combat"
+      },
+      "scripts": {
+        "animate": [
+          "look_at_target",
+          "idle",
+          "walk",
+          "hair",
+          {
+            "combat": "query.is_angry"
+          }
+        ]
+      },
+      "render_controllers": [
+        "controller.render.vbs_companion"
+      ],
+      "spawn_egg": {
+        "texture": "vbs_spawn_egg_an",
+        "texture_index": 0
+      },
+      "enable_attachables": false
+    }
+  }
+}

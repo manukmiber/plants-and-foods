@@ -19,6 +19,7 @@ saves/<slot>/assets/*.png     the textures that model references
 preset/*.json                 the inbox — content waiting to be applied
 preset/applied/               presets already merged, kept for history
 exports/<tag>/                every artifact from one export, grouped by release tag
+addons/<name>/                a hand-written add-on, built outside the builder
 CHANGELOG.md                  one entry per Save and per Release
 ```
 
@@ -94,6 +95,18 @@ The format is documented in
 in the builder repo, and
 [`docs/AI_ASSIST.md`](https://github.com/manukmiber/Minecraft-web/blob/main/docs/AI_ASSIST.md)
 is the brief to hand an AI tool that is generating one.
+
+## Hand-written add-ons
+
+Not everything an add-on can do fits the builder's model. A preset describes blocks,
+items and crops; it has no way to say "a custom entity with a 3D model, an animation
+set and a Script API menu". Add-ons like that live in `addons/<name>/`, each one a
+self-contained pair of packs with its own README and its own build step, and the
+builder never reads or writes them.
+
+| Add-on | What it is |
+|---|---|
+| [`addons/vbs_companions/`](addons/vbs_companions/) | Five companion characters that follow you, farm, and fight — commanded from a UI that opens when you sneak and tap them. Bedrock only. |
 
 ## Connecting the builder to this repo
 

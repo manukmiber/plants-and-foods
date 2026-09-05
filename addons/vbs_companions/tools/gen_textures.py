@@ -514,6 +514,9 @@ def character_texture(ch):
                             depth=0.16, gradient=gradient)
 
     DETAILS[ch["id"]](px, ch, pal, rng, sizes)
+    # Perlengkapan role digambar penggambar yang sama dengan build detailed —
+    # topi jerami harus kelihatan identik di karakter mana pun yang memakainya.
+    detailed.paint_gear(px, pal, rng, sizes, prefix="")
     return img
 
 
@@ -583,6 +586,48 @@ def pack_icon(chars, size=256):
     return img
 
 
+
+# --- patok chunk ------------------------------------------------------------
+
+def marker_texture(claimed, size=32):
+    """Tekstur patok 32x32, memakai box-uv seperti model vanilla.
+
+    Dua warna, satu bentuk: merah untuk chunk yang belum dipakai bertani, hijau
+    untuk yang sudah dipatok. Warnanya dipilih render controller lewat
+    query.variant, jadi mengganti status patok tidak perlu mengganti entity.
+    """
+    img = Image.new("RGBA", (size, size), CLEAR)
+    px = img.load()
+    wood = (122, 88, 52, 255)
+    wood_d = (84, 58, 32, 255)
+    head = (58, 178, 74, 255) if claimed else (206, 62, 58, 255)
+    head_l = (110, 224, 122, 255) if claimed else (246, 118, 108, 255)
+    head_d = (28, 116, 42, 255) if claimed else (140, 30, 30, 255)
+    white = (240, 242, 246, 255)
+
+    def rect(x0, y0, x1, y1, c):
+        for y in range(max(0, y0), min(size, y1)):
+            for x in range(max(0, x0), min(size, x1)):
+                px[x, y] = c
+
+    # tiang: kotak uv (0,0) ukuran 2x14x2 -> memakai 8x16 texel
+    rect(0, 0, 8, 16, wood)
+    for y in range(0, 16, 3):                      # serat kayu
+        rect(0, y, 8, y + 1, wood_d)
+    rect(0, 0, 8, 2, wood_d)                       # tutup atas dan bawah
+
+    # kepala: kotak uv (0,18) ukuran 5x4x5 -> 20x9 texel
+    rect(0, 18, 20, 27, head)
+    rect(0, 18, 20, 23, head_l)                    # tutup atas lebih terang
+    rect(0, 25, 20, 26, head_d)
+
+    # bendera: kotak uv (0,27) ukuran 7x4x1 -> 16x5 texel
+    rect(0, 27, 16, 32, head)
+    rect(0, 29, 16, 30, white)
+    rect(14, 27, 16, 32, head_d)
+    return img
+
+
 def main():
     chars = model.load_characters()
     os.makedirs(ENT_DIR, exist_ok=True)
@@ -591,6 +636,9 @@ def main():
         character_texture(ch).save(os.path.join(ENT_DIR, f"{ch['id']}.png"))
         spawn_egg(ch).save(os.path.join(ITEM_DIR, f"vbs_spawn_egg_{ch['id']}.png"))
         print(f"  {ch['id']:8s} tekstur {TEX_W}x{TEX_H} + spawn egg 64x64")
+    marker_texture(False).save(os.path.join(ENT_DIR, "marker_free.png"))
+    marker_texture(True).save(os.path.join(ENT_DIR, "marker_claimed.png"))
+    print("  patok ladang: marker_free.png + marker_claimed.png 32x32")
     icon = pack_icon(chars)
     icon.save(os.path.join(RP, "pack_icon.png"))
     icon.save(os.path.join(BP, "pack_icon.png"))

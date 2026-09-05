@@ -1,0 +1,95 @@
+{
+  "format_version": "1.20.0",
+  "minecraft:entity": {
+    "description": {
+      "identifier": "vbs:marker",
+      "is_spawnable": false,
+      "is_summonable": true,
+      "is_experimental": false
+    },
+    "component_groups": {
+      "vbs:mark_free": {
+        "minecraft:variant": {
+          "value": 0
+        }
+      },
+      "vbs:mark_claimed": {
+        "minecraft:variant": {
+          "value": 1
+        }
+      }
+    },
+    "components": {
+      "minecraft:type_family": {
+        "family": [
+          "vbs_marker",
+          "inanimate"
+        ]
+      },
+      "minecraft:collision_box": {
+        "width": 0.4,
+        "height": 1.0
+      },
+      "minecraft:health": {
+        "value": 1,
+        "max": 1
+      },
+      "minecraft:physics": {
+        "has_gravity": false,
+        "has_collision": false
+      },
+      "minecraft:pushable": {
+        "is_pushable": false,
+        "is_pushable_by_piston": false
+      },
+      "minecraft:knockback_resistance": {
+        "value": 1.0
+      },
+      "minecraft:nameable": {
+        "always_show": true,
+        "allow_name_tag_renaming": false
+      },
+      "minecraft:damage_sensor": {
+        "triggers": [
+          {
+            "deals_damage": false
+          }
+        ]
+      },
+      "minecraft:conditional_bandwidth_optimization": {}
+    },
+    "events": {
+      "minecraft:entity_spawned": {
+        "add": {
+          "component_groups": [
+            "vbs:mark_free"
+          ]
+        }
+      },
+      "vbs:set_free": {
+        "remove": {
+          "component_groups": [
+            "vbs:mark_claimed"
+          ]
+        },
+        "add": {
+          "component_groups": [
+            "vbs:mark_free"
+          ]
+        }
+      },
+      "vbs:set_claimed": {
+        "remove": {
+          "component_groups": [
+            "vbs:mark_free"
+          ]
+        },
+        "add": {
+          "component_groups": [
+            "vbs:mark_claimed"
+          ]
+        }
+      }
+    }
+  }
+}

@@ -218,11 +218,20 @@ def face_bones(geo):
     return [b["name"] for b in geo["bones"] if b["name"].startswith("face_")]
 
 
-def hidden_faces(geo, show):
+# Perlengkapan role hidup di bone sendiri dan di gim disembunyikan
+# part_visibility. Preview harus melakukan hal yang sama, kalau tidak setiap
+# karakter digambar memakai topi jerami DAN helm DAN ransel sekaligus.
+GEAR_BONES = {"gear_hat": "hat", "gear_helm": "helm", "gear_lamp": "helm",
+              "gear_pack": "pack"}
+
+
+def hidden_faces(geo, show, gear=None):
     """Semua bone ekspresi kecuali satu — sisanya persis sebidang, jadi kalau
-    dibiarkan semuanya digambar dan z-buffer memilih sembarang."""
-    names = face_bones(geo)
-    return {n for n in names if n != f"face_{show}"}
+    dibiarkan semuanya digambar dan z-buffer memilih sembarang. Perlengkapan
+    role ikut disembunyikan kecuali yang diminta."""
+    hide = {n for n in face_bones(geo) if n != f"face_{show}"}
+    hide |= {bone for bone, role in GEAR_BONES.items() if role != gear}
+    return hide
 
 
 def view(geo, tex, yaw, pitch, w, h, scale, focus=None, hide=()):
@@ -287,6 +296,28 @@ def faces_sheet(char, geo, tex):
     return out
 
 
+def roles_sheet(chars, geos, texs):
+    """Satu karakter per perlengkapan role, untuk memeriksa topi/helm/ransel
+    duduk di tempat yang benar di kedua build."""
+    labels = [(None, "tanpa perlengkapan"), ("hat", "petani"),
+              ("helm", "penambang"), ("pack", "pengembara")]
+    w, h = VIEW_W * len(labels), VIEW_H + 42
+    out = backdrop(w, h)
+    d = ImageDraw.Draw(out)
+    for i, (gear, label) in enumerate(labels):
+        ch = chars[i % len(chars)]
+        geo = geos[ch["id"]]
+        vx = i * VIEW_W
+        add_shadow(out, vx + VIEW_W / 2, VIEW_H - 22, 54, 13)
+        out.alpha_composite(view(geo, texs[ch["id"]], 26, 6, VIEW_W, VIEW_H, SCALE,
+                                 hide=hidden_faces(geo, "smile", gear)), (vx, 0))
+        d.text((vx + VIEW_W / 2, VIEW_H + 10), f"{ch['name'].upper()} · {label}",
+               fill=accent_of(ch), font=font(15), anchor="ma")
+        if i:
+            d.line([(vx, 16), (vx, VIEW_H - 16)], fill=(255, 255, 255, 26))
+    return out
+
+
 def lineup(chars, geos, texs):
     w, h = VIEW_W * len(chars), VIEW_H + 42
     out = backdrop(w, h)
@@ -318,6 +349,9 @@ def main():
             path = os.path.join(OUT, f"{ch['id']}-faces.png")
             faces_sheet(ch, geos[ch["id"]], texs[ch["id"]]).save(path)
             print("  " + os.path.relpath(path, model.HERE))
+    path = os.path.join(OUT, "roles.png")
+    roles_sheet(chars, geos, texs).save(path)
+    print("  " + os.path.relpath(path, model.HERE))
     path = os.path.join(OUT, "lineup.png")
     lineup(chars, geos, texs).save(path)
     print("  " + os.path.relpath(path, model.HERE))

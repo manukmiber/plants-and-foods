@@ -1,9 +1,11 @@
-/** Pembantu kecil yang dipakai UI, otak companion, dan mode bertani. */
+/** Pembantu kecil yang dipakai UI, otak companion, dan semua mode kerja. */
 
 import { EquipmentSlot, ItemStack, system, world } from "@minecraft/server";
 import { FormCancelationReason } from "@minecraft/server-ui";
 
-import { ARMOR_POINTS, COMPANIONS, DEFAULT_MODE, MODES, PROP } from "./config.js";
+import {
+  ARMOR_POINTS, COMPANIONS, DEFAULT_MODE, FACE, MODES, POSE, PROP,
+} from "./config.js";
 
 export const SLOT_KEYS = ["head", "chest", "legs", "feet", "mainhand"];
 
@@ -31,12 +33,22 @@ export const SLOT_LABEL = {
   mainhand: "Senjata",
 };
 
+export const DIMENSIONS = ["minecraft:overworld", "minecraft:nether", "minecraft:the_end"];
+
 export function info(entity) {
   return COMPANIONS[entity?.typeId];
 }
 
 export function isCompanion(entity) {
   return Boolean(info(entity));
+}
+
+export function alive(entity) {
+  try {
+    return Boolean(entity) && entity.isValid;
+  } catch {
+    return false;
+  }
 }
 
 export function prettyItem(id) {
@@ -78,12 +90,61 @@ export function getMode(entity) {
 export function setMode(entity, mode) {
   if (!MODES[mode]) return false;
   entity.setDynamicProperty(PROP.mode, mode);
+  return applyMode(entity, mode);
+}
+
+/** Nyalakan component group mode ini di mesin gim, tanpa menyentuh catatan. */
+export function applyMode(entity, mode) {
+  const meta = MODES[mode];
+  if (!meta) return false;
   try {
-    entity.triggerEvent(MODES[mode].event);
+    entity.triggerEvent(meta.event);
   } catch {
     return false;                    // entity keburu hilang; mode tetap tersimpan
   }
+  setHat(entity, meta.hat);
   return true;
+}
+
+// --- entity property: pose, wajah, perlengkapan ----------------------------
+//
+// Ketiganya dibungkus try/catch dan MENGABAIKAN kegagalan dengan sengaja.
+// Nilai 0 tiap properti berarti "biarkan bawaan", jadi kalau versi gim tidak
+// menyediakan entity property, semuanya tetap 0 dan add-on jalan persis seperti
+// sebelum fitur ini ada — bukan rusak, cuma tanpa pose dan topi.
+
+function setProp(entity, id, value) {
+  try {
+    entity.setProperty(id, value);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function getProp(entity, id, fallback = 0) {
+  try {
+    const v = entity.getProperty(id);
+    return typeof v === "number" ? v : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+export function setPose(entity, pose) {
+  return setProp(entity, "vbs:pose", pose ?? POSE.normal);
+}
+
+export function getPose(entity) {
+  return getProp(entity, "vbs:pose", POSE.normal);
+}
+
+export function setFace(entity, face) {
+  return setProp(entity, "vbs:face", face ?? FACE.auto);
+}
+
+export function setHat(entity, hat) {
+  return setProp(entity, "vbs:hat", hat ?? 0);
 }
 
 // --- nyawa dan armor -------------------------------------------------------
@@ -177,6 +238,10 @@ export function slotFor(typeId) {
   if (short.endsWith("_leggings")) return "legs";
   if (short.endsWith("_boots")) return "feet";
   if (short.endsWith("_sword") || short.endsWith("_axe") || short === "trident") return "mainhand";
+  if (short === "bow" || short === "crossbow") return "mainhand";
+  if (short.endsWith("_hoe") || short.endsWith("_pickaxe") || short.endsWith("_shovel")) {
+    return "mainhand";
+  }
   return undefined;
 }
 
@@ -204,6 +269,284 @@ export function armorSummary(gear) {
   return { points, label: worn.size ? [...worn].join(" + ") : "tanpa zirah" };
 }
 
+// --- ruang -----------------------------------------------------------------
+
+export function floorPos(loc) {
+  return { x: Math.floor(loc.x), y: Math.floor(loc.y), z: Math.floor(loc.z) };
+}
+
+export function dist2(a, b) {
+  return (a.x - b.x) ** 2 + (a.y - b.y) ** 2 + (a.z - b.z) ** 2;
+}
+
+export function distXZ(a, b) {
+  return Math.hypot(a.x - b.x, a.z - b.z);
+}
+
+export function chunkOf(loc) {
+  return { cx: Math.floor(loc.x / 16), cz: Math.floor(loc.z / 16) };
+}
+
+export function chunkCenter(cx, cz) {
+  return { x: cx * 16 + 8, z: cz * 16 + 8 };
+}
+
+export function blockAt(dimension, x, y, z) {
+  try {
+    return dimension.getBlock({ x: Math.floor(x), y: Math.floor(y), z: Math.floor(z) });
+  } catch {
+    return undefined;              // di luar chunk yang dimuat, atau di luar dunia
+  }
+}
+
+export function isAir(block) {
+  try {
+    return Boolean(block) && block.isAir;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Blok yang bisa dilewati badan.
+ *
+ * Daftarnya panjang bukan karena rewel: yang tidak ada di sini dianggap tembok,
+ * dan companion akan berhenti di depannya. Obor pernah tidak ada di daftar ini,
+ * dan akibatnya penambang terkurung oleh obor yang dipasangnya sendiri di lorong
+ * yang baru saja digalinya — macet total, tanpa pesan galat apa pun.
+ */
+const WALKTHROUGH = new Set([
+  "minecraft:air", "minecraft:cave_air", "minecraft:void_air",
+  // penerangan dan barang tempel
+  "minecraft:torch", "minecraft:soul_torch", "minecraft:redstone_torch",
+  "minecraft:unlit_redstone_torch", "minecraft:lantern", "minecraft:soul_lantern",
+  "minecraft:ladder", "minecraft:rail", "minecraft:golden_rail",
+  "minecraft:detector_rail", "minecraft:activator_rail", "minecraft:tripwire",
+  "minecraft:lever", "minecraft:redstone_wire",
+  // tumbuhan kecil
+  "minecraft:short_grass", "minecraft:tall_grass", "minecraft:fern",
+  "minecraft:large_fern", "minecraft:dead_bush", "minecraft:vine",
+  "minecraft:snow_layer", "minecraft:seagrass", "minecraft:kelp",
+  "minecraft:sugar_cane", "minecraft:bamboo_sapling", "minecraft:crimson_roots",
+  "minecraft:warped_roots", "minecraft:nether_sprouts", "minecraft:sweet_berry_bush",
+  "minecraft:cobweb", "minecraft:web", "minecraft:red_mushroom",
+  "minecraft:brown_mushroom", "minecraft:poppy", "minecraft:dandelion",
+  "minecraft:blue_orchid", "minecraft:allium", "minecraft:azure_bluet",
+  "minecraft:oxeye_daisy", "minecraft:cornflower", "minecraft:lily_of_the_valley",
+  "minecraft:wither_rose", "minecraft:sunflower", "minecraft:lilac",
+  "minecraft:rose_bush", "minecraft:peony", "minecraft:torchflower",
+  "minecraft:pitcher_plant", "minecraft:pink_petals",
+  // tanaman pangan — companion harus bisa menyeberangi ladangnya sendiri
+  "minecraft:wheat", "minecraft:carrots", "minecraft:potatoes",
+  "minecraft:beetroot", "minecraft:nether_wart", "minecraft:melon_stem",
+  "minecraft:pumpkin_stem", "minecraft:torchflower_crop",
+]);
+
+const PASSABLE_SUFFIX = [
+  "_torch", "_tulip", "_sapling", "_button", "_pressure_plate", "_carpet",
+  "_banner", "_sign", "_rail",
+];
+
+export function isPassable(block) {
+  if (!block) return false;
+  try {
+    if (block.isAir) return true;
+    const id = block.typeId;
+    if (WALKTHROUGH.has(id)) return true;
+    return PASSABLE_SUFFIX.some((suffix) => id.endsWith(suffix));
+  } catch {
+    return false;
+  }
+}
+
+export function isSolid(block) {
+  if (!block) return false;
+  try {
+    return !block.isAir && !block.isLiquid && !isPassable(block);
+  } catch {
+    return false;
+  }
+}
+
+/** Sudut hadap (yaw Bedrock) dari a ke b. */
+export function yawTo(a, b) {
+  return (Math.atan2(b.z - a.z, b.x - a.x) * 180) / Math.PI - 90;
+}
+
+/** Hadapkan companion ke satu titik tanpa memindahkannya. */
+export function face(entity, target) {
+  try {
+    entity.teleport(entity.location, {
+      dimension: entity.dimension,
+      rotation: { x: 0, y: yawTo(entity.location, target) },
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Satu langkah kecil ke arah tujuan.
+ *
+ * Pathfinding bawaan gim hanya bisa disuruh menuju BLOK BERTIPE TERTENTU
+ * (behavior.move_to_block), bukan menuju koordinat. Untuk pekerjaan yang
+ * tujuannya sebuah titik — meja kerja, ujung terowongan, blok berikutnya yang
+ * mau dipasang — tidak ada goal bawaan yang bisa dipakai. Jadi langkahnya
+ * digerakkan dari sini: 0,32 blok tiap denyut cepat, kira-kira secepat berjalan,
+ * dan hanya kalau petak tujuannya benar-benar bisa dipijak. Karena posisinya
+ * memang berpindah, animasi jalan di klien tetap ikut jalan.
+ *
+ * Mengembalikan true kalau sudah sampai.
+ */
+const walking = new Map();     // entityId -> { target, step, at }
+
+export function steer(entity, target, step = 0.32) {
+  walking.set(entity.id, { target: { ...target }, step, at: system.currentTick });
+  return stepToward(entity, target, step);
+}
+
+/**
+ * Lanjutkan langkah terakhir yang diminta.
+ *
+ * Modul kerja berdenyut tiap 10 tick; kalau langkahnya hanya diambil di situ,
+ * companion bergerak 0,3 blok tiap setengah detik — separuh kecepatan jalan, dan
+ * hasilnya sebagian besar waktunya habis di perjalanan, bukan bekerja. Denyut
+ * cepat mengulang langkah yang sama supaya kecepatannya wajar tanpa modul kerja
+ * perlu tahu apa pun soal ini.
+ */
+export function tickSteer(entity) {
+  const row = walking.get(entity?.id);
+  if (!row) return false;
+  if (system.currentTick - row.at > 20) {
+    walking.delete(entity.id);
+    return false;
+  }
+  return stepToward(entity, row.target, row.step);
+}
+
+export function stopWalking(id) {
+  walking.delete(id);
+}
+
+/**
+ * Coba pindah ke satu titik (nx, nz), mencari ketinggian yang bisa dipijak.
+ * Boleh naik satu blok, boleh turun tiga; lebih dari itu bukan langkah, itu
+ * jatuh. Mengembalikan true kalau benar-benar berpindah.
+ */
+function tryStep(entity, nx, nz, a, target) {
+  const dim = entity.dimension;
+  for (const dy of [1, 0, -1, -2, -3]) {
+    const feet = blockAt(dim, nx, a.y + dy, nz);
+    const head = blockAt(dim, nx, a.y + dy + 1, nz);
+    const floor = blockAt(dim, nx, a.y + dy - 1, nz);
+    if (!feet || !head || !floor) continue;
+    if (!isPassable(feet) || !isPassable(head) || !isSolid(floor)) continue;
+    try {
+      entity.teleport({ x: nx, y: Math.floor(a.y + dy) + 0.02, z: nz }, {
+        dimension: dim,
+        rotation: { x: 0, y: yawTo(a, target) },
+      });
+    } catch {
+      return false;
+    }
+    return true;
+  }
+  return false;
+}
+
+function stepToward(entity, target, step) {
+  const a = entity.location;
+  const dx = target.x - a.x;
+  const dz = target.z - a.z;
+  const flat = Math.hypot(dx, dz);
+  if (flat < 0.8 && Math.abs(target.y - a.y) < 2) return true;
+  if (flat < 0.001) return false;
+
+  const move = Math.min(step, flat);
+  const nx = a.x + (dx / flat) * move;
+  const nz = a.z + (dz / flat) * move;
+
+  // Lurus dulu. Kalau tertutup, coba satu sumbu saja — itu yang membuat
+  // companion bisa membelok di tikungan lorong. Tanpa ini, penambang yang
+  // hendak masuk ke cabang menabrak dinding di mulut cabang dan berhenti di
+  // situ selamanya, karena garis lurus ke ujung galian menembus batu.
+  if (tryStep(entity, nx, nz, a, target)) return false;
+  const zFirst = Math.abs(dz) > Math.abs(dx);
+  const first = zFirst ? [a.x, nz] : [nx, a.z];
+  const second = zFirst ? [nx, a.z] : [a.x, nz];
+  if (tryStep(entity, first[0], first[1], a, target)) return false;
+  if (tryStep(entity, second[0], second[1], a, target)) return false;
+  return false;
+}
+
+// --- peti ------------------------------------------------------------------
+
+export function containerAt(dimension, pos) {
+  const block = blockAt(dimension, pos.x, pos.y, pos.z);
+  if (!block) return undefined;
+  try {
+    return block.getComponent("minecraft:inventory")?.container;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Berapa banyak item bertipe ini ada di peti. */
+export function countIn(container, ids) {
+  if (!container) return 0;
+  const want = new Set(Array.isArray(ids) ? ids : [ids]);
+  let n = 0;
+  for (let i = 0; i < container.size; i++) {
+    const stack = container.getItem(i);
+    if (stack && want.has(stack.typeId)) n += stack.amount;
+  }
+  return n;
+}
+
+/** Ambil sejumlah item dari peti. Mengembalikan berapa yang benar-benar terambil. */
+export function takeFrom(container, ids, amount) {
+  if (!container) return 0;
+  const want = new Set(Array.isArray(ids) ? ids : [ids]);
+  let left = amount;
+  for (let i = 0; i < container.size && left > 0; i++) {
+    const stack = container.getItem(i);
+    if (!stack || !want.has(stack.typeId)) continue;
+    const take = Math.min(left, stack.amount);
+    left -= take;
+    if (stack.amount > take) {
+      stack.amount -= take;
+      container.setItem(i, stack);
+    } else {
+      container.setItem(i, undefined);
+    }
+  }
+  return amount - left;
+}
+
+/** Taruh item ke peti; sisanya dijatuhkan di tempat kalau peti penuh. */
+export function putIn(container, item, dimension, where) {
+  if (!container) {
+    if (dimension && where) dimension.spawnItem(item, where);
+    return false;
+  }
+  const left = container.addItem(item);
+  if (left && dimension && where) dimension.spawnItem(left, where);
+  return !left;
+}
+
+/** Daftar (typeId -> jumlah) isi peti, untuk ditampilkan di UI. */
+export function summarize(container) {
+  const out = {};
+  if (!container) return out;
+  for (let i = 0; i < container.size; i++) {
+    const stack = container.getItem(i);
+    if (!stack) continue;
+    out[stack.typeId] = (out[stack.typeId] ?? 0) + stack.amount;
+  }
+  return out;
+}
+
 // --- pembantu lain ---------------------------------------------------------
 
 export function waitTicks(ticks) {
@@ -224,6 +567,7 @@ export async function forceShow(player, form, tries = 40) {
 }
 
 export function give(player, itemStack) {
+  if (!itemStack) return;
   const inv = player.getComponent("minecraft:inventory");
   const left = inv?.container?.addItem(itemStack);
   if (left) {
@@ -237,4 +581,42 @@ export function makeItem(id, amount = 1) {
   } catch {
     return undefined;
   }
+}
+
+export function randomBetween(min, max) {
+  return min + Math.floor(Math.random() * (max - min + 1));
+}
+
+export function pick(list) {
+  return list[Math.floor(Math.random() * list.length)];
+}
+
+/** Bunyi di satu titik, diam-diam gagal kalau versi gim tidak menyediakannya. */
+export function sound(dimension, id, where, options = {}) {
+  try {
+    dimension.playSound(id, where, options);
+  } catch {
+    /* versi lama: tidak ada dimension.playSound */
+  }
+}
+
+export function particle(dimension, id, where) {
+  try {
+    dimension.spawnParticle(id, where);
+  } catch {
+    /* partikel tidak dikenal di versi ini, atau chunk belum dimuat */
+  }
+}
+
+/** Semua companion di semua dimensi yang sedang dimuat. */
+export function allCompanions(family) {
+  const out = [];
+  for (const id of DIMENSIONS) {
+    try {
+      out.push(...world.getDimension(id).getEntities({ families: [family] }));
+    } catch {
+      /* dimensi belum dimuat */
+    }
+  }
+  return out;
 }

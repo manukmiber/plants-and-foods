@@ -18,7 +18,13 @@
         "idle": "animation.vbs_companion.idle",
         "walk": "animation.vbs_companion.walk",
         "hair": "animation.vbs_companion.hair",
-        "combat": "animation.vbs_companion.combat"
+        "harvest": "animation.vbs_companion.harvest",
+        "mine": "animation.vbs_companion.mine",
+        "build": "animation.vbs_companion.build",
+        "combat": "animation.vbs_companion.combat",
+        "aim": "animation.vbs_companion.aim",
+        "talk": "animation.vbs_companion.talk",
+        "greet": "animation.vbs_companion.greet"
       },
       "scripts": {
         "animate": [
@@ -27,12 +33,30 @@
           "walk",
           "hair",
           {
-            "combat": "query.is_angry"
+            "harvest": "query.property('vbs:pose') == 1"
+          },
+          {
+            "mine": "query.property('vbs:pose') == 3"
+          },
+          {
+            "build": "query.property('vbs:pose') == 4"
+          },
+          {
+            "combat": "query.property('vbs:pose') == 5"
+          },
+          {
+            "aim": "query.property('vbs:pose') == 6"
+          },
+          {
+            "talk": "query.property('vbs:pose') == 7"
+          },
+          {
+            "greet": "query.property('vbs:pose') == 2"
           }
         ]
       },
       "render_controllers": [
-        "controller.render.vbs_companion"
+        "controller.render.vbs_companion.toya"
       ],
       "spawn_egg": {
         "texture": "vbs_spawn_egg_toya",

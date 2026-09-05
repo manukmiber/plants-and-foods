@@ -1,7 +1,26 @@
 {
   "format_version": "1.10.0",
   "render_controllers": {
-    "controller.render.vbs_companion": {
+    "controller.render.vbs_marker": {
+      "geometry": "Geometry.default",
+      "materials": [
+        {
+          "*": "Material.default"
+        }
+      ],
+      "textures": [
+        "Array.skins[query.variant]"
+      ],
+      "arrays": {
+        "textures": {
+          "Array.skins": [
+            "Texture.free",
+            "Texture.claimed"
+          ]
+        }
+      }
+    },
+    "controller.render.vbs_companion.akito": {
       "geometry": "Geometry.default",
       "materials": [
         {
@@ -10,6 +29,47 @@
       ],
       "textures": [
         "Texture.default"
+      ],
+      "part_visibility": [
+        {
+          "*": true
+        },
+        {
+          "face_neutral": "variable.vbs_face == 0"
+        },
+        {
+          "face_blink": "variable.vbs_face == 1"
+        },
+        {
+          "face_smile": "variable.vbs_face == 2"
+        },
+        {
+          "face_happy": "variable.vbs_face == 3"
+        },
+        {
+          "face_surprised": "variable.vbs_face == 4"
+        },
+        {
+          "face_hurt": "variable.vbs_face == 5"
+        },
+        {
+          "face_sleepy": "variable.vbs_face == 6"
+        },
+        {
+          "face_sing": "variable.vbs_face == 7"
+        },
+        {
+          "gear_hat": "query.property('vbs:hat') == 1"
+        },
+        {
+          "gear_helm": "query.property('vbs:hat') == 2"
+        },
+        {
+          "gear_lamp": "query.property('vbs:hat') == 2"
+        },
+        {
+          "gear_pack": "query.property('vbs:hat') == 3"
+        }
       ]
     },
     "controller.render.vbs_companion.kohane": {
@@ -49,6 +109,102 @@
         },
         {
           "face_sing": "variable.vbs_face == 7"
+        },
+        {
+          "gear_hat": "query.property('vbs:hat') == 1"
+        },
+        {
+          "gear_helm": "query.property('vbs:hat') == 2"
+        },
+        {
+          "gear_lamp": "query.property('vbs:hat') == 2"
+        },
+        {
+          "gear_pack": "query.property('vbs:hat') == 3"
+        }
+      ]
+    },
+    "controller.render.vbs_companion.an": {
+      "geometry": "Geometry.default",
+      "materials": [
+        {
+          "*": "Material.default"
+        }
+      ],
+      "textures": [
+        "Texture.default"
+      ],
+      "part_visibility": [
+        {
+          "*": true
+        },
+        {
+          "gear_hat": "query.property('vbs:hat') == 1"
+        },
+        {
+          "gear_helm": "query.property('vbs:hat') == 2"
+        },
+        {
+          "gear_lamp": "query.property('vbs:hat') == 2"
+        },
+        {
+          "gear_pack": "query.property('vbs:hat') == 3"
+        }
+      ]
+    },
+    "controller.render.vbs_companion.toya": {
+      "geometry": "Geometry.default",
+      "materials": [
+        {
+          "*": "Material.default"
+        }
+      ],
+      "textures": [
+        "Texture.default"
+      ],
+      "part_visibility": [
+        {
+          "*": true
+        },
+        {
+          "gear_hat": "query.property('vbs:hat') == 1"
+        },
+        {
+          "gear_helm": "query.property('vbs:hat') == 2"
+        },
+        {
+          "gear_lamp": "query.property('vbs:hat') == 2"
+        },
+        {
+          "gear_pack": "query.property('vbs:hat') == 3"
+        }
+      ]
+    },
+    "controller.render.vbs_companion.flins": {
+      "geometry": "Geometry.default",
+      "materials": [
+        {
+          "*": "Material.default"
+        }
+      ],
+      "textures": [
+        "Texture.default"
+      ],
+      "part_visibility": [
+        {
+          "*": true
+        },
+        {
+          "gear_hat": "query.property('vbs:hat') == 1"
+        },
+        {
+          "gear_helm": "query.property('vbs:hat') == 2"
+        },
+        {
+          "gear_lamp": "query.property('vbs:hat') == 2"
+        },
+        {
+          "gear_pack": "query.property('vbs:hat') == 3"
         }
       ]
     }

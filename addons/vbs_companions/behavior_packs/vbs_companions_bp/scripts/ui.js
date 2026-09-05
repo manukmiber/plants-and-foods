@@ -1,45 +1,84 @@
 /**
  * Semua layar yang dilihat pemain.
  *
- * Menu utama sengaja menaruh Nyawa, Armor dan Mode di badan form, bukan di tombol,
- * supaya sekali buka langsung kelihatan keadaan companion sebelum memilih perintah.
+ * Menu utama sengaja menaruh Nyawa, Armor, alat dan KETERANGAN PEKERJAAN di
+ * badan form, bukan di tombol: sekali buka, pemain langsung tahu companion
+ * sedang apa dan kalau berhenti, kenapa berhenti — tanpa harus mencoba menebak
+ * dari gerak-geriknya.
+ *
+ * Tujuh mode ditaruh di layar pertama; semua pengaturan lain masuk ke layar
+ * kedua supaya layar pertama tetap satu layar penuh di HP.
  */
 
 import { ActionFormData, MessageFormData, ModalFormData } from "@minecraft/server-ui";
 
 import { FOOD_HEAL, MODES } from "./config.js";
+import { getActivity } from "./activity.js";
+import { BLUEPRINTS, startBlueprint } from "./builder.js";
+import { claimsNear, ensureStake } from "./claim.js";
+import { syncWeapon } from "./combat.js";
+import { bestTier, tierName, toolRank } from "./crafting.js";
+import { setExpand } from "./farming.js";
+import { displayName, refreshName } from "./nametag.js";
+import { patchState, readState } from "./state.js";
+import { stationContainer } from "./station.js";
+import { waypointLines } from "./wander.js";
 import {
   armorSummary, bar, forceShow, getGear, getMode, getOwnerName, healthOf, info,
-  makeItem, prettyItem, setGear, setMode, setOwner, SLOT_KEYS, SLOT_LABEL, slotFor,
+  makeItem, prettyItem, setGear, setMode, SLOT_KEYS, SLOT_LABEL, slotFor,
 } from "./util.js";
 
 const MODE_KEYS = Object.keys(MODES);
 
 function title(entity) {
   const meta = info(entity);
-  return `§l${meta.color}${meta.name}`;
+  return `§l${meta.color}${displayName(entity)}`;
+}
+
+function stationLine(entity, state) {
+  if (!state.station) return "§7Stasiun   §8belum ada";
+  const s = state.station;
+  return `§7Stasiun   §f${s.x}, ${s.y}, ${s.z}`;
+}
+
+function toolLine(entity, state) {
+  const held = getGear(entity).mainhand;
+  for (const kind of ["hoe", "pickaxe", "axe"]) {
+    const rank = toolRank(held, kind);
+    if (rank > 0) return `§7Alat      §f${prettyItem(held)}`;
+  }
+  const container = stationContainer(entity, state);
+  const next = container ? bestTier(container, "hoe") : undefined;
+  return next
+    ? `§7Alat      §8belum ada §7(bahan ${tierName(next.key)} tersedia)`
+    : "§7Alat      §8belum ada";
 }
 
 function statusBody(entity) {
   const meta = info(entity);
+  const state = readState(entity);
   const { cur, max } = healthOf(entity);
   const gear = getGear(entity);
   const armor = armorSummary(gear);
   const mode = MODES[getMode(entity)];
+  const doing = getActivity(entity);
   return [
     `§7Pemilik   §f${getOwnerName(entity)}`,
-    `§7Mode      §f${mode.label}  §8${mode.hint}`,
+    `§7Tugas     §f${mode.label}  §8${mode.hint}`,
+    doing ? `§7Sekarang  §a${doing}` : "§7Sekarang  §8menunggu perintah",
     "",
     `§cNyawa     §f${cur}§7/§f${max}`,
     bar(cur, max),
     `§9Armor     §f${armor.points} §7(${armor.label})`,
     `§7Senjata   §f${prettyItem(gear.mainhand)}`,
+    toolLine(entity, state),
+    stationLine(entity, state),
     "",
     `§8${meta.name} akan menuruti perintah yang kamu pilih di bawah.`,
   ].join("\n");
 }
 
-/** Menu utama: keadaan companion + empat perintah. */
+/** Menu utama: keadaan companion + tujuh perintah. */
 export async function openMenu(player, entity) {
   if (!entity.isValid) return;
   const current = getMode(entity);
@@ -52,40 +91,37 @@ export async function openMenu(player, entity) {
     const mark = key === current ? " §8(sekarang)" : "";
     form.button(`${m.button}${mark}\n§8${m.hint}`, m.icon);
   }
-  form.button("§bPerlengkapan & Lainnya\n§8Zirah, senjata, makan, nama", "textures/items/name_tag");
+  form.button("§bPengaturan & Perlengkapan\n§8Zirah, ladang, rancangan, catatan",
+              "textures/items/name_tag");
 
   const res = await forceShow(player, form);
   if (!res || res.canceled || res.selection === undefined) return;
 
   if (res.selection < MODE_KEYS.length) {
-    const key = MODE_KEYS[res.selection];
-    applyMode(player, entity, key);
+    applyMode(player, entity, MODE_KEYS[res.selection]);
     return;
   }
-  await openGear(player, entity);
+  await openSettings(player, entity);
 }
 
 export function applyMode(player, entity, key) {
   const meta = info(entity);
-  if (setMode(entity, key)) {
-    refreshName(entity);
-    player.sendMessage(`${meta.color}${meta.name} §7» §f${MODES[key].label}`);
-    player.playSound("random.orb", { location: player.location });
-  } else {
+  if (!setMode(entity, key)) {
     player.sendMessage("§cGagal mengganti mode.");
+    return;
   }
+  refreshName(entity);
+  syncWeapon(entity);
+  player.sendMessage(`${meta.color}${displayName(entity)} §7» §f${MODES[key].label}`);
+  player.playSound("random.orb", { location: player.location });
+  // Sebelum bertani, pemain harus punya patok: itu izin yang menentukan sampai
+  // mana companion boleh melebarkan ladang.
+  if (key === "farm") ensureStake(player);
 }
 
-/** Nama melayang: nama karakter + mode yang sedang dijalankan. */
-export function refreshName(entity) {
-  const meta = info(entity);
-  if (!meta) return;
-  const mode = MODES[getMode(entity)];
-  entity.nameTag = `${meta.color}${meta.name}§r §8${mode.label}`;
-}
-
-/** Layar kedua: perlengkapan dan tindakan lain. */
-async function openGear(player, entity) {
+/** Layar kedua: semua pengaturan. */
+async function openSettings(player, entity) {
+  const state = readState(entity);
   const gear = getGear(entity);
   const worn = SLOT_KEYS.map((k) => `§7${SLOT_LABEL[k]}: §f${prettyItem(gear[k])}`).join("\n");
   const held = player.getComponent("minecraft:equippable")
@@ -94,11 +130,21 @@ async function openGear(player, entity) {
   const form = new ActionFormData()
     .title(title(entity))
     .body(`${worn}\n\n§7Item di tanganmu: §f${prettyItem(held)}`)
-    .button("§aPakaikan Item di Tangan\n§8Zirah atau senjata", "textures/items/iron_chestplate")
-    .button("§eBeri Makan\n§8Pulihkan nyawa dengan makanan di tangan", "textures/items/bread")
-    .button("§6Lepas Semua Perlengkapan\n§8Dikembalikan ke kantongmu", "textures/items/leather")
+    .button("§aPakaikan Item di Tangan\n§8Zirah, senjata, busur atau alat",
+            "textures/items/iron_chestplate")
+    .button("§eBeri Makan\n§8Pulihkan nyawa dengan makanan di tangan",
+            "textures/items/bread")
+    .button("§6Lepas Semua Perlengkapan\n§8Dikembalikan ke kantongmu",
+            "textures/items/leather")
+    .button("§2Ladang & Patok\n§8Batas garapan dan izin melebar", "textures/items/wheat")
+    .button("§eRancangan Bangunan\n§8Pilih yang akan dibangun", "textures/items/brick")
+    .button("§bCatatan Pengembara\n§8Temuan beserta koordinatnya",
+            "textures/items/map_filled")
+    .button(`§7Celoteh: ${state.quiet ? "§cmati" : "§ahidup"}\n§8Gelembung teks dan obrolan`,
+            "textures/items/book_normal")
     .button("§bGanti Nama", "textures/items/name_tag")
-    .button("§dPanggil ke Sini\n§8Tarik dia ke tempatmu berdiri", "textures/items/ender_pearl")
+    .button("§dPanggil ke Sini\n§8Tarik dia ke tempatmu berdiri",
+            "textures/items/ender_pearl")
     .button("§cIstirahatkan\n§8Companion dihilangkan dari dunia", "textures/items/barrier")
     .button("§8« Kembali");
 
@@ -109,12 +155,111 @@ async function openGear(player, entity) {
     case 0: equipHeld(player, entity); break;
     case 1: feed(player, entity); break;
     case 2: stripGear(player, entity); break;
-    case 3: await rename(player, entity); break;
-    case 4: recall(player, entity); break;
-    case 5: await dismiss(player, entity); break;
+    case 3: await openFarm(player, entity); break;
+    case 4: await openBlueprints(player, entity); break;
+    case 5: await openWaypoints(player, entity); break;
+    case 6: toggleQuiet(player, entity); break;
+    case 7: await rename(player, entity); break;
+    case 8: recall(player, entity); break;
+    case 9: await dismiss(player, entity); break;
     default: await openMenu(player, entity); return;
   }
 }
+
+// --- ladang dan patok ------------------------------------------------------
+
+async function openFarm(player, entity) {
+  const state = readState(entity);
+  const claims = claimsNear(entity.dimension, entity.location, player.id, 6);
+  const lines = claims.length
+    ? claims.map((c) => `§7• §fchunk ${c.cx}, ${c.cz} §7— ` +
+        (c.entry.worked ? "§asudah jadi ladang" : "§cbelum digarap"))
+    : ["§8Belum ada chunk yang dipatok."];
+
+  const form = new ActionFormData()
+    .title("§l§6Ladang & Patok")
+    .body([
+      "§7Patok menentukan sampai mana companion boleh menggarap.",
+      "§7Klik tanah pakai §fPatok Ladang§7 untuk memilih chunk.",
+      "§8Merah = dipatok tapi belum digarap. Hijau = sudah jadi ladang.",
+      "",
+      ...lines,
+      "",
+      `§7Izin melebar satu chunk lagi: ${state.allowExpand ? "§ahidup" : "§cmati"}`,
+      "§8Kalau dihidupkan, companion menggarap chunk berpatok kedua yang terdekat",
+      "§8setelah chunk pertama selesai — asal ada ember/besi dan sungai di dekatnya.",
+    ].join("\n"))
+    .button("§eBeri Aku Patok Ladang", "textures/items/stick")
+    .button(state.allowExpand ? "§cMatikan izin melebar" : "§aIzinkan melebar 1 chunk lagi",
+            "textures/items/wheat")
+    .button("§8« Kembali");
+
+  const res = await forceShow(player, form);
+  if (!res || res.canceled || res.selection === undefined) return;
+  if (res.selection === 0) {
+    if (!ensureStake(player)) player.sendMessage("§7Patok Ladang sudah ada di kantongmu.");
+  } else if (res.selection === 1) {
+    setExpand(entity, !state.allowExpand);
+    player.sendMessage(state.allowExpand
+      ? "§7Izin melebar dimatikan."
+      : "§aIzin melebar dihidupkan. Patok satu chunk lagi supaya ada tujuannya.");
+  }
+  await openSettings(player, entity);
+}
+
+async function openBlueprints(player, entity) {
+  const keys = Object.keys(BLUEPRINTS);
+  const state = readState(entity);
+  const form = new ActionFormData()
+    .title("§l§eRancangan Bangunan")
+    .body([
+      "§7Bahannya diambil dari peti stasiun. Yang tidak ada bahannya dilewati,",
+      "§7dan alasannya muncul di baris §fSekarang§7 di menu utama.",
+      "",
+      `§7Rancangan sekarang: §f${BLUEPRINTS[state.blueprint]?.label ?? "belum dipilih"}`,
+    ].join("\n"));
+  for (const key of keys) {
+    const bp = BLUEPRINTS[key];
+    const mark = key === state.blueprint ? " §8(sekarang)" : "";
+    form.button(`§f${bp.label}${mark}\n§8${bp.hint}`);
+  }
+  form.button("§8« Kembali");
+
+  const res = await forceShow(player, form);
+  if (!res || res.canceled || res.selection === undefined) return;
+  if (res.selection < keys.length) {
+    const key = keys[res.selection];
+    const fresh = readState(entity);
+    startBlueprint(entity, fresh, key, player);
+    patchState(entity, { blueprint: key });
+    player.sendMessage(`§eRancangan diganti: §f${BLUEPRINTS[key].label}§e. ` +
+      "§7Pilih §fMode Membangun§7 supaya dia mulai mengerjakannya.");
+  }
+  await openSettings(player, entity);
+}
+
+async function openWaypoints(player, entity) {
+  const form = new ActionFormData()
+    .title("§l§bCatatan Pengembara")
+    .body([
+      "§7Yang ditemukan companion sambil mengembara, terbaru di atas.",
+      "",
+      ...waypointLines(14),
+    ].join("\n"))
+    .button("§8« Kembali");
+  await forceShow(player, form);
+  await openSettings(player, entity);
+}
+
+function toggleQuiet(player, entity) {
+  const state = readState(entity);
+  patchState(entity, { quiet: !state.quiet });
+  player.sendMessage(state.quiet
+    ? "§aCeloteh dihidupkan lagi."
+    : "§7Celoteh dimatikan. Dia tetap bekerja, cuma diam.");
+}
+
+// --- perlengkapan ----------------------------------------------------------
 
 function heldStack(player) {
   const eq = player.getComponent("minecraft:equippable");
@@ -147,7 +292,7 @@ function equipHeld(player, entity) {
   }
   const slot = slotFor(stack.typeId);
   if (!slot) {
-    player.sendMessage("§cItu bukan zirah atau senjata yang bisa dipakai.");
+    player.sendMessage("§cItu bukan zirah, senjata atau alat yang bisa dipakai.");
     return;
   }
   const old = getGear(entity)[slot];
@@ -160,7 +305,10 @@ function equipHeld(player, entity) {
     const back = makeItem(old, 1);
     if (back) player.dimension.spawnItem(back, player.location);
   }
-  player.sendMessage(`§a${SLOT_LABEL[slot]} dipasang: §f${prettyItem(item.typeId)}`);
+  syncWeapon(entity);
+  const extra = item.typeId === "minecraft:bow" || item.typeId === "minecraft:crossbow"
+    ? " §7Dia akan bertarung sebagai pemanah." : "";
+  player.sendMessage(`§a${SLOT_LABEL[slot]} dipasang: §f${prettyItem(item.typeId)}${extra}`);
   player.playSound("armor.equip_generic", { location: player.location });
 }
 
@@ -175,6 +323,7 @@ function stripGear(player, entity) {
       n++;
     }
   }
+  syncWeapon(entity);
   player.sendMessage(n ? `§a${n} perlengkapan dikembalikan.` : "§7Tidak ada yang dipakai.");
 }
 
@@ -208,13 +357,11 @@ async function rename(player, entity) {
   if (!res || res.canceled) return;
   const value = (res.formValues?.[0] ?? "").toString().trim().slice(0, 24);
   const meta = info(entity);
-  if (!value) {
-    refreshName(entity);
-    player.sendMessage(`§7Nama dikembalikan ke §f${meta.name}§7.`);
-    return;
-  }
-  entity.nameTag = `${meta.color}${value}`;
-  player.sendMessage(`§aSekarang dipanggil §f${value}§a.`);
+  patchState(entity, { nick: value || null });
+  refreshName(entity);
+  player.sendMessage(value
+    ? `§aSekarang dipanggil §f${value}§a.`
+    : `§7Nama dikembalikan ke §f${meta.name}§7.`);
 }
 
 function recall(player, entity) {
@@ -228,8 +375,9 @@ async function dismiss(player, entity) {
   const meta = info(entity);
   const confirm = new MessageFormData()
     .title("§cIstirahatkan?")
-    .body(`§7${meta.name} akan dihilangkan dari dunia. Perlengkapan yang dipakainya ` +
-          "dikembalikan ke kantongmu.\n\n§8Kamu bisa memanggilnya lagi dengan spawn egg.")
+    .body(`§7${displayName(entity)} akan dihilangkan dari dunia. Perlengkapan yang ` +
+          "dipakainya dikembalikan ke kantongmu. Stasiun dan patoknya tetap ada." +
+          "\n\n§8Kamu bisa memanggilnya lagi dengan spawn egg.")
     .button1("§cYa, istirahatkan")
     .button2("§7Batal");
   const res = await forceShow(player, confirm);

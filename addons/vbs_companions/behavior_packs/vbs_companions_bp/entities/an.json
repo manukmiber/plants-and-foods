@@ -5,24 +5,56 @@
       "identifier": "vbs:an",
       "is_spawnable": true,
       "is_summonable": true,
-      "is_experimental": false
+      "is_experimental": false,
+      "properties": {
+        "vbs:face": {
+          "type": "int",
+          "range": [
+            0,
+            8
+          ],
+          "default": 0,
+          "client_sync": true
+        },
+        "vbs:pose": {
+          "type": "int",
+          "range": [
+            0,
+            7
+          ],
+          "default": 0,
+          "client_sync": true
+        },
+        "vbs:hat": {
+          "type": "int",
+          "range": [
+            0,
+            3
+          ],
+          "default": 0,
+          "client_sync": true
+        }
+      }
     },
     "component_groups": {
       "vbs:mode_follow": {
         "minecraft:behavior.follow_owner": {
-          "priority": 4,
+          "priority": 7,
           "speed_multiplier": 1.15,
           "start_distance": 4.0,
           "stop_distance": 2.0
         },
         "minecraft:behavior.random_stroll": {
-          "priority": 7,
-          "speed_multiplier": 0.7
+          "priority": 9,
+          "speed_multiplier": 0.7,
+          "xz_dist": 6,
+          "y_dist": 4,
+          "interval": 120
         }
       },
       "vbs:mode_farm": {
         "minecraft:behavior.move_to_block": {
-          "priority": 4,
+          "priority": 6,
           "tick_interval": 20,
           "start_chance": 1.0,
           "search_range": 12,
@@ -44,29 +76,33 @@
           ]
         },
         "minecraft:behavior.follow_owner": {
-          "priority": 6,
+          "priority": 7,
           "speed_multiplier": 1.0,
-          "start_distance": 14.0,
-          "stop_distance": 8.0
+          "start_distance": 18.0,
+          "stop_distance": 10.0
         },
         "minecraft:behavior.random_stroll": {
-          "priority": 8,
-          "speed_multiplier": 0.6
+          "priority": 9,
+          "speed_multiplier": 0.6,
+          "xz_dist": 8,
+          "y_dist": 3,
+          "interval": 120
         }
       },
       "vbs:mode_attack": {
         "minecraft:behavior.owner_hurt_by_target": {
-          "priority": 1
+          "priority": 2
         },
         "minecraft:behavior.owner_hurt_target": {
-          "priority": 1
+          "priority": 3
         },
         "minecraft:behavior.nearest_attackable_target": {
-          "priority": 2,
+          "priority": 4,
           "must_see": true,
           "must_see_forget_duration": 12.0,
           "reselect_targets": true,
-          "within_radius": 16.0,
+          "scan_interval": 10,
+          "within_radius": 20.0,
           "entity_types": [
             {
               "filters": {
@@ -74,31 +110,130 @@
                 "subject": "other",
                 "value": "monster"
               },
-              "max_dist": 16
+              "max_dist": 20
+            },
+            {
+              "filters": {
+                "test": "is_family",
+                "subject": "other",
+                "value": "slime"
+              },
+              "max_dist": 20
             }
           ]
         },
-        "minecraft:behavior.melee_attack": {
-          "priority": 3,
-          "speed_multiplier": 1.25,
-          "track_target": true
-        },
         "minecraft:behavior.follow_owner": {
-          "priority": 6,
+          "priority": 7,
           "speed_multiplier": 1.2,
-          "start_distance": 8.0,
-          "stop_distance": 3.0
+          "start_distance": 10.0,
+          "stop_distance": 4.0
         },
-        "minecraft:angry": {
-          "duration": -1,
-          "broadcast_anger": false,
-          "calm_event": {
-            "event": "vbs:set_follow",
-            "target": "self"
-          }
+        "minecraft:behavior.random_stroll": {
+          "priority": 9,
+          "speed_multiplier": 0.7,
+          "xz_dist": 5,
+          "y_dist": 3,
+          "interval": 120
         }
       },
-      "vbs:mode_stay": {}
+      "vbs:mode_stay": {},
+      "vbs:mode_mine": {
+        "minecraft:behavior.move_to_block": {
+          "priority": 6,
+          "tick_interval": 20,
+          "start_chance": 1.0,
+          "search_range": 14,
+          "search_height": 6,
+          "goal_radius": 1.5,
+          "stay_duration": 2.5,
+          "target_offset": [
+            0.0,
+            1.0,
+            0.0
+          ],
+          "target_selection_method": "nearest",
+          "target_blocks": [
+            "minecraft:coal_ore",
+            "minecraft:deepslate_coal_ore",
+            "minecraft:iron_ore",
+            "minecraft:deepslate_iron_ore",
+            "minecraft:copper_ore",
+            "minecraft:deepslate_copper_ore",
+            "minecraft:gold_ore",
+            "minecraft:deepslate_gold_ore",
+            "minecraft:redstone_ore",
+            "minecraft:lit_redstone_ore",
+            "minecraft:deepslate_redstone_ore",
+            "minecraft:lapis_ore",
+            "minecraft:deepslate_lapis_ore",
+            "minecraft:diamond_ore",
+            "minecraft:deepslate_diamond_ore",
+            "minecraft:emerald_ore",
+            "minecraft:deepslate_emerald_ore",
+            "minecraft:quartz_ore",
+            "minecraft:ancient_debris"
+          ]
+        },
+        "minecraft:behavior.follow_owner": {
+          "priority": 7,
+          "speed_multiplier": 1.0,
+          "start_distance": 24.0,
+          "stop_distance": 12.0
+        },
+        "minecraft:behavior.random_stroll": {
+          "priority": 9,
+          "speed_multiplier": 0.7,
+          "xz_dist": 8,
+          "y_dist": 6,
+          "interval": 60
+        }
+      },
+      "vbs:mode_wander": {
+        "minecraft:behavior.random_stroll": {
+          "priority": 9,
+          "speed_multiplier": 1.0,
+          "xz_dist": 16,
+          "y_dist": 8,
+          "interval": 40
+        }
+      },
+      "vbs:mode_build": {
+        "minecraft:behavior.follow_owner": {
+          "priority": 7,
+          "speed_multiplier": 1.0,
+          "start_distance": 16.0,
+          "stop_distance": 8.0
+        },
+        "minecraft:behavior.random_stroll": {
+          "priority": 9,
+          "speed_multiplier": 0.6,
+          "xz_dist": 6,
+          "y_dist": 3,
+          "interval": 120
+        }
+      },
+      "vbs:weapon_melee": {
+        "minecraft:behavior.melee_attack": {
+          "priority": 5,
+          "speed_multiplier": 1.25,
+          "track_target": true,
+          "reach_multiplier": 1.6
+        }
+      },
+      "vbs:weapon_bow": {
+        "minecraft:shooter": {
+          "def": "minecraft:arrow"
+        },
+        "minecraft:behavior.ranged_attack": {
+          "priority": 5,
+          "attack_interval_min": 1.0,
+          "attack_interval_max": 2.0,
+          "attack_radius": 16.0,
+          "speed_multiplier": 1.1,
+          "target_in_sight_time": 0.2,
+          "ranged_fov": 90.0
+        }
+      }
     },
     "components": {
       "minecraft:type_family": {
@@ -243,19 +378,20 @@
         "priority": 1
       },
       "minecraft:behavior.look_at_player": {
-        "priority": 9,
+        "priority": 11,
         "look_distance": 8.0,
         "probability": 0.3
       },
       "minecraft:behavior.random_look_around": {
-        "priority": 10
+        "priority": 12
       }
     },
     "events": {
       "minecraft:entity_spawned": {
         "add": {
           "component_groups": [
-            "vbs:mode_follow"
+            "vbs:mode_follow",
+            "vbs:weapon_melee"
           ]
         }
       },
@@ -267,13 +403,42 @@
         }
       },
       "vbs:menu_opened": {},
+      "vbs:use_melee": {
+        "remove": {
+          "component_groups": [
+            "vbs:weapon_melee",
+            "vbs:weapon_bow"
+          ]
+        },
+        "add": {
+          "component_groups": [
+            "vbs:weapon_melee"
+          ]
+        }
+      },
+      "vbs:use_bow": {
+        "remove": {
+          "component_groups": [
+            "vbs:weapon_melee",
+            "vbs:weapon_bow"
+          ]
+        },
+        "add": {
+          "component_groups": [
+            "vbs:weapon_bow"
+          ]
+        }
+      },
       "vbs:set_follow": {
         "remove": {
           "component_groups": [
             "vbs:mode_follow",
             "vbs:mode_farm",
             "vbs:mode_attack",
-            "vbs:mode_stay"
+            "vbs:mode_stay",
+            "vbs:mode_mine",
+            "vbs:mode_wander",
+            "vbs:mode_build"
           ]
         },
         "add": {
@@ -288,7 +453,10 @@
             "vbs:mode_follow",
             "vbs:mode_farm",
             "vbs:mode_attack",
-            "vbs:mode_stay"
+            "vbs:mode_stay",
+            "vbs:mode_mine",
+            "vbs:mode_wander",
+            "vbs:mode_build"
           ]
         },
         "add": {
@@ -303,7 +471,10 @@
             "vbs:mode_follow",
             "vbs:mode_farm",
             "vbs:mode_attack",
-            "vbs:mode_stay"
+            "vbs:mode_stay",
+            "vbs:mode_mine",
+            "vbs:mode_wander",
+            "vbs:mode_build"
           ]
         },
         "add": {
@@ -318,12 +489,69 @@
             "vbs:mode_follow",
             "vbs:mode_farm",
             "vbs:mode_attack",
-            "vbs:mode_stay"
+            "vbs:mode_stay",
+            "vbs:mode_mine",
+            "vbs:mode_wander",
+            "vbs:mode_build"
           ]
         },
         "add": {
           "component_groups": [
             "vbs:mode_stay"
+          ]
+        }
+      },
+      "vbs:set_mine": {
+        "remove": {
+          "component_groups": [
+            "vbs:mode_follow",
+            "vbs:mode_farm",
+            "vbs:mode_attack",
+            "vbs:mode_stay",
+            "vbs:mode_mine",
+            "vbs:mode_wander",
+            "vbs:mode_build"
+          ]
+        },
+        "add": {
+          "component_groups": [
+            "vbs:mode_mine"
+          ]
+        }
+      },
+      "vbs:set_wander": {
+        "remove": {
+          "component_groups": [
+            "vbs:mode_follow",
+            "vbs:mode_farm",
+            "vbs:mode_attack",
+            "vbs:mode_stay",
+            "vbs:mode_mine",
+            "vbs:mode_wander",
+            "vbs:mode_build"
+          ]
+        },
+        "add": {
+          "component_groups": [
+            "vbs:mode_wander"
+          ]
+        }
+      },
+      "vbs:set_build": {
+        "remove": {
+          "component_groups": [
+            "vbs:mode_follow",
+            "vbs:mode_farm",
+            "vbs:mode_attack",
+            "vbs:mode_stay",
+            "vbs:mode_mine",
+            "vbs:mode_wander",
+            "vbs:mode_build"
+          ]
+        },
+        "add": {
+          "component_groups": [
+            "vbs:mode_build"
           ]
         }
       }

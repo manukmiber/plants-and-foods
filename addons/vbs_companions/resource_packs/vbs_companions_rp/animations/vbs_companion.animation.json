@@ -155,29 +155,36 @@
       "bones": {
         "rightArm": {
           "rotation": [
-            "-58 + math.sin(query.life_time * 320) * 16",
+            "-62 + math.sin(query.life_time * 320) * 18",
             0.0,
-            -14.0
+            -16.0
           ]
         },
         "leftArm": {
           "rotation": [
-            -24.0,
+            -26.0,
             0.0,
-            16.0
+            18.0
           ]
         },
         "body": {
           "rotation": [
             0.0,
-            9.0,
+            12.0,
             0.0
           ]
         },
         "head": {
           "rotation": [
             4.0,
-            -6.0,
+            -8.0,
+            0.0
+          ]
+        },
+        "waist": {
+          "rotation": [
+            0.0,
+            -4.0,
             0.0
           ]
         }
@@ -226,6 +233,275 @@
             "math.sin(query.life_time * 130 + 55) * 4 - math.cos(query.modified_distance_moved * 38.17 + 55) * 12 * query.modified_move_speed",
             0.0,
             "1 * math.sin(query.life_time * 95 + 55) * 3.5"
+          ]
+        }
+      }
+    },
+    "animation.vbs_companion.harvest": {
+      "loop": true,
+      "bones": {
+        "body": {
+          "rotation": [
+            27.0,
+            0.0,
+            0.0
+          ],
+          "position": [
+            0.0,
+            -2.6,
+            1.4
+          ]
+        },
+        "waist": {
+          "rotation": [
+            6.0,
+            0.0,
+            0.0
+          ]
+        },
+        "head": {
+          "rotation": [
+            14.0,
+            "math.sin(query.life_time * 210) * 4",
+            0.0
+          ]
+        },
+        "rightArm": {
+          "rotation": [
+            "-74 + math.sin(query.life_time * 520) * 40",
+            0.0,
+            "-8 + math.sin(query.life_time * 520) * 6"
+          ]
+        },
+        "leftArm": {
+          "rotation": [
+            "-56 + math.cos(query.life_time * 520) * 20",
+            0.0,
+            8.0
+          ]
+        },
+        "rightLeg": {
+          "rotation": [
+            -26.0,
+            0.0,
+            0.0
+          ],
+          "position": [
+            0.0,
+            0.0,
+            1.2
+          ]
+        },
+        "leftLeg": {
+          "rotation": [
+            -14.0,
+            0.0,
+            0.0
+          ],
+          "position": [
+            0.0,
+            0.0,
+            0.4
+          ]
+        },
+        "gear_hat": {
+          "rotation": [
+            "math.sin(query.life_time * 520) * 3",
+            0.0,
+            0.0
+          ]
+        }
+      }
+    },
+    "animation.vbs_companion.mine": {
+      "loop": true,
+      "bones": {
+        "rightArm": {
+          "rotation": [
+            "-150 + math.abs(math.sin(query.life_time * 400)) * 132",
+            0.0,
+            -10.0
+          ]
+        },
+        "leftArm": {
+          "rotation": [
+            "-132 + math.abs(math.sin(query.life_time * 400)) * 116",
+            0.0,
+            10.0
+          ]
+        },
+        "body": {
+          "rotation": [
+            "6 + math.abs(math.sin(query.life_time * 400)) * 12",
+            0.0,
+            0.0
+          ]
+        },
+        "head": {
+          "rotation": [
+            12.0,
+            0.0,
+            0.0
+          ]
+        },
+        "gear_lamp": {
+          "rotation": [
+            "math.sin(query.life_time * 400) * 7",
+            0.0,
+            0.0
+          ]
+        }
+      }
+    },
+    "animation.vbs_companion.build": {
+      "loop": true,
+      "bones": {
+        "rightArm": {
+          "rotation": [
+            "-98 + math.sin(query.life_time * 300) * 24",
+            -14.0,
+            0.0
+          ]
+        },
+        "leftArm": {
+          "rotation": [
+            "-82 + math.cos(query.life_time * 300) * 18",
+            14.0,
+            0.0
+          ]
+        },
+        "body": {
+          "rotation": [
+            6.0,
+            "math.sin(query.life_time * 150) * 6",
+            0.0
+          ]
+        },
+        "head": {
+          "rotation": [
+            8.0,
+            "math.sin(query.life_time * 150) * 8",
+            0.0
+          ]
+        }
+      }
+    },
+    "animation.vbs_companion.aim": {
+      "loop": true,
+      "bones": {
+        "body": {
+          "rotation": [
+            0.0,
+            32.0,
+            0.0
+          ]
+        },
+        "head": {
+          "rotation": [
+            0.0,
+            -30.0,
+            0.0
+          ]
+        },
+        "rightArm": {
+          "rotation": [
+            -88.0,
+            -18.0,
+            "-14 + math.sin(query.life_time * 90) * 2"
+          ]
+        },
+        "leftArm": {
+          "rotation": [
+            -86.0,
+            26.0,
+            16.0
+          ]
+        },
+        "rightLeg": {
+          "rotation": [
+            0.0,
+            14.0,
+            0.0
+          ]
+        },
+        "leftLeg": {
+          "rotation": [
+            0.0,
+            -10.0,
+            0.0
+          ]
+        }
+      }
+    },
+    "animation.vbs_companion.talk": {
+      "loop": true,
+      "bones": {
+        "rightArm": {
+          "rotation": [
+            "-36 + math.sin(query.life_time * 260) * 26",
+            0.0,
+            "-16 + math.sin(query.life_time * 190) * 8"
+          ]
+        },
+        "leftArm": {
+          "rotation": [
+            "-14 + math.cos(query.life_time * 220) * 12",
+            0.0,
+            10.0
+          ]
+        },
+        "head": {
+          "rotation": [
+            "math.sin(query.life_time * 300) * 5",
+            "math.sin(query.life_time * 170) * 9",
+            0.0
+          ]
+        },
+        "body": {
+          "rotation": [
+            0.0,
+            "math.sin(query.life_time * 140) * 4",
+            0.0
+          ]
+        }
+      }
+    },
+    "animation.vbs_companion.greet": {
+      "loop": true,
+      "bones": {
+        "rightArm": {
+          "rotation": [
+            -146.0,
+            0.0,
+            "-20 + math.sin(query.life_time * 620) * 17"
+          ]
+        },
+        "leftArm": {
+          "rotation": [
+            -8.0,
+            0.0,
+            8.0
+          ]
+        },
+        "head": {
+          "rotation": [
+            -7.0,
+            0.0,
+            "math.sin(query.life_time * 310) * 5"
+          ]
+        },
+        "body": {
+          "rotation": [
+            -4.0,
+            0.0,
+            0.0
+          ]
+        },
+        "waist": {
+          "rotation": [
+            2.0,
+            0.0,
+            0.0
           ]
         }
       }

@@ -106,7 +106,7 @@ builder never reads or writes them.
 
 | Add-on | What it is |
 |---|---|
-| [`addons/vbs_companions/`](addons/vbs_companions/) | Five companion characters that follow you, farm, and fight — commanded from a UI that opens when you sneak and tap them. Bedrock only. |
+| [`addons/vbs_companions/`](addons/vbs_companions/) | Five companion characters that follow you, farm, fight, mine, wander and build — commanded from a UI that opens when you sneak and tap them. They wear the gear of whatever job they are on, talk to each other, and stop to wave when you look at them. Bedrock only. |
 
 ## Connecting the builder to this repo
 

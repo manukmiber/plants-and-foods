@@ -51,14 +51,41 @@ PARENT_OF = {"waist": "body", "cape": "body", "headphones": "head", "cap": "head
 def build_bones(char):
     """Daftar bone -> kubus untuk satu karakter.
 
-    Dua bentuk badan: "classic" (kelima karakter asli, satu kubus per bagian)
-    dan "detailed" (rambut berlapis, rok empat panel, delapan wajah). Keduanya
-    memakai nama bone yang sama untuk bagian yang sama, jadi satu berkas animasi
-    menggerakkan keduanya.
+    Dua bentuk badan: "classic" (satu kubus per bagian) dan "detailed" (rambut
+    berlapis, delapan wajah, dua perawakan). Keduanya memakai nama bone yang sama
+    untuk bagian yang sama, jadi satu berkas animasi menggerakkan keduanya, dan
+    keduanya diakhiri dengan bone perlengkapan role yang sama.
     """
     build = char["style"].get("build", "classic")
     bones = build_detailed(char) if build == "detailed" else build_classic(char)
-    return _fill_optional(bones)
+    return _fill_optional(bones) + gear_bones(build)
+
+
+def gear_bones(build):
+    """Perlengkapan yang muncul menurut role, bukan menurut karakter.
+
+    Keempatnya ada di SEMUA karakter dan selalu punya kubus; yang menyembunyikan
+    adalah part_visibility di render controller, yang membacanya dari entity
+    property vbs:hat. Dibuat begitu supaya berganti role tidak perlu mengganti
+    geometry — cukup satu setProperty dari script.
+    """
+    p = "d_" if build == "detailed" else ""
+    return [
+        # topi jerami petani: mahkota di atas rambut, tepi lebar mengelilingi
+        {"name": "gear_hat", "parent": "head", "pivot": [0, 32, 0], "cubes": [
+            cube(f"{p}hat_brim", [-5.5, 32.6, -5.5], [11, 1, 11]),
+            cube(f"{p}hat_crown", [-3.5, 33.0, -3.5], [7, 3, 7]),
+        ]},
+        # helm penambang
+        {"name": "gear_helm", "parent": "head", "pivot": [0, 32, 0],
+         "cubes": [cube(f"{p}helm", [-4.6, 31.6, -4.6], [9, 3, 9], inflate=0.2)]},
+        # lampu di kening helm — bone sendiri supaya bisa diayun animasi menambang
+        {"name": "gear_lamp", "parent": "head", "pivot": [0, 32.4, -4.4],
+         "cubes": [cube(f"{p}lamp", [-1, 32.6, -5.6], [2, 2, 1])]},
+        # ransel pengembara
+        {"name": "gear_pack", "parent": "body", "pivot": [0, 20, 2],
+         "cubes": [cube(f"{p}pack", [-3, 14, 2.1], [6, 7, 3])]},
+    ]
 
 
 def _fill_optional(bones):
@@ -175,19 +202,44 @@ FACES = ("neutral", "blink", "smile", "happy", "surprised", "hurt", "sleepy", "s
 
 
 def build_detailed(char):
-    """Badan karakter yang detail.
+    """Badan karakter yang detail, dalam dua perawakan.
 
     Bedanya dengan classic bukan sekadar jumlah kubus: rambut jadi cangkang
-    berpotongan poni supaya wajah tembus di baliknya, rok jadi empat panel yang
-    bisa berayun sendiri-sendiri, ekor rambut dua ruas supaya ujungnya tertinggal
-    sepersekian detik dari kepala, dan wajah jadi delapan bidang bertumpuk yang
-    dipilih render controller.
+    berpotongan poni supaya wajah tembus di baliknya, ekor rambut dua ruas supaya
+    ujungnya tertinggal sepersekian detik dari kepala, dan wajah jadi delapan
+    bidang bertumpuk yang dipilih render controller.
 
-    Rangkanya tetap sama dengan classic — kaki 0..12, badan 12..24, kepala
-    24..32 — supaya berdiri sejajar dengan yang lain di lineup dan dengan pemain.
-    Ukuran kubus dijaga bilangan bulat karena petak tekstur diturunkan dari
-    ukuran itu; pelapisan dikerjakan lewat origin pecahan dan inflate.
+    Dua perawakan memakai kerangka dan nama bone yang persis sama — kaki 0..12,
+    badan 12..24, kepala 24..32 — jadi satu berkas animasi menggerakkan keduanya
+    dan keduanya berdiri sejajar di lineup. Yang berbeda hanya potongannya:
+    "female" memakai rok empat panel, kaus kaki selutut dan sepatu tinggi;
+    "male" memakai bahu lebih lebar, celana panjang, sepatu rendah, tudung hoodie
+    di punggung dan poni runcing.
     """
+    st = char["style"]
+    if st.get("figure", "female") == "male":
+        return _detailed_male(st)
+    return _detailed_female(st)
+
+
+def _detailed_head(hair, spike_cut=False):
+    """Kepala, delapan bidang wajah, dan bone rambut — sama untuk dua perawakan."""
+    bones = [{"name": "head", "parent": "body", "pivot": [0, 24, 0], "cubes": [
+        cube("d_head", [-4, 24, -4], [8, 8, 8]),
+        cube("d_ear", [-4.6, 26, -1], [1, 2, 1]),
+        cube("d_ear", [3.6, 26, -1], [1, 2, 1]),
+    ]}]
+    # Wajah: satu bidang per ekspresi, semuanya di tempat yang sama. Render
+    # controller memilih satu; sisanya disembunyikan.
+    for name in FACES:
+        bones.append({"name": f"face_{name}", "parent": "head", "pivot": [0, 24, 0],
+                      "cubes": [cube(f"d_face_{name}", [-4, 24, -4.15], [8, 8, 0])]})
+    bones.append({"name": "hair", "parent": "head", "pivot": [0, 24, 0], "cubes": hair})
+    bones.append({"name": "cap", "parent": "head", "pivot": [0, 30.6, 0], "cubes": []})
+    return bones
+
+
+def _detailed_female(st):
     bones = [{"name": "root", "parent": None, "pivot": [0, 0, 0], "cubes": []}]
 
     # --- badan: kemeja, jaket terbuka, pita dada, kerah, celana pendek ------
@@ -211,21 +263,7 @@ def build_detailed(char):
         bones.append({"name": name, "parent": "waist", "pivot": pivot,
                       "rotation": rot, "cubes": [cube(slot, origin, size)]})
 
-    # --- kepala ------------------------------------------------------------
-    bones.append({"name": "head", "parent": "body", "pivot": [0, 24, 0], "cubes": [
-        cube("d_head", [-4, 24, -4], [8, 8, 8]),
-        cube("d_ear", [-4.6, 26, -1], [1, 2, 1]),
-        cube("d_ear", [3.6, 26, -1], [1, 2, 1]),
-    ]})
-
-    # --- wajah: satu bidang per ekspresi, semuanya di tempat yang sama.
-    #     Render controller yang memilih satu; sisanya disembunyikan. ---------
-    for name in FACES:
-        bones.append({"name": f"face_{name}", "parent": "head", "pivot": [0, 24, 0],
-                      "cubes": [cube(f"d_face_{name}", [-4, 24, -4.15], [8, 8, 0])]})
-
-    # --- rambut ------------------------------------------------------------
-    bones.append({"name": "hair", "parent": "head", "pivot": [0, 24, 0], "cubes": [
+    hair = [
         # Cangkang di seluruh tempurung kepala. Sisi depannya digambar sebagai
         # poni dengan bagian bawah dipotong tembus — lubang itulah yang bikin ini
         # rambut, bukan helm.
@@ -234,25 +272,28 @@ def build_detailed(char):
         cube("d_hair_nape", [-3, 17, 2.6], [6, 6, 2]),
         cube("d_hair_side", [-5, 25, -4.6], [2, 6, 3]),
         cube("d_hair_side", [3, 25, -4.6], [2, 6, 3]),
-        cube("d_ahoge", [-0.5, 31.6, -1], [1, 3, 1],
-             rotation=[-28, 0, 14], pivot=[0, 31.6, -0.5]),
-        cube("d_clip", [1.4, 30.4, -4.75], [3, 1, 1]),
-    ]})
-    bones.append({"name": "cap", "parent": "head", "pivot": [0, 30.6, 0], "cubes": []})
+    ]
+    if st["ahoge"]:
+        hair.append(cube("d_ahoge", [-0.5, 31.6, -1], [1, 3, 1],
+                         rotation=[-28, 0, 14], pivot=[0, 31.6, -0.5]))
+    # jepit rambut selalu ada di perawakan ini; bentuknya bagian dari desainnya
+        hair.append(cube("d_clip", [1.4, 30.4, -4.75], [3, 1, 1]))
+    bones += _detailed_head(hair)
 
     # --- ekor rambut: diikat di samping, sedikit mengembang keluar ----------
-    for side, sign in (("r", -1), ("l", 1)):
-        x = -4.2 if sign < 0 else 4.2
-        rib = -5.9 if sign < 0 else 2.9
-        bones.append({"name": f"hair_tail_{side}", "parent": "head",
-                      "pivot": [x, 27.5, 2.8], "rotation": [3, 0, -9 * sign], "cubes": [
-                          cube("d_ribbon", [rib, 26.4, 1.8], [3, 2, 2]),
-                          cube("d_tail_up", [rib, 21, 1.8], [3, 6, 3]),
-                      ]})
-        tip = -5.4 if sign < 0 else 3.4
-        bones.append({"name": f"hair_tail_{side}_tip", "parent": f"hair_tail_{side}",
-                      "pivot": [x - 0.2 * sign, 21.5, 3.3], "rotation": [3, 0, -6 * sign],
-                      "cubes": [cube("d_tail_low", [tip, 15.5, 2.3], [2, 6, 2])]})
+    if st["twintails"]:
+        for side, sign in (("r", -1), ("l", 1)):
+            x = -4.2 if sign < 0 else 4.2
+            rib = -5.9 if sign < 0 else 2.9
+            bones.append({"name": f"hair_tail_{side}", "parent": "head",
+                          "pivot": [x, 27.5, 2.8], "rotation": [3, 0, -9 * sign], "cubes": [
+                              cube("d_ribbon", [rib, 26.4, 1.8], [3, 2, 2]),
+                              cube("d_tail_up", [rib, 21, 1.8], [3, 6, 3]),
+                          ]})
+            tip = -5.4 if sign < 0 else 3.4
+            bones.append({"name": f"hair_tail_{side}_tip", "parent": f"hair_tail_{side}",
+                          "pivot": [x - 0.2 * sign, 21.5, 3.3], "rotation": [3, 0, -6 * sign],
+                          "cubes": [cube("d_tail_low", [tip, 15.5, 2.3], [2, 6, 2])]})
 
     # --- lengan ------------------------------------------------------------
     for name, x, pivot_x in (("rightArm", -7.0, -4.0), ("leftArm", 4.0, 4.0)):
@@ -267,6 +308,71 @@ def build_detailed(char):
         bones.append({"name": name, "parent": "root", "pivot": [pivot_x, 12, 0], "cubes": [
             cube("d_sock", [x, 3, -1.5], [3, 9, 3]),
             cube("d_boot", [x - 0.3, 0, -2.6], [4, 3, 5]),
+        ]})
+
+    return bones
+
+
+def _detailed_male(st):
+    """Perawakan laki-laki: bahu selebar model vanilla, celana panjang, hoodie.
+
+    Lengannya 4 satuan seperti pemain, bukan 3 seperti perawakan perempuan —
+    itu satu-satunya hal yang bikin siluetnya langsung terbaca berbeda dari jarak
+    jauh, lebih daripada potongan bajunya.
+    """
+    bones = [{"name": "root", "parent": None, "pivot": [0, 0, 0], "cubes": []}]
+
+    # --- badan: hoodie, jaket terbuka, pita cetak melintang dada, kerah -----
+    body = [
+        cube("d_shirt", [-4, 12, -2], [8, 12, 4]),
+        cube("d_jacket", [-4, 13.5, -2], [8, 10, 4], inflate=0.45),
+        cube("d_tape", [-4, 17.4, -2], [8, 1, 4], inflate=0.5),
+        cube("d_collar", [-4, 22, -2], [8, 2, 4], inflate=0.85),
+        cube("d_neck", [-1.5, 23, -1.5], [3, 2, 3]),
+    ]
+    if st["belt"]:
+        body.append(cube("d_belt", [-4, 12, -2], [8, 2, 4], inflate=0.32))
+    bones.append({"name": "body", "parent": "root", "pivot": [0, 24, 0], "cubes": body})
+    bones.append({"name": "waist", "parent": "body", "pivot": [0, 12, 0], "cubes": []})
+
+    # Tudung hoodie jatuh di punggung. Ditaruh di bone "cape" supaya ikut ayunan
+    # yang sudah ada di animation.vbs_companion.hair — tidak perlu animasi baru.
+    hood = [cube("d_hood", [-3.5, 17.4, 2.0], [7, 5, 4])] if st["hood"] else []
+    bones.append({"name": "cape", "parent": "body", "pivot": [0, 22.4, 2.0], "cubes": hood})
+
+    # --- rambut: cangkang dipotong runcing + rumbai poni yang menjorok -------
+    hair = [
+        cube("d_hair_cap", [-4, 24, -4], [8, 8, 8], inflate=0.7),
+        cube("d_hair_back", [-4.5, 25.5, 2.5], [9, 5, 2]),
+        cube("d_hair_side", [-5, 26.5, -4.6], [2, 4, 3]),
+        cube("d_hair_side", [3, 26.5, -4.6], [2, 4, 3]),
+    ]
+    if st["bangs"] == "spiky":
+        hair.append(cube("d_spike", [-3, 29.4, -5.6], [6, 3, 2],
+                         rotation=[14, 0, 0], pivot=[0, 29.4, -4.6]))
+    if st["ahoge"]:
+        hair.append(cube("d_ahoge", [-0.5, 31.8, -1], [1, 3, 1],
+                         rotation=[-30, 0, 12], pivot=[0, 31.8, -0.5]))
+    bones += _detailed_head(hair)
+
+    # --- lengan: 4 satuan, manset, sarung tangan ---------------------------
+    for name, x, pivot_x in (("rightArm", -8.0, -4.0), ("leftArm", 4.0, 4.0)):
+        arm = [
+            cube("d_sleeve", [x, 15.5, -2], [4, 8, 4]),
+            cube("d_cuff", [x, 14.2, -2], [4, 2, 4], inflate=0.25),
+        ]
+        if st["gloves"]:
+            arm.append(cube("d_glove", [x, 11.8, -2], [4, 3, 4]))
+        else:
+            arm.append(cube("d_hand", [x, 12.4, -2], [4, 2, 4]))
+        bones.append({"name": name, "parent": "body", "pivot": [pivot_x, 22.5, 0],
+                      "cubes": arm})
+
+    # --- kaki: celana panjang dan sepatu rendah ----------------------------
+    for name, x, pivot_x in (("rightLeg", -4.05, -2.0), ("leftLeg", 0.05, 2.0)):
+        bones.append({"name": name, "parent": "root", "pivot": [pivot_x, 12, 0], "cubes": [
+            cube("d_pants", [x, 2.4, -2], [4, 10, 4]),
+            cube("d_shoe", [x, 0, -2.6], [4, 3, 4]),
         ]})
 
     return bones

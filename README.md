@@ -95,6 +95,20 @@ in the builder repo, and
 [`docs/AI_ASSIST.md`](https://github.com/manukmiber/Minecraft-web/blob/main/docs/AI_ASSIST.md)
 is the brief to hand an AI tool that is generating one.
 
+## What is *not* stored here
+
+The builder's workspace companion — the 3D character that stands in the corner
+while you build — reads a model you supply, and that model is deliberately kept
+out of this repository. It lives in the browser that imported it and is never
+committed, uploaded or exported.
+
+MMD models are overwhelmingly distributed under terms that forbid
+redistribution, and a copy here would be redistribution however few people can
+read the repo. So a save slot never carries one: this repo is the add-on, and
+the companion is not part of the add-on. The builder's
+[`docs/COMPANION.md`](https://github.com/manukmiber/Minecraft-web/blob/main/docs/COMPANION.md)
+goes through it.
+
 ## Connecting the builder to this repo
 
 In the builder's **Settings → Project repository**:

@@ -13,9 +13,9 @@ record of what arrived from where survives in git.
 
 ```json
 {
-  "presetVersion": 1,
+  "presetFormat": 1,
   "id": "wild-herbs",
-  "name": "Wild herbs",
+  "label": "Wild herbs",
   "description": "Three herbs that scatter through plains and forest.",
   "nodes": [
     {
@@ -51,11 +51,34 @@ instead — it is written as a brief rather than a reference.
 
 ## Two things worth knowing
 
-**Textures are not in the preset.** A preset carries field values, not PNGs. A
-crop that arrives here with no artwork is applied fine and then shows the
-missing-texture checker until someone draws or drops one in the builder. That
-is deliberate: base64 images inside a JSON file make the diff unreadable and
-the file enormous.
+**Textures are usually not in the preset.** A preset carries field values, not
+PNGs. A crop that arrives here with no artwork is applied fine and then shows
+the missing-texture checker until someone draws or drops one in the builder.
+That is deliberate: base64 images inside a JSON file make the diff unreadable
+and the file enormous.
+
+The exception is artwork the builder already ships. An `assets` array binds one
+of its own images to a texture slot on a node the preset creates:
+
+```json
+"assets": [
+  {
+    "node": "entity:kohane",
+    "slot": "main",
+    "fileName": "kohane.png",
+    "url": "textures/characters/kohane/kohane.png",
+    "width": 512,
+    "height": 512
+  }
+]
+```
+
+`url` has to be a path under `textures/` served by the builder — a preset in
+this inbox is untrusted input, and one that could name any host would be
+fetching bytes off the internet the moment somebody pressed **Apply**. Something
+genuinely self-contained can inline `base64` instead, with the size caveat
+above. A texture that fails to load leaves its slot empty; the rest of the
+preset still applies.
 
 **A preset can be wrong and still apply.** The builder validates on apply and
 reports what it could not use rather than refusing the whole file, so a preset

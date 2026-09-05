@@ -1,0 +1,13 @@
+## VBS Companions
+action.interact.vbs_menu=Buka Menu
+
+entity.vbs:akito.name=Akito
+item.spawn_egg.entity.vbs:akito.name=Panggil Akito
+entity.vbs:kohane.name=Kohane
+item.spawn_egg.entity.vbs:kohane.name=Panggil Kohane
+entity.vbs:an.name=An
+item.spawn_egg.entity.vbs:an.name=Panggil An
+entity.vbs:toya.name=Toya
+item.spawn_egg.entity.vbs:toya.name=Panggil Toya
+entity.vbs:flins.name=Flins
+item.spawn_egg.entity.vbs:flins.name=Panggil Flins

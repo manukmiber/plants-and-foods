@@ -1,0 +1,52 @@
+{
+  "format_version": "1.10.0",
+  "minecraft:client_entity": {
+    "description": {
+      "identifier": "vbs:kohane",
+      "min_engine_version": "1.21.0",
+      "materials": {
+        "default": "entity_alphatest"
+      },
+      "textures": {
+        "default": "textures/entity/vbs_companions/kohane"
+      },
+      "geometry": {
+        "default": "geometry.vbs_companion.kohane"
+      },
+      "animations": {
+        "look_at_target": "animation.vbs_companion.look_at_target",
+        "idle": "animation.vbs_companion.idle",
+        "walk": "animation.vbs_companion.walk",
+        "hair": "animation.vbs_companion.hair",
+        "combat": "animation.vbs_companion.combat",
+        "detail": "animation.vbs_companion.detail"
+      },
+      "scripts": {
+        "animate": [
+          "look_at_target",
+          "idle",
+          "walk",
+          "hair",
+          {
+            "combat": "query.is_angry"
+          },
+          "detail"
+        ],
+        "initialize": [
+          "variable.vbs_face = 0;"
+        ],
+        "pre_animation": [
+          "variable.vbs_face = (query.hurt_time > 0) ? 5 : ((query.is_angry) ? 4 : ((!query.is_on_ground) ? 4 : ((math.mod(query.life_time, 4.6) < 0.16) ? 1 : ((query.modified_move_speed > 0.86) ? 7 : ((query.modified_move_speed > 0.08) ? 3 : ((math.mod(query.life_time, 37) < 2.4 && query.modified_move_speed < 0.02) ? 6 : ((math.mod(query.life_time, 13) < 2.2) ? 2 : 0)))))));"
+        ]
+      },
+      "render_controllers": [
+        "controller.render.vbs_companion.kohane"
+      ],
+      "spawn_egg": {
+        "texture": "vbs_spawn_egg_kohane",
+        "texture_index": 0
+      },
+      "enable_attachables": false
+    }
+  }
+}

@@ -1,0 +1,73 @@
+{
+  "presetFormat": 1,
+  "id": "companion.kohane",
+  "label": "Kohane, the companion",
+  "description": "A tameable companion who follows you, sits when told, fights alongside you and reacts with eight facial expressions. Arrives with her skin and a painted spawn egg.",
+  "notes": [
+    "Offer her a cookie to tame her; after that, interacting toggles sitting.",
+    "The face reacts on its own — a blink, a wince when she is hurt, a grin while she walks, and a doze when she sits. It runs in the render controller, so it costs the server nothing.",
+    "Feeding her cake heals her.",
+    "Her skin is a 512px sheet over a 128-unit body, which is four times vanilla resolution. Open it in the Textures tab to repaint her."
+  ],
+  "nodes": [
+    {
+      "kind": "entity",
+      "name": "kohane",
+      "displayName": "Kohane",
+      "notes": "Companion. Tamed with a cookie, follows her owner, sits on interact, and defends whoever tamed her.",
+      "data": {
+        "families": [
+          "companion",
+          "friendly"
+        ],
+        "isSummonable": true,
+        "hasSpawnEgg": true,
+        "eggBaseColor": "#e7d7b0",
+        "eggOverlayColor": "#e8306e",
+        "bodyPreset": "companion",
+        "scale": 1,
+        "health": 24,
+        "movementSpeed": 0.3,
+        "collisionWidth": 0.6,
+        "collisionHeight": 1.9,
+        "temperament": "companion",
+        "tameItems": [
+          "minecraft:cookie",
+          "minecraft:cake"
+        ],
+        "followDistance": 9,
+        "canSit": true,
+        "defendsOwner": true,
+        "canBeLeashed": true,
+        "healItems": [
+          "minecraft:cake",
+          "minecraft:pumpkin_pie"
+        ],
+        "healAmount": 6,
+        "attackDamage": 3,
+        "expressive": true,
+        "canFly": false,
+        "despawns": false,
+        "spawnEnabled": false
+      }
+    }
+  ],
+  "assets": [
+    {
+      "node": "entity:kohane",
+      "slot": "main",
+      "fileName": "kohane.png",
+      "url": "textures/characters/kohane/kohane.png",
+      "width": 512,
+      "height": 512
+    },
+    {
+      "node": "entity:kohane",
+      "slot": "spawn_egg",
+      "fileName": "kohane_spawn_egg.png",
+      "url": "textures/characters/kohane/kohane_spawn_egg.png",
+      "width": 128,
+      "height": 128
+    }
+  ]
+}

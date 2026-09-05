@@ -11,7 +11,7 @@ import { craftStep, labelOf } from "./crafting.js";
 import { decorateStep } from "./decorate.js";
 import { hold } from "./hold.js";
 import { isGreeting } from "./look.js";
-import { claimAt, chunkBounds, claimsNear, getClaim, markWorked } from "./claim.js";
+import { claimAt, chunkBounds, claimsNear, getClaim, markWorked } from "./state.js";
 import { maybeRequestHelp } from "./requests.js";
 import { patchState, writeState } from "./state.js";
 import { ensureStation, refreshSign } from "./station.js";

@@ -21,6 +21,7 @@ const BEAM = {
   free: "minecraft:basic_flame_particle",
   claimed: "minecraft:villager_happy",
 };
+export { getClaim };
 
 export function makeStake() {
   logDebug(TAG, "Membuat ItemStack Patok Ladang...");

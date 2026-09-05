@@ -20,6 +20,8 @@ const EMPTY = {
   allowExpand: false,
   decorated: false,
   quiet: false,
+  hideOwner: false,
+  energy: 100,
 };
 
 export function readState(entity) {
@@ -105,6 +107,33 @@ export function claimsOf(playerId) {
     out.push({ dim, cx, cz, ...entry });
   }
   return out;
+}
+
+export function homeKey(ownerId) {
+  return `${PROP.villageHomes}:${ownerId}`;
+}
+
+export function readVillageHomes(ownerId) {
+  try {
+    const raw = world.getDynamicProperty(homeKey(ownerId));
+    return typeof raw === "string" ? JSON.parse(raw) : [];
+  } catch (e) {
+    logWarn(TAG, `Gagal membaca rumah desa milik ${ownerId}`, e);
+    return [];
+  }
+}
+
+export function addVillageHome(ownerId, home) {
+  logInfo(TAG, `addVillageHome: ${ownerId} -> ${JSON.stringify(home)}`);
+  const list = readVillageHomes(ownerId);
+  list.push(home);
+  try {
+    world.setDynamicProperty(homeKey(ownerId), JSON.stringify(list));
+    return true;
+  } catch (e) {
+    logError(TAG, "Gagal menulis rumah desa (kuota limit?)", e);
+    return false;
+  }
 }
 
 const MAX_WAYPOINTS = 48;

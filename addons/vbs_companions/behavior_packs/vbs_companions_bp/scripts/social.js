@@ -5,10 +5,11 @@
 import { system } from "@minecraft/server";
 import { POSE, TICKS } from "./config.js";
 import { say } from "./chat.js";
+import { restoreFromChat } from "./energy.js";
 import { hold } from "./hold.js";
 import { TOPICS } from "./lines.js";
 import { isGreeting } from "./look.js";
-import { readState } from "./state.js";
+import { patchState, readState } from "./state.js";
 import { alive, dist2, face, getMode, getOwnerId, pick } from "./util.js";
 import { entStr, logDebug, logInfo } from "./logger.js";
 
@@ -52,6 +53,13 @@ function begin(a, b) {
   talking.set(b.id, convo);
   lastTalk.set(pairKey(a.id, b.id), system.currentTick);
   logInfo(TAG, `Mulai percakapan antara ${entStr(a)} dan ${entStr(b)}: Topik="${topic.tag}"`);
+  // Ngobrol sebentar juga menghitung sebagai istirahat — companion tidak
+  // cuma boleh pulih tenaga dengan tidur.
+  for (const who of [a, b]) {
+    const st = readState(who);
+    restoreFromChat(who, st);
+    patchState(who, { energy: st.energy });
+  }
   return convo;
 }
 

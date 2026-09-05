@@ -8,11 +8,12 @@ import { report, sayFrom } from "./chat.js";
 import { craftStep } from "./crafting.js";
 import { hold } from "./hold.js";
 import { isGreeting } from "./look.js";
+import { maybeRequestHelp } from "./requests.js";
 import { writeState } from "./state.js";
 import { ensureStation } from "./station.js";
 import {
-  alive, blockAt, dist2, face, getGear, isAir, isSolid, makeItem, particle,
-  putIn, sound, steer,
+  alive, blockAt, dist2, face, getGear, getOwnerId, isAir, isSolid, makeItem,
+  particle, putIn, sound, steer,
 } from "./util.js";
 import { entStr, logDebug, logInfo, logWarn, posStr } from "./logger.js";
 
@@ -24,6 +25,10 @@ const BRANCH_LENGTH = 8;
 const BAG_LIMIT = 96;
 const REACH = 4.0;
 const DIG_PER_TICK = 2;
+// Lebar x tinggi terowongan: 1 blok lebar, 3 blok tinggi — cukup lega untuk
+// companion (dan pemain) berjalan tanpa menunduk, tidak seperti versi lama
+// yang cuma 2 tinggi dan terasa sempit.
+const TUNNEL_HEIGHT = 3;
 const LAVA = new Set(["minecraft:lava", "minecraft:flowing_lava"]);
 
 function targetDepth(dimensionId) {
@@ -121,12 +126,16 @@ export function tickMine(entity, state, owner) {
   if (isGreeting(entity)) return "berhenti karena disapa";
 
   const dimension = entity.dimension;
+  const ownerId = getOwnerId(entity);
   const station = ensureStation(entity, state);
   const container = station?.container;
 
   const held = getGear(entity).mainhand;
   const craft = craftStep(entity, state, "pickaxe", container, held);
-  if (craft === "no-material") return "peti kosong: butuh bahan untuk beliung";
+  if (craft === "no-material") {
+    maybeRequestHelp(entity, state, ownerId, "pickaxe", held, station?.chest);
+    return "peti kosong: butuh bahan untuk beliung (sudah minta tolong perajin)";
+  }
   if (craft === "no-table") return "tidak ada meja kerja dan tidak ada papan di peti";
   if (craft === "walking" || craft === "crafting") {
     writeState(entity, state);
@@ -227,10 +236,8 @@ function descend(entity, state, plan) {
       report(entity, "Ada lava di depan. Aku belok.");
       return "menghindari lava";
     }
-    const cells = [
-      blockAt(dimension, nx, ny, nz),
-      blockAt(dimension, nx, ny + 1, nz),
-    ];
+    const cells = [];
+    for (let dy = 0; dy < TUNNEL_HEIGHT; dy++) cells.push(blockAt(dimension, nx, ny + dy, nz));
     if (cells.some((b) => b && !diggable(b))) {
       plan.dir = (plan.dir + 1) % 4;
       logWarn(TAG, `Blok tidak bisa digali di tangga. Membelokkan arah tangga ke ${plan.dir}`);
@@ -268,17 +275,20 @@ function tunnel(entity, state, plan) {
       report(entity, "Lava. Aku tidak menembus situ.");
       return "menghindari lava";
     }
-    const lower = blockAt(dimension, nx, plan.y, nz);
-    const upper = blockAt(dimension, nx, plan.y + 1, nz);
-    if ((lower && !diggable(lower)) || (upper && !diggable(upper))) {
+    const cells = [];
+    for (let dy = 0; dy < TUNNEL_HEIGHT; dy++) cells.push(blockAt(dimension, nx, plan.y + dy, nz));
+    if (cells.some((b) => b && !diggable(b))) {
       if (digging) plan.branchStep = 0;
       else plan.dir = (plan.dir + 1) % 4;
       return "membelokkan terowongan";
     }
-    dig(entity, state, lower);
-    dig(entity, state, upper);
+    for (const cell of cells) dig(entity, state, cell);
 
-    for (const [ox, oy, oz] of [[1, 0, 0], [-1, 0, 0], [0, 0, 1], [0, 0, -1], [0, 2, 0], [0, -1, 0]]) {
+    const oreOffsets = [[0, -1, 0], [0, TUNNEL_HEIGHT, 0]];
+    for (let dy = 0; dy < TUNNEL_HEIGHT; dy++) {
+      oreOffsets.push([1, dy, 0], [-1, dy, 0], [0, dy, 1], [0, dy, -1]);
+    }
+    for (const [ox, oy, oz] of oreOffsets) {
       const near = blockAt(dimension, nx + ox, plan.y + oy, nz + oz);
       if (near && ORES[near.typeId]) dig(entity, state, near);
     }

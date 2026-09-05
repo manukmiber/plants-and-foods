@@ -212,6 +212,30 @@
           "interval": 120
         }
       },
+      "vbs:mode_crafter": {
+        "minecraft:behavior.follow_owner": {
+          "priority": 7,
+          "speed_multiplier": 1.0,
+          "start_distance": 16.0,
+          "stop_distance": 8.0
+        },
+        "minecraft:behavior.random_stroll": {
+          "priority": 9,
+          "speed_multiplier": 0.6,
+          "xz_dist": 6,
+          "y_dist": 3,
+          "interval": 120
+        }
+      },
+      "vbs:mode_looter": {
+        "minecraft:behavior.random_stroll": {
+          "priority": 9,
+          "speed_multiplier": 0.8,
+          "xz_dist": 10,
+          "y_dist": 5,
+          "interval": 50
+        }
+      },
       "vbs:weapon_melee": {
         "minecraft:behavior.melee_attack": {
           "priority": 5,
@@ -313,12 +337,7 @@
       },
       "minecraft:tameable": {
         "probability": 1.0,
-        "tame_items": [
-          "bread",
-          "apple",
-          "cake",
-          "cookie"
-        ],
+        "tame_items": [],
         "tame_event": {
           "event": "vbs:on_tamed",
           "target": "self"
@@ -438,7 +457,9 @@
             "vbs:mode_stay",
             "vbs:mode_mine",
             "vbs:mode_wander",
-            "vbs:mode_build"
+            "vbs:mode_build",
+            "vbs:mode_crafter",
+            "vbs:mode_looter"
           ]
         },
         "add": {
@@ -456,7 +477,9 @@
             "vbs:mode_stay",
             "vbs:mode_mine",
             "vbs:mode_wander",
-            "vbs:mode_build"
+            "vbs:mode_build",
+            "vbs:mode_crafter",
+            "vbs:mode_looter"
           ]
         },
         "add": {
@@ -474,7 +497,9 @@
             "vbs:mode_stay",
             "vbs:mode_mine",
             "vbs:mode_wander",
-            "vbs:mode_build"
+            "vbs:mode_build",
+            "vbs:mode_crafter",
+            "vbs:mode_looter"
           ]
         },
         "add": {
@@ -492,7 +517,9 @@
             "vbs:mode_stay",
             "vbs:mode_mine",
             "vbs:mode_wander",
-            "vbs:mode_build"
+            "vbs:mode_build",
+            "vbs:mode_crafter",
+            "vbs:mode_looter"
           ]
         },
         "add": {
@@ -510,7 +537,9 @@
             "vbs:mode_stay",
             "vbs:mode_mine",
             "vbs:mode_wander",
-            "vbs:mode_build"
+            "vbs:mode_build",
+            "vbs:mode_crafter",
+            "vbs:mode_looter"
           ]
         },
         "add": {
@@ -528,7 +557,9 @@
             "vbs:mode_stay",
             "vbs:mode_mine",
             "vbs:mode_wander",
-            "vbs:mode_build"
+            "vbs:mode_build",
+            "vbs:mode_crafter",
+            "vbs:mode_looter"
           ]
         },
         "add": {
@@ -546,12 +577,54 @@
             "vbs:mode_stay",
             "vbs:mode_mine",
             "vbs:mode_wander",
-            "vbs:mode_build"
+            "vbs:mode_build",
+            "vbs:mode_crafter",
+            "vbs:mode_looter"
           ]
         },
         "add": {
           "component_groups": [
             "vbs:mode_build"
+          ]
+        }
+      },
+      "vbs:set_crafter": {
+        "remove": {
+          "component_groups": [
+            "vbs:mode_follow",
+            "vbs:mode_farm",
+            "vbs:mode_attack",
+            "vbs:mode_stay",
+            "vbs:mode_mine",
+            "vbs:mode_wander",
+            "vbs:mode_build",
+            "vbs:mode_crafter",
+            "vbs:mode_looter"
+          ]
+        },
+        "add": {
+          "component_groups": [
+            "vbs:mode_crafter"
+          ]
+        }
+      },
+      "vbs:set_looter": {
+        "remove": {
+          "component_groups": [
+            "vbs:mode_follow",
+            "vbs:mode_farm",
+            "vbs:mode_attack",
+            "vbs:mode_stay",
+            "vbs:mode_mine",
+            "vbs:mode_wander",
+            "vbs:mode_build",
+            "vbs:mode_crafter",
+            "vbs:mode_looter"
+          ]
+        },
+        "add": {
+          "component_groups": [
+            "vbs:mode_looter"
           ]
         }
       }

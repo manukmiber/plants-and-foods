@@ -71,6 +71,22 @@ export const MODES = {
     icon: "textures/items/brick",
     hat: 0,
   },
+  crafter: {
+    label: "Merajin",
+    button: "§bMode Merajin",
+    hint: "Membuatkan alat untuk companion lain yang kehabisan",
+    event: "vbs:set_crafter",
+    icon: "textures/items/iron_ingot",
+    hat: 0,
+  },
+  looter: {
+    label: "Mencari Barang",
+    button: "§aMode Mencari Barang",
+    hint: "Menebang kayu, menggali batu, memungut barang untuk perajin & pembangun",
+    event: "vbs:set_looter",
+    icon: "textures/items/emerald",
+    hat: 0,
+  },
 };
 
 export const DEFAULT_MODE = "follow";
@@ -106,6 +122,8 @@ export const PROP = {
   state: "vbs:state",
   claims: "vbs:claims",
   waypoints: "vbs:waypoints",
+  requests: "vbs:requests",
+  villageHomes: "vbs:village_homes",
 };
 
 export const ARMOR_POINTS = {
@@ -232,6 +250,44 @@ export const FOOD_HEAL = {
 
 export const STAKE_NAME = "§ePatok Ladang";
 export const STAKE_ITEM = "minecraft:stick";
+
+export const VILLAGE_STAKE_NAME = "§2Patok Desa";
+export const VILLAGE_STAKE_ITEM = "minecraft:stick";
+
+// Bunga apa saja bisa dipakai untuk menjinakkan companion — secara default dia
+// liar (untamed) begitu muncul, dan baru menempel ke pemain sesudah diberi satu
+// bunga (item ini langsung habis dipakai, sama seperti taming kucing pakai ikan).
+export const FLOWERS = new Set([
+  "minecraft:poppy", "minecraft:dandelion", "minecraft:blue_orchid",
+  "minecraft:allium", "minecraft:azure_bluet", "minecraft:red_tulip",
+  "minecraft:orange_tulip", "minecraft:white_tulip", "minecraft:pink_tulip",
+  "minecraft:oxeye_daisy", "minecraft:cornflower", "minecraft:lily_of_the_valley",
+  "minecraft:wither_rose", "minecraft:sunflower", "minecraft:lilac",
+  "minecraft:rose_bush", "minecraft:peony", "minecraft:torchflower",
+  "minecraft:wildflowers", "minecraft:pink_petals", "minecraft:closed_eyeblossom",
+  "minecraft:open_eyeblossom",
+]);
+
+// Energi terkuras selama mode kerja (bukan follow/stay/greet) dan pulih lagi
+// selama beristirahat. Angka dalam poin per denyut kerja (TICKS.brain = 10 tick
+// game = 0.5 detik), jadi ~660 denyut kerja (±5,5 menit kerja terus-menerus)
+// menghabiskan energi penuh, dan istirahat penuh (20 -> 100) makan ±16 detik.
+export const ENERGY = {
+  max: 100,
+  start: 100,
+  drainPerWork: 0.15,
+  restPerTick: 5,
+  tiredAt: 35,
+  exhaustedAt: 15,
+  chatRestGain: 2,
+  minRestTicks: 100,
+};
+
+// Mode yang benar-benar dianggap "kerja" dan menguras energi. Follow, stay dan
+// diam saat disapa tidak menguras — companion cuma capek kalau benar bekerja.
+export const WORK_MODES = new Set([
+  "farm", "mine", "wander", "build", "attack", "crafter", "looter",
+]);
 
 export const LOOK = {
   enabled: true,

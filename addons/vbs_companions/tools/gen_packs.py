@@ -32,7 +32,7 @@ import model
 BP = os.path.join(model.HERE, "..", "behavior_packs", "vbs_companions_bp")
 RP = os.path.join(model.HERE, "..", "resource_packs", "vbs_companions_rp")
 
-VERSION = [1, 2, 0]
+VERSION = [1, 3, 0]
 MIN_ENGINE = [1, 21, 0]
 
 # UUID ini adalah identitas pack di mata Minecraft. JANGAN diubah setelah dirilis:
@@ -66,9 +66,10 @@ ORE_BLOCKS = [
     "minecraft:quartz_ore", "minecraft:ancient_debris",
 ]
 
-# Tujuh perintah yang bisa dipilih pemain. Urutannya sama dengan MODES di
+# Sembilan perintah yang bisa dipilih pemain. Urutannya sama dengan MODES di
 # config.js; validate.py yang memeriksa keduanya tidak melenceng.
-MODES = ["follow", "farm", "attack", "stay", "mine", "wander", "build"]
+MODES = ["follow", "farm", "attack", "stay", "mine", "wander", "build",
+         "crafter", "looter"]
 MODE_GROUPS = [f"vbs:mode_{m}" for m in MODES]
 WEAPON_GROUPS = ["vbs:weapon_melee", "vbs:weapon_bow"]
 
@@ -121,7 +122,8 @@ def manifests():
         "header": {
             "name": "VBS Companions §7[Behavior]",
             "description": "Karakter pendamping yang mengikuti, bertani, bertarung, "
-                           "menambang, mengembara dan membangun sesuai perintah.",
+                           "menambang, mengembara, membangun, merajin dan mencari "
+                           "barang sesuai perintah.",
             "uuid": UUID["bp_header"],
             "version": VERSION,
             "min_engine_version": MIN_ENGINE,
@@ -224,10 +226,15 @@ def entity_doc(char):
                 {"item": "cookie", "heal_amount": 3},
             ],
         },
-        # Kepemilikan sisi mesin gim: yang membuat behavior.follow_owner punya tuan.
+        # Kepemilikan sisi mesin gim: yang membuat behavior.follow_owner punya
+        # tuan. tame_items sengaja kosong — companion liar (untamed) begitu
+        # muncul, dan taming SEPENUHNYA dikendalikan script lewat pemberian
+        # satu bunga (lihat main.js: tryFeedFlower -> tameable.tame(player)),
+        # supaya kita yang menentukan siapa pemiliknya, bukan mesin taming
+        # bawaan yang mengambil pemain terdekat secara acak.
         "minecraft:tameable": {
             "probability": 1.0,
-            "tame_items": ["bread", "apple", "cake", "cookie"],
+            "tame_items": [],
             "tame_event": {"event": "vbs:on_tamed", "target": "self"},
         },
         # Memunculkan tombol interact di layar sentuh; UI-nya sendiri dari script.
@@ -316,6 +323,17 @@ def entity_doc(char):
         "vbs:mode_build": {
             "minecraft:behavior.follow_owner": follow_owner(1.0, 16.0, 8.0),
             "minecraft:behavior.random_stroll": stroll(0.6, xz=6, y=3),
+        },
+        "vbs:mode_crafter": {
+            # Perajin menempa di dekat stasiunnya sendiri; tidak perlu jauh-jauh.
+            "minecraft:behavior.follow_owner": follow_owner(1.0, 16.0, 8.0),
+            "minecraft:behavior.random_stroll": stroll(0.6, xz=6, y=3),
+        },
+        "vbs:mode_looter": {
+            # Sengaja tidak punya follow_owner, sama seperti pengembara — tapi
+            # radius stroll-nya jauh lebih kecil karena tugasnya di sekitar
+            # markas, bukan menjelajah jauh.
+            "minecraft:behavior.random_stroll": stroll(0.8, xz=10, y=5, interval=50),
         },
         # --- senjata: dipilih script dari isi tangan companion ---------------
         "vbs:weapon_melee": {

@@ -11,12 +11,13 @@ import { craftStep, labelOf } from "./crafting.js";
 import { decorateStep } from "./decorate.js";
 import { hold } from "./hold.js";
 import { isGreeting } from "./look.js";
-import { claimAt, chunkBounds, claimsNear, markWorked } from "./claim.js";
+import { claimAt, chunkBounds, claimsNear, getClaim, markWorked } from "./claim.js";
+import { maybeRequestHelp } from "./requests.js";
 import { patchState, writeState } from "./state.js";
 import { ensureStation, refreshSign } from "./station.js";
 import {
-  alive, blockAt, countIn, dist2, face, getGear, give, info, isAir, isSolid,
-  makeItem, particle, putIn, randomBetween, sound, steer, takeFrom,
+  alive, blockAt, countIn, dist2, face, getGear, getOwnerId, info, isAir,
+  isSolid, makeItem, particle, putIn, randomBetween, sound, steer, takeFrom,
 } from "./util.js";
 import { entStr, logDebug, logError, logInfo, logWarn, posStr } from "./logger.js";
 
@@ -57,8 +58,18 @@ export function workArea(entity, state, ownerId) {
     x0 = Math.min(x0, b.x0); x1 = Math.max(x1, b.x1);
     z0 = Math.min(z0, b.z0); z1 = Math.max(z1, b.z1);
   }
-  const area = { x0, x1, z0, z1, y: Math.floor(base.y), chunks, claimed: true };
-  logInfo(TAG, `workArea berpatok (${chunks.length} chunks): ${JSON.stringify(area)}`);
+  // Level acuan untuk meratakan seluruh area sebelum dicangkul: rata-rata Y
+  // tempat pemain mematok tiap chunk. Tanpa ini, ladang jadi berundak-undak
+  // mengikuti kontur tanah asli dan sebagian petak farmland tidak kebagian air.
+  const ys = chunks
+    .map((c) => getClaim(entity.dimension.id, c.cx, c.cz)?.y)
+    .filter((y) => typeof y === "number");
+  const flattenY = ys.length
+    ? Math.round(ys.reduce((a, b) => a + b, 0) / ys.length)
+    : Math.floor(base.y);
+
+  const area = { x0, x1, z0, z1, y: Math.floor(base.y), flattenY, chunks, claimed: true };
+  logInfo(TAG, `workArea berpatok (${chunks.length} chunks), flattenY=${flattenY}: ${JSON.stringify(area)}`);
   return area;
 }
 
@@ -86,6 +97,60 @@ function surfaceAt(dimension, x, z, baseY) {
     return here;
   }
   return undefined;
+}
+
+const FILL_BLOCK = "minecraft:dirt";
+const LEVEL_BUDGET = 6;
+
+// Meratakan satu kolom ke flattenY sebelum boleh dicangkul: kalau tanahnya
+// lebih tinggi, kelebihannya dibongkar (gratis, seperti menggali); kalau lebih
+// rendah, ditimbun pakai tanah dari peti (kalau ada). Kolom yang belum bisa
+// diratakan (kehabisan budget tick ini, atau tidak ada tanah timbun)
+// dilewati dulu — daripada dicangkul dalam keadaan jomplang.
+function levelColumn(dimension, x, z, targetY, container, budget) {
+  const surface = surfaceAt(dimension, x, z, targetY);
+  if (!surface) return { block: undefined, used: 0, reason: "none" };
+  if (surface.y === targetY) return { block: surface, used: 0, reason: "ok" };
+
+  if (surface.y > targetY) {
+    if (budget <= 0) return { block: undefined, used: 0, reason: "budget" };
+    let used = 0;
+    for (let y = surface.y; y > targetY && used < budget; y--) {
+      const b = blockAt(dimension, x, y, z);
+      if (!b || b.isAir) continue;
+      if (PROTECTED.has(b.typeId)) return { block: undefined, used, reason: "blocked" };
+      try {
+        b.setType("minecraft:air");
+        used++;
+      } catch (e) {
+        logWarn(TAG, `Gagal meratakan (membongkar) blok di (${x}, ${y}, ${z})`, e);
+        return { block: undefined, used, reason: "blocked" };
+      }
+    }
+    logInfo(TAG, `Meratakan kolom (${x}, ${z}): membongkar ${used} blok turun ke Y=${targetY}`);
+    return { block: blockAt(dimension, x, targetY, z), used, reason: "ok" };
+  }
+
+  if (countIn(container, FILL_BLOCK) < 1) return { block: undefined, used: 0, reason: "need-fill" };
+  if (budget <= 0) return { block: undefined, used: 0, reason: "budget" };
+  let used = 0;
+  for (let y = surface.y + 1; y <= targetY && used < budget; y++) {
+    if (takeFrom(container, FILL_BLOCK, 1) !== 1) break;
+    const b = blockAt(dimension, x, y, z);
+    if (!b) break;
+    try {
+      b.setType(FILL_BLOCK);
+      used++;
+    } catch (e) {
+      logWarn(TAG, `Gagal meratakan (menimbun) blok di (${x}, ${y}, ${z})`, e);
+      putIn(container, makeItem(FILL_BLOCK, 1));
+      break;
+    }
+  }
+  if (used) logInfo(TAG, `Meratakan kolom (${x}, ${z}): menimbun ${used} blok naik ke Y=${targetY}`);
+  const now = blockAt(dimension, x, targetY, z);
+  const done = now?.typeId === FILL_BLOCK;
+  return { block: done ? now : undefined, used, reason: done ? "ok" : "need-fill" };
 }
 
 function seedsIn(container) {
@@ -157,25 +222,22 @@ function ripe(block) {
   }
 }
 
-function deliver(entity, owner, container, item) {
+function deliver(entity, container, item) {
   if (!item) return;
   logInfo(TAG, `Mengirimkan hasil panen: ${item.amount}x ${item.typeId}`);
-  if (owner && owner.dimension.id === entity.dimension.id &&
-      dist2(owner.location, entity.location) < 16 * 16) {
-    logDebug(TAG, `Hasil panen diberikan langsung ke kantong pemilik (${owner.name})`);
-    give(owner, item);
-    return;
-  }
+  // Selalu masuk peti stasiun, tidak pernah langsung ke kantong pemain — supaya
+  // panen bisa dipakai companion lain (perajin, misalnya) dan pemain tetap bisa
+  // melihat hasil kerjanya numpuk di peti alih-alih menghilang ke kantongnya.
   if (container) {
     logDebug(TAG, `Hasil panen disetor ke peti stasiun.`);
     putIn(container, item, entity.dimension, entity.location);
     return;
   }
-  logWarn(TAG, "Tidak ada pemilik dekat atau peti; menjatuhkan hasil panen di tanah.");
+  logWarn(TAG, "Tidak ada peti stasiun; menjatuhkan hasil panen di tanah.");
   entity.dimension.spawnItem(item, entity.location);
 }
 
-function finishHarvest(entity, block, owner, container) {
+function finishHarvest(entity, block, container) {
   const crop = CROPS[block.typeId];
   if (!crop) return undefined;
   logInfo(TAG, `Menyelesaikan panen pada tanaman ${block.typeId} di ${posStr(block)}`);
@@ -184,7 +246,7 @@ function finishHarvest(entity, block, owner, container) {
     const count = randomBetween(min, max);
     if (count <= 0) continue;
     if (!main) main = id;
-    deliver(entity, owner, container, makeItem(id, count));
+    deliver(entity, container, makeItem(id, count));
   }
   try {
     block.setPermutation(block.permutation.withState(crop.state, 0));
@@ -200,7 +262,11 @@ export function tickFarm(entity, state, owner) {
   logDebug(TAG, `tickFarm dimulai untuk ${entStr(entity)}`);
   if (!alive(entity)) return "hilang";
   const dimension = entity.dimension;
-  const ownerId = owner?.id ?? state.ownerId;
+  // Diambil dari dynamic property entity langsung (bukan owner?.id) supaya
+  // patok, permintaan bantuan, dsb. tetap bekerja walau pemiliknya lagi
+  // offline — owner cuma object Player yang online, ownerId adalah identitas
+  // permanennya.
+  const ownerId = getOwnerId(entity);
 
   const station = ensureStation(entity, state);
   if (!station) {
@@ -211,7 +277,10 @@ export function tickFarm(entity, state, owner) {
 
   const held = getGear(entity).mainhand;
   const craft = craftStep(entity, state, "hoe", container, held);
-  if (craft === "no-material") return "peti kosong: butuh kayu, batu, besi, emas atau intan";
+  if (craft === "no-material") {
+    maybeRequestHelp(entity, state, ownerId, "hoe", held, station.chest);
+    return "peti kosong: butuh kayu, batu, besi, emas atau intan (sudah minta tolong perajin)";
+  }
   if (craft === "no-table") return "tidak ada meja kerja dan tidak ada papan di peti";
   if (craft === "walking" || craft === "crafting") {
     writeState(entity, state);
@@ -228,7 +297,7 @@ export function tickFarm(entity, state, owner) {
 
   if (state.job?.kind === "harvest") {
     logDebug(TAG, "Melanjutkan pekerjaan panen yang sedang berlangsung...");
-    const status = continueHarvest(entity, state, owner, container);
+    const status = continueHarvest(entity, state, container);
     writeState(entity, state);
     if (status) return status;
   }
@@ -239,7 +308,7 @@ export function tickFarm(entity, state, owner) {
   return found;
 }
 
-function continueHarvest(entity, state, owner, container) {
+function continueHarvest(entity, state, container) {
   const job = state.job;
   const at = job.at;
   const block = blockAt(entity.dimension, at.x, at.y, at.z);
@@ -281,7 +350,7 @@ function continueHarvest(entity, state, owner, container) {
     return "menarik tanaman";
   }
 
-  const main = finishHarvest(entity, block, owner, container);
+  const main = finishHarvest(entity, block, container);
   state.job = null;
   sound(entity.dimension, "random.pop", target);
   particle(entity.dimension, "minecraft:villager_happy", { x: target.x, y: at.y + 0.6, z: target.z });
@@ -297,6 +366,8 @@ function scan(entity, state, area, container, ownerId) {
   const water = area.claimed ? irrigation(entity, state, container, area) : { ok: false };
   let tilled = 0;
   let planted = 0;
+  let leveled = 0;
+  let needFill = false;
   let nearest;
   let nearestD = Infinity;
 
@@ -306,7 +377,15 @@ function scan(entity, state, area, container, ownerId) {
     const { x, z } = columnAt(area, cursor);
     cursor = (cursor + 1) % total;
 
-    const surface = surfaceAt(dimension, x, z, area.y);
+    let surface;
+    if (area.claimed) {
+      const result = levelColumn(dimension, x, z, area.flattenY, container, LEVEL_BUDGET - leveled);
+      leveled += result.used;
+      surface = result.block;
+      if (result.reason === "need-fill") needFill = true;
+    } else {
+      surface = surfaceAt(dimension, x, z, area.y);
+    }
     if (!surface) continue;
     if (PROTECTED.has(surface.typeId)) continue;
     const above = blockAt(dimension, x, surface.y + 1, z);
@@ -377,17 +456,20 @@ function scan(entity, state, area, container, ownerId) {
     return "menuju tanaman matang";
   }
 
-  if (tilled || planted) {
+  if (tilled || planted || leveled) {
     plan.idle = 0;
     state.plan = plan;
-    logDebug(TAG, `Hasil scan: tilled=${tilled}, planted=${planted}`);
-    return tilled ? "mencangkul dan menggali parit" : "menanam berpola";
+    logDebug(TAG, `Hasil scan: tilled=${tilled}, planted=${planted}, leveled=${leveled}`);
+    if (tilled) return "mencangkul dan menggali parit";
+    if (planted) return "menanam berpola";
+    return "meratakan tanah";
   }
 
   plan.idle = (plan.idle ?? 0) + 1;
   state.plan = plan;
   logDebug(TAG, `Tidak ada tindakan panen/tanam/cangkul. idle counter = ${plan.idle}`);
 
+  if (area.claimed && needFill) return "butuh tanah di peti untuk meratakan petak rendah";
   if (!seeds.length && area.claimed) return "peti kehabisan bibit";
   if (area.claimed && !water.ok && water.why === "no-bucket") {
     return "butuh ember atau besi di peti untuk mengairi";

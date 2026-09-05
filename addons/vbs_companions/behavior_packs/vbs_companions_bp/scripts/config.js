@@ -1,16 +1,11 @@
 /**
  * Angka dan teks yang dipakai bersama seluruh add-on.
- *
- * Daftar karakter dan daftar mode di sini harus sama dengan tools/characters.json
- * dan tools/gen_packs.py — validate.py yang mengeceknya, jadi kalau ada yang
- * ditambah di satu tempat dan lupa di tempat lain, ketahuan sebelum masuk gim.
  */
 
 export const NS = "vbs";
 export const FAMILY = "vbs_companion";
 export const MARKER = "vbs:marker";
 
-/** Karakter yang ada, beserta warna namanya di UI dan jangkauan berkebunnya. */
 export const COMPANIONS = {
   "vbs:akito": { name: "Akito", color: "§6", farmRadius: 5, damage: 6, voice: "keras" },
   "vbs:kohane": { name: "Kohane", color: "§d", farmRadius: 6, damage: 4, voice: "lembut" },
@@ -19,13 +14,6 @@ export const COMPANIONS = {
   "vbs:flins": { name: "Flins", color: "§5", farmRadius: 5, damage: 7, voice: "sopan" },
 };
 
-/**
- * Tujuh perintah yang bisa dipilih pemain lewat UI.
- *
- * `hat` adalah nilai entity property vbs:hat yang dipasang saat mode ini aktif —
- * itulah yang bikin petani memakai topi jerami dan penambang memakai helm tanpa
- * satu pun blok kode tambahan di tempat lain.
- */
 export const MODES = {
   follow: {
     label: "Mengikuti",
@@ -87,7 +75,6 @@ export const MODES = {
 
 export const DEFAULT_MODE = "follow";
 
-/** Nilai entity property vbs:pose. Harus sama dengan POSE di gen_packs.py. */
 export const POSE = {
   normal: 0,
   harvest: 1,
@@ -99,10 +86,6 @@ export const POSE = {
   talk: 7,
 };
 
-/**
- * Nilai entity property vbs:face. 0 berarti "biarkan Molang yang memilih";
- * 1..8 memaksa satu ekspresi. Urutannya harus sama dengan model.FACES.
- */
 export const FACE = {
   auto: 0,
   neutral: 1,
@@ -115,18 +98,16 @@ export const FACE = {
   sing: 8,
 };
 
-/** Kunci dynamic property. */
 export const PROP = {
   owner: "vbs:owner",
   ownerName: "vbs:owner_name",
   mode: "vbs:mode",
   gear: "vbs:gear",
-  state: "vbs:state",       // satu blob JSON: stasiun, pekerjaan, catatan role
-  claims: "vbs:claims",     // dunia: chunk yang dipatok
-  waypoints: "vbs:waypoints", // dunia: temuan pengembara
+  state: "vbs:state",
+  claims: "vbs:claims",
+  waypoints: "vbs:waypoints",
 };
 
-/** Titik armor tiap bagian, dipakai untuk baris "Armor" di UI. */
 export const ARMOR_POINTS = {
   leather: [1, 3, 2, 1],
   golden: [2, 5, 3, 1],
@@ -136,7 +117,6 @@ export const ARMOR_POINTS = {
   netherite: [3, 8, 6, 3],
 };
 
-/** Tanaman yang dikenali mode bertani: state umur, umur matang, dan hasilnya. */
 export const CROPS = {
   "minecraft:wheat": {
     state: "growth", ripe: 7, seed: "minecraft:wheat_seeds",
@@ -160,12 +140,6 @@ export const CROPS = {
   },
 };
 
-/**
- * Bibit -> blok tanamannya. Urutan kunci di sini adalah urutan PITA TANAM:
- * petak ladang dibagi jadi jalur-jalur selebar dua blok, dan jalur ke-n memakai
- * bibit ke-n dari daftar ini. Itu sebabnya ladang hasil companion kelihatan
- * berbaris rapi, bukan tertanam acak.
- */
 export const SEEDS = {
   "minecraft:wheat_seeds": "minecraft:wheat",
   "minecraft:carrot": "minecraft:carrots",
@@ -175,11 +149,6 @@ export const SEEDS = {
 
 export const BAND_WIDTH = 2;
 
-/**
- * Bahan -> tingkat alat. Companion memilih tingkat TERTINGGI yang bahannya ada
- * di peti stasiun; kalau tidak ada satu pun, dia tidak bertani sampai pemain
- * mengisi peti.
- */
 export const TOOL_TIERS = [
   { key: "wooden", rank: 1, name: "Kayu", material: "minecraft:planks", need: 2,
     accepts: ["minecraft:oak_planks", "minecraft:spruce_planks", "minecraft:birch_planks",
@@ -195,7 +164,6 @@ export const TOOL_TIERS = [
   { key: "diamond", rank: 5, name: "Intan", need: 2, accepts: ["minecraft:diamond"] },
 ];
 
-/** Kayu gelondongan -> papan, supaya companion bisa memakai kayu mentah juga. */
 export const LOGS = [
   "minecraft:oak_log", "minecraft:spruce_log", "minecraft:birch_log",
   "minecraft:jungle_log", "minecraft:acacia_log", "minecraft:dark_oak_log",
@@ -203,17 +171,14 @@ export const LOGS = [
   "minecraft:warped_stem",
 ];
 
-/** Blok yang boleh dicangkul jadi ladang. */
 export const TILLABLE = new Set([
   "minecraft:grass_block", "minecraft:dirt", "minecraft:coarse_dirt",
   "minecraft:rooted_dirt", "minecraft:podzol", "minecraft:moss_block",
   "minecraft:dirt_with_roots",
 ]);
 
-/** Yang dianggap air mengalir/tenang saat mencari sungai. */
 export const WATER = new Set(["minecraft:water", "minecraft:flowing_water"]);
 
-/** Ore yang dikumpulkan penambang, beserta hasil jatuhannya. */
 export const ORES = {
   "minecraft:coal_ore": "minecraft:coal",
   "minecraft:deepslate_coal_ore": "minecraft:coal",
@@ -236,7 +201,6 @@ export const ORES = {
   "minecraft:ancient_debris": "minecraft:ancient_debris",
 };
 
-/** Batu yang boleh ditembus penambang saat menggali terowongan. */
 export const DIGGABLE = new Set([
   "minecraft:stone", "minecraft:cobblestone", "minecraft:andesite",
   "minecraft:diorite", "minecraft:granite", "minecraft:tuff",
@@ -246,7 +210,6 @@ export const DIGGABLE = new Set([
   ...Object.keys(ORES),
 ]);
 
-/** Yang tidak boleh disentuh siapa pun: bangunan pemain dan barang berharga. */
 export const PROTECTED = new Set([
   "minecraft:chest", "minecraft:trapped_chest", "minecraft:barrel",
   "minecraft:furnace", "minecraft:blast_furnace", "minecraft:smoker",
@@ -256,7 +219,6 @@ export const PROTECTED = new Set([
   "minecraft:shulker_box", "minecraft:hopper", "minecraft:lodestone",
 ]);
 
-/** Makanan yang memulihkan nyawa lewat tombol "Beri Makan". */
 export const FOOD_HEAL = {
   "minecraft:bread": 6,
   "minecraft:cooked_beef": 8,
@@ -268,28 +230,18 @@ export const FOOD_HEAL = {
   "minecraft:sweet_berries": 2,
 };
 
-/** Nama item patok. Stick biasa yang diberi nama — tidak perlu item kustom. */
 export const STAKE_NAME = "§ePatok Ladang";
 export const STAKE_ITEM = "minecraft:stick";
 
-/**
- * Berhenti dan tersenyum saat dilihat pemain.
- *
- * `stopInCombat` sengaja true: itu yang diminta — dilihat berarti berhenti
- * melakukan apa pun, tanpa kecuali. Ubah ke false kalau companion terlalu
- * sering mati karena membeku di tengah pertarungan; tidak ada baris lain yang
- * perlu ikut diubah.
- */
 export const LOOK = {
   enabled: true,
   stopInCombat: true,
-  radius: 10,          // sejauh ini pandangan pemain masih dihitung
-  cone: 0.965,         // dot product arah pandang; 0.965 kira-kira 15 derajat
-  holdTicks: 12,       // masih dianggap dilihat selama ini setelah palingkan muka
-  waveEvery: 90,       // sesekali menyapa lewat gelembung teks
+  radius: 10,
+  cone: 0.965,
+  holdTicks: 12,
+  waveEvery: 90,
 };
 
-/** Jarak gelembung teks. Lebih jauh dari ini, pesannya lewat chat dunia. */
 export const CHAT = {
   bubbleRadius: 18,
   bubbleTicks: 90,
@@ -297,9 +249,9 @@ export const CHAT = {
 };
 
 export const TICKS = {
-  brain: 10,        // denyut kerja tiap mode
-  fast: 4,          // denyut pose, gelembung, dan tatapan
-  leash: 40,        // pengecekan jarak ke pemilik
-  social: 140,      // peluang dua companion mengobrol
-  teleportAt: 24,   // sejauh ini dari pemilik -> ditarik pulang
+  brain: 10,
+  fast: 4,
+  leash: 40,
+  social: 140,
+  teleportAt: 24,
 };

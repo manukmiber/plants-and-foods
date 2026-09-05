@@ -1,12 +1,15 @@
-/** Pembantu kecil yang dipakai UI, otak companion, dan semua mode kerja. */
+/**
+ * Pembantu kecil yang dipakai UI, otak companion, dan semua mode kerja.
+ */
 
 import { EquipmentSlot, ItemStack, system, world } from "@minecraft/server";
 import { FormCancelationReason } from "@minecraft/server-ui";
-
 import {
   ARMOR_POINTS, COMPANIONS, DEFAULT_MODE, FACE, MODES, POSE, PROP,
 } from "./config.js";
+import { entStr, logDebug, logError, logInfo, logWarn, posStr } from "./logger.js";
 
+const TAG = "UTIL";
 export const SLOT_KEYS = ["head", "chest", "legs", "feet", "mainhand"];
 
 const SLOT_ENUM = {
@@ -57,8 +60,6 @@ export function prettyItem(id) {
     .replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
-// --- kepemilikan -----------------------------------------------------------
-
 export function getOwnerId(entity) {
   const v = entity.getDynamicProperty(PROP.owner);
   return typeof v === "string" ? v : undefined;
@@ -70,6 +71,7 @@ export function getOwnerName(entity) {
 }
 
 export function setOwner(entity, player) {
+  logInfo(TAG, `setOwner: ${entStr(entity)} dimiliki oleh ${player.name} (${player.id})`);
   entity.setDynamicProperty(PROP.owner, player.id);
   entity.setDynamicProperty(PROP.ownerName, player.name);
 }
@@ -80,38 +82,34 @@ export function resolveOwner(entity) {
   return world.getAllPlayers().find((p) => p.id === id);
 }
 
-// --- mode ------------------------------------------------------------------
-
 export function getMode(entity) {
   const v = entity.getDynamicProperty(PROP.mode);
   return typeof v === "string" && MODES[v] ? v : DEFAULT_MODE;
 }
 
 export function setMode(entity, mode) {
-  if (!MODES[mode]) return false;
+  if (!MODES[mode]) {
+    logWarn(TAG, `setMode gagal: mode "${mode}" tidak valid.`);
+    return false;
+  }
+  logInfo(TAG, `setMode ${entStr(entity)}: ${mode}`);
   entity.setDynamicProperty(PROP.mode, mode);
   return applyMode(entity, mode);
 }
 
-/** Nyalakan component group mode ini di mesin gim, tanpa menyentuh catatan. */
 export function applyMode(entity, mode) {
   const meta = MODES[mode];
   if (!meta) return false;
   try {
     entity.triggerEvent(meta.event);
-  } catch {
-    return false;                    // entity keburu hilang; mode tetap tersimpan
+    logDebug(TAG, `applyMode: event "${meta.event}" dipicu untuk ${entStr(entity)}`);
+  } catch (e) {
+    logWarn(TAG, `Gagal trigger event ${meta.event} pada ${entStr(entity)}`, e);
+    return false;
   }
   setHat(entity, meta.hat);
   return true;
 }
-
-// --- entity property: pose, wajah, perlengkapan ----------------------------
-//
-// Ketiganya dibungkus try/catch dan MENGABAIKAN kegagalan dengan sengaja.
-// Nilai 0 tiap properti berarti "biarkan bawaan", jadi kalau versi gim tidak
-// menyediakan entity property, semuanya tetap 0 dan add-on jalan persis seperti
-// sebelum fitur ini ada — bukan rusak, cuma tanpa pose dan topi.
 
 function setProp(entity, id, value) {
   try {
@@ -147,8 +145,6 @@ export function setHat(entity, hat) {
   return setProp(entity, "vbs:hat", hat ?? 0);
 }
 
-// --- nyawa dan armor -------------------------------------------------------
-
 export function healthOf(entity) {
   const hp = entity.getComponent("minecraft:health");
   if (!hp) return { cur: 0, max: 0 };
@@ -171,7 +167,6 @@ function equippable(entity) {
   }
 }
 
-/** Isi tiap slot, sebagai typeId. Pakai komponen kalau ada, catatan sendiri kalau tidak. */
 export function getGear(entity) {
   const eq = equippable(entity);
   if (eq) {
@@ -180,7 +175,7 @@ export function getGear(entity) {
       try {
         out[key] = eq.getEquipment(SLOT_ENUM[key])?.typeId;
       } catch {
-        /* slot tidak tersedia di versi ini */
+        /* slot tidak ada */
       }
     }
     return out;
@@ -205,8 +200,8 @@ function rememberGear(entity, key, typeId) {
   entity.setDynamicProperty(PROP.gear, JSON.stringify(gear));
 }
 
-/** Pasang atau lepas satu slot. `item` undefined artinya dikosongkan. */
 export function setGear(entity, key, item) {
+  logInfo(TAG, `setGear ${entStr(entity)}: slot=${key}, item=${item?.typeId ?? "empty"}`);
   const eq = equippable(entity);
   let done = false;
   if (eq) {
@@ -221,7 +216,8 @@ export function setGear(entity, key, item) {
       const what = item ? `${item.typeId} 1` : "air 1";
       entity.runCommand(`replaceitem entity @s ${SLOT_COMMAND[key]} 0 ${what}`);
       done = true;
-    } catch {
+    } catch (e) {
+      logWarn(TAG, `replaceitem command gagal untuk slot ${key}`, e);
       done = false;
     }
   }
@@ -229,7 +225,6 @@ export function setGear(entity, key, item) {
   return done;
 }
 
-/** Slot yang cocok untuk sebuah item, atau undefined kalau tidak bisa dipakai. */
 export function slotFor(typeId) {
   const short = typeId.replace("minecraft:", "");
   if (short === "turtle_helmet") return "head";
@@ -245,7 +240,6 @@ export function slotFor(typeId) {
   return undefined;
 }
 
-/** Total titik armor + nama bahannya, untuk baris "Armor" di UI. */
 export function armorSummary(gear) {
   const order = ["head", "chest", "legs", "feet"];
   let points = 0;
@@ -268,8 +262,6 @@ export function armorSummary(gear) {
   });
   return { points, label: worn.size ? [...worn].join(" + ") : "tanpa zirah" };
 }
-
-// --- ruang -----------------------------------------------------------------
 
 export function floorPos(loc) {
   return { x: Math.floor(loc.x), y: Math.floor(loc.y), z: Math.floor(loc.z) };
@@ -295,7 +287,7 @@ export function blockAt(dimension, x, y, z) {
   try {
     return dimension.getBlock({ x: Math.floor(x), y: Math.floor(y), z: Math.floor(z) });
   } catch {
-    return undefined;              // di luar chunk yang dimuat, atau di luar dunia
+    return undefined;
   }
 }
 
@@ -307,23 +299,13 @@ export function isAir(block) {
   }
 }
 
-/**
- * Blok yang bisa dilewati badan.
- *
- * Daftarnya panjang bukan karena rewel: yang tidak ada di sini dianggap tembok,
- * dan companion akan berhenti di depannya. Obor pernah tidak ada di daftar ini,
- * dan akibatnya penambang terkurung oleh obor yang dipasangnya sendiri di lorong
- * yang baru saja digalinya — macet total, tanpa pesan galat apa pun.
- */
 const WALKTHROUGH = new Set([
   "minecraft:air", "minecraft:cave_air", "minecraft:void_air",
-  // penerangan dan barang tempel
   "minecraft:torch", "minecraft:soul_torch", "minecraft:redstone_torch",
   "minecraft:unlit_redstone_torch", "minecraft:lantern", "minecraft:soul_lantern",
   "minecraft:ladder", "minecraft:rail", "minecraft:golden_rail",
   "minecraft:detector_rail", "minecraft:activator_rail", "minecraft:tripwire",
   "minecraft:lever", "minecraft:redstone_wire",
-  // tumbuhan kecil
   "minecraft:short_grass", "minecraft:tall_grass", "minecraft:fern",
   "minecraft:large_fern", "minecraft:dead_bush", "minecraft:vine",
   "minecraft:snow_layer", "minecraft:seagrass", "minecraft:kelp",
@@ -336,7 +318,6 @@ const WALKTHROUGH = new Set([
   "minecraft:wither_rose", "minecraft:sunflower", "minecraft:lilac",
   "minecraft:rose_bush", "minecraft:peony", "minecraft:torchflower",
   "minecraft:pitcher_plant", "minecraft:pink_petals",
-  // tanaman pangan — companion harus bisa menyeberangi ladangnya sendiri
   "minecraft:wheat", "minecraft:carrots", "minecraft:potatoes",
   "minecraft:beetroot", "minecraft:nether_wart", "minecraft:melon_stem",
   "minecraft:pumpkin_stem", "minecraft:torchflower_crop",
@@ -368,12 +349,10 @@ export function isSolid(block) {
   }
 }
 
-/** Sudut hadap (yaw Bedrock) dari a ke b. */
 export function yawTo(a, b) {
   return (Math.atan2(b.z - a.z, b.x - a.x) * 180) / Math.PI - 90;
 }
 
-/** Hadapkan companion ke satu titik tanpa memindahkannya. */
 export function face(entity, target) {
   try {
     entity.teleport(entity.location, {
@@ -386,35 +365,13 @@ export function face(entity, target) {
   }
 }
 
-/**
- * Satu langkah kecil ke arah tujuan.
- *
- * Pathfinding bawaan gim hanya bisa disuruh menuju BLOK BERTIPE TERTENTU
- * (behavior.move_to_block), bukan menuju koordinat. Untuk pekerjaan yang
- * tujuannya sebuah titik — meja kerja, ujung terowongan, blok berikutnya yang
- * mau dipasang — tidak ada goal bawaan yang bisa dipakai. Jadi langkahnya
- * digerakkan dari sini: 0,32 blok tiap denyut cepat, kira-kira secepat berjalan,
- * dan hanya kalau petak tujuannya benar-benar bisa dipijak. Karena posisinya
- * memang berpindah, animasi jalan di klien tetap ikut jalan.
- *
- * Mengembalikan true kalau sudah sampai.
- */
-const walking = new Map();     // entityId -> { target, step, at }
+const walking = new Map();
 
 export function steer(entity, target, step = 0.32) {
   walking.set(entity.id, { target: { ...target }, step, at: system.currentTick });
   return stepToward(entity, target, step);
 }
 
-/**
- * Lanjutkan langkah terakhir yang diminta.
- *
- * Modul kerja berdenyut tiap 10 tick; kalau langkahnya hanya diambil di situ,
- * companion bergerak 0,3 blok tiap setengah detik — separuh kecepatan jalan, dan
- * hasilnya sebagian besar waktunya habis di perjalanan, bukan bekerja. Denyut
- * cepat mengulang langkah yang sama supaya kecepatannya wajar tanpa modul kerja
- * perlu tahu apa pun soal ini.
- */
 export function tickSteer(entity) {
   const row = walking.get(entity?.id);
   if (!row) return false;
@@ -429,11 +386,6 @@ export function stopWalking(id) {
   walking.delete(id);
 }
 
-/**
- * Coba pindah ke satu titik (nx, nz), mencari ketinggian yang bisa dipijak.
- * Boleh naik satu blok, boleh turun tiga; lebih dari itu bukan langkah, itu
- * jatuh. Mengembalikan true kalau benar-benar berpindah.
- */
 function tryStep(entity, nx, nz, a, target) {
   const dim = entity.dimension;
   for (const dy of [1, 0, -1, -2, -3]) {
@@ -467,10 +419,6 @@ function stepToward(entity, target, step) {
   const nx = a.x + (dx / flat) * move;
   const nz = a.z + (dz / flat) * move;
 
-  // Lurus dulu. Kalau tertutup, coba satu sumbu saja — itu yang membuat
-  // companion bisa membelok di tikungan lorong. Tanpa ini, penambang yang
-  // hendak masuk ke cabang menabrak dinding di mulut cabang dan berhenti di
-  // situ selamanya, karena garis lurus ke ujung galian menembus batu.
   if (tryStep(entity, nx, nz, a, target)) return false;
   const zFirst = Math.abs(dz) > Math.abs(dx);
   const first = zFirst ? [a.x, nz] : [nx, a.z];
@@ -479,8 +427,6 @@ function stepToward(entity, target, step) {
   if (tryStep(entity, second[0], second[1], a, target)) return false;
   return false;
 }
-
-// --- peti ------------------------------------------------------------------
 
 export function containerAt(dimension, pos) {
   const block = blockAt(dimension, pos.x, pos.y, pos.z);
@@ -492,7 +438,6 @@ export function containerAt(dimension, pos) {
   }
 }
 
-/** Berapa banyak item bertipe ini ada di peti. */
 export function countIn(container, ids) {
   if (!container) return 0;
   const want = new Set(Array.isArray(ids) ? ids : [ids]);
@@ -504,7 +449,6 @@ export function countIn(container, ids) {
   return n;
 }
 
-/** Ambil sejumlah item dari peti. Mengembalikan berapa yang benar-benar terambil. */
 export function takeFrom(container, ids, amount) {
   if (!container) return 0;
   const want = new Set(Array.isArray(ids) ? ids : [ids]);
@@ -524,7 +468,6 @@ export function takeFrom(container, ids, amount) {
   return amount - left;
 }
 
-/** Taruh item ke peti; sisanya dijatuhkan di tempat kalau peti penuh. */
 export function putIn(container, item, dimension, where) {
   if (!container) {
     if (dimension && where) dimension.spawnItem(item, where);
@@ -535,7 +478,6 @@ export function putIn(container, item, dimension, where) {
   return !left;
 }
 
-/** Daftar (typeId -> jumlah) isi peti, untuk ditampilkan di UI. */
 export function summarize(container) {
   const out = {};
   if (!container) return out;
@@ -547,16 +489,10 @@ export function summarize(container) {
   return out;
 }
 
-// --- pembantu lain ---------------------------------------------------------
-
 export function waitTicks(ticks) {
   return new Promise((resolve) => system.runTimeout(resolve, ticks));
 }
 
-/**
- * Tampilkan form, tunggu sebentar kalau layar pemain sedang dipakai.
- * Tanpa ini, membuka menu tepat saat pemain menutup layar lain akan gagal diam-diam.
- */
 export async function forceShow(player, form, tries = 40) {
   for (let i = 0; i < tries; i++) {
     const res = await form.show(player);
@@ -578,7 +514,8 @@ export function give(player, itemStack) {
 export function makeItem(id, amount = 1) {
   try {
     return new ItemStack(id, amount);
-  } catch {
+  } catch (e) {
+    logError(TAG, `Gagal instansiasi new ItemStack("${id}", ${amount})`, e);
     return undefined;
   }
 }
@@ -591,12 +528,11 @@ export function pick(list) {
   return list[Math.floor(Math.random() * list.length)];
 }
 
-/** Bunyi di satu titik, diam-diam gagal kalau versi gim tidak menyediakannya. */
 export function sound(dimension, id, where, options = {}) {
   try {
     dimension.playSound(id, where, options);
   } catch {
-    /* versi lama: tidak ada dimension.playSound */
+    /* fallback versi lama */
   }
 }
 
@@ -604,18 +540,17 @@ export function particle(dimension, id, where) {
   try {
     dimension.spawnParticle(id, where);
   } catch {
-    /* partikel tidak dikenal di versi ini, atau chunk belum dimuat */
+    /* fallback versi lama */
   }
 }
 
-/** Semua companion di semua dimensi yang sedang dimuat. */
 export function allCompanions(family) {
   const out = [];
   for (const id of DIMENSIONS) {
     try {
       out.push(...world.getDimension(id).getEntities({ families: [family] }));
     } catch {
-      /* dimensi belum dimuat */
+      /* dimensi belum siap */
     }
   }
   return out;

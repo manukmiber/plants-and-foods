@@ -1,15 +1,5 @@
 /**
  * Stasiun kerja: satu peti dan satu papan nama.
- *
- * Semua role memakai stasiun yang sama. Peti adalah SATU-SATUNYA jalan masuk dan
- * keluar barang: pemain menaruh bibit, bahan alat, ember dan bahan bangunan di
- * situ, dan companion menyetorkan hasil panen, bijih dan barang temuannya ke
- * situ juga. Papannya bukan hiasan — itu yang bikin pemain tahu peti mana milik
- * companion yang mana, dan itu penting di server yang petinya banyak.
- *
- * Kalau di dekat companion sudah ada peti, peti ITU yang dipakai. Peti baru
- * hanya dipasang kalau memang tidak ada satu pun — companion membawa petinya
- * sendiri, tidak mengambil kayu pemain untuk itu.
  */
 
 import { MODES } from "./config.js";
@@ -18,12 +8,15 @@ import { patchState } from "./state.js";
 import {
   blockAt, chunkOf, containerAt, getMode, getOwnerName, isAir, isSolid, sound,
 } from "./util.js";
+import { entStr, logDebug, logError, logInfo, logWarn, posStr } from "./logger.js";
 
+const TAG = "STATION";
 const CHEST = "minecraft:chest";
 const SIGN = "minecraft:standing_sign";
 const CHESTS = new Set([CHEST, "minecraft:trapped_chest", "minecraft:barrel"]);
 
 function chestNear(dimension, origin, radius = 10) {
+  logDebug(TAG, `Mencari peti yang sudah ada di sekitar ${posStr(origin)} radius ${radius}...`);
   for (let r = 0; r <= radius; r++) {
     for (let dx = -r; dx <= r; dx++) {
       for (let dz = -r; dz <= r; dz++) {
@@ -31,6 +24,7 @@ function chestNear(dimension, origin, radius = 10) {
         for (let dy = -3; dy <= 3; dy++) {
           const block = blockAt(dimension, origin.x + dx, origin.y + dy, origin.z + dz);
           if (block && CHESTS.has(block.typeId)) {
+            logInfo(TAG, `Peti terdekat ditemukan di: ${posStr(block)} (${block.typeId})`);
             return { x: block.x, y: block.y, z: block.z };
           }
         }
@@ -59,32 +53,29 @@ function freeSpot(dimension, origin, radius = 5) {
   return undefined;
 }
 
-/** Tulis papan. Diam-diam gagal kalau versi gim tidak menyediakan komponennya. */
 function writeSign(dimension, pos, entity) {
   const block = blockAt(dimension, pos.x, pos.y, pos.z);
   if (!block) return false;
   const { cx, cz } = chunkOf(pos);
   const mode = MODES[getMode(entity)] ?? MODES.follow;
   try {
-    block.getComponent("minecraft:sign")?.setText(
-      `§0${displayName(entity)}\n${mode.label}\nmilik ${getOwnerName(entity)}\n(${cx}, ${cz})`);
+    const text = `§0${displayName(entity)}\n${mode.label}\nmilik ${getOwnerName(entity)}\n(${cx}, ${cz})`;
+    block.getComponent("minecraft:sign")?.setText(text);
+    logInfo(TAG, `Papan stasiun berhasil ditulis di ${posStr(pos)}: "${text.replace(/\n/g, " / ")}"`);
     return true;
-  } catch {
+  } catch (e) {
+    logWarn(TAG, `Gagal menulis teks pada papan di ${posStr(pos)}`, e);
     return false;
   }
 }
 
-/** Perbarui tulisan papan supaya tugasnya selalu cocok dengan mode sekarang. */
 export function refreshSign(entity, state) {
   if (!state.sign) return;
   writeSign(entity.dimension, state.sign, entity);
 }
 
-/**
- * Pastikan companion punya stasiun. Mengembalikan { chest, container } atau
- * undefined kalau belum bisa dibuat (misalnya masih di udara atau di dalam air).
- */
 export function ensureStation(entity, state) {
+  logDebug(TAG, `ensureStation dicek untuk ${entStr(entity)}`);
   const dimension = entity.dimension;
   const here = {
     x: Math.floor(entity.location.x),
@@ -92,30 +83,35 @@ export function ensureStation(entity, state) {
     z: Math.floor(entity.location.z),
   };
 
-  // stasiun yang tercatat masih ada?
   if (state.station) {
     const block = blockAt(dimension, state.station.x, state.station.y, state.station.z);
     if (block && CHESTS.has(block.typeId)) {
       return { chest: state.station, container: containerAt(dimension, state.station) };
     }
-    state.station = null;                    // petinya dibongkar pemain
+    logWarn(TAG, `Peti stasiun lama di ${posStr(state.station)} hilang/hancur!`);
+    state.station = null;
   }
 
-  // peti yang sudah ada di sekitar dipakai apa adanya
   const found = chestNear(dimension, here);
   if (found) {
+    logInfo(TAG, `Menggunakan peti yang ada di sekitar sebagai stasiun: ${posStr(found)}`);
     patchState(entity, { station: found });
     state.station = found;
     return { chest: found, container: containerAt(dimension, found) };
   }
 
-  // belum ada: pasang peti sendiri, lalu papan di sebelahnya
+  logInfo(TAG, `Membuat stasiun kerja baru untuk ${entStr(entity)}...`);
   const spot = freeSpot(dimension, here);
-  if (!spot) return undefined;
+  if (!spot) {
+    logWarn(TAG, `Tidak ditemukan lokasi kosong untuk menaruh peti stasiun.`);
+    return undefined;
+  }
   const block = blockAt(dimension, spot.x, spot.y, spot.z);
   try {
     block.setType(CHEST);
-  } catch {
+    logInfo(TAG, `Peti stasiun baru berhasil dipasang di: ${posStr(spot)}`);
+  } catch (e) {
+    logError(TAG, `Gagal memasang peti di ${posStr(spot)}`, e);
     return undefined;
   }
   sound(dimension, "random.wood_click", spot);
@@ -141,7 +137,6 @@ export function ensureStation(entity, state) {
   return { chest: spot, container: containerAt(dimension, spot) };
 }
 
-/** Peti stasiun kalau ada, tanpa membuat yang baru. */
 export function stationContainer(entity, state) {
   if (!state.station) return undefined;
   return containerAt(entity.dimension, state.station);

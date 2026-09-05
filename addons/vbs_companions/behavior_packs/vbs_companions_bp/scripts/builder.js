@@ -1,18 +1,5 @@
 /**
  * Mode membangun.
- *
- * Pemain memilih RANCANGAN lewat menu, dan companion mengerjakannya blok demi
- * blok dari bahan yang ada di peti stasiun. Rancangannya tidak disimpan sebagai
- * daftar ratusan koordinat di dynamic property — itu akan cepat kepenuhan.
- * Yang disimpan cuma nama rancangan, titik awal, arah, dan sudah sampai langkah
- * ke berapa; daftar bloknya dihitung ulang tiap denyut dari fungsi rancangan.
- * Karena fungsinya murni, langkah ke-57 hari ini sama dengan langkah ke-57
- * besok, walau dunianya sempat ditutup.
- *
- * Bahan dipilih dari apa yang ADA. Rancangan menyebut peran blok — "dinding",
- * "lantai", "atap", "lampu" — dan materialFor() menerjemahkannya jadi blok
- * sungguhan dari isi peti. Jadi gubuk yang sama jadi gubuk kayu kalau petinya
- * berisi papan, dan gubuk batu kalau berisi batu bulat.
  */
 
 import { POSE, PROTECTED } from "./config.js";
@@ -26,7 +13,9 @@ import {
   alive, blockAt, countIn, dist2, face, isAir, isSolid, particle, sound, steer,
   takeFrom,
 } from "./util.js";
+import { entStr, logDebug, logError, logInfo, logWarn, posStr } from "./logger.js";
 
+const TAG = "BUILDER";
 const REACH = 5.0;
 const PLACE_PER_TICK = 2;
 
@@ -61,7 +50,6 @@ const DOORS = [
   "minecraft:iron_door",
 ];
 
-/** Peran blok -> daftar bahan yang boleh dipakai, dari yang paling disukai. */
 const MATERIALS = {
   floor: [...PLANKS, ...STONE, "minecraft:gravel"],
   wall: [...PLANKS, ...STONE, ...LOGS],
@@ -77,17 +65,19 @@ const MATERIALS = {
 };
 
 function materialFor(container, role) {
+  logDebug(TAG, `Mencari bahan untuk peran: "${role}"`);
   const list = MATERIALS[role];
-  if (!list) return undefined;
-  return list.find((id) => countIn(container, id) > 0);
+  if (!list) {
+    logWarn(TAG, `Peran material "${role}" tidak terdaftar di MATERIALS.`);
+    return undefined;
+  }
+  const found = list.find((id) => countIn(container, id) > 0);
+  logDebug(TAG, `Hasil cari peran "${role}": ${found ?? "KOSONG/TIDAK ADA"}`);
+  return found;
 }
 
-// --- rancangan --------------------------------------------------------------
-//
-// Tiap rancangan mengembalikan daftar { dx, dy, dz, role }. Titik (0,0,0) adalah
-// titik awal yang dicatat waktu pemain memilih rancangannya.
-
 function fencePlan(area) {
+  logDebug(TAG, `fencePlan dihitung untuk area: ${JSON.stringify(area)}`);
   const out = [];
   const push = (x, z, i) => {
     out.push({ x, z, dy: 1, role: "fence" });
@@ -98,10 +88,12 @@ function fencePlan(area) {
   for (let z = area.z0 + 1; z <= area.z1; z++) push(area.x1, z, i++);
   for (let x = area.x1 - 1; x >= area.x0; x--) push(x, area.z1, i++);
   for (let z = area.z1 - 1; z > area.z0; z--) push(area.x0, z, i++);
+  logDebug(TAG, `fencePlan menghasilkan ${out.length} langkah.`);
   return out;
 }
 
 function wallPlan(area) {
+  logDebug(TAG, `wallPlan dihitung untuk area: ${JSON.stringify(area)}`);
   const out = [];
   const ring = fencePlan(area).filter((s) => s.role === "fence");
   for (const spot of ring) {
@@ -109,10 +101,12 @@ function wallPlan(area) {
       out.push({ x: spot.x, z: spot.z, dy, role: dy === 3 ? "roof" : "wall" });
     }
   }
+  logDebug(TAG, `wallPlan menghasilkan ${out.length} langkah.`);
   return out;
 }
 
 function lampsPlan(area) {
+  logDebug(TAG, `lampsPlan dihitung untuk area: ${JSON.stringify(area)}`);
   const out = [];
   for (let x = area.x0 + 3; x <= area.x1; x += 6) {
     for (let z = area.z0 + 3; z <= area.z1; z += 6) {
@@ -121,10 +115,12 @@ function lampsPlan(area) {
       out.push({ x, z, dy: 3, role: "light" });
     }
   }
+  logDebug(TAG, `lampsPlan menghasilkan ${out.length} langkah.`);
   return out;
 }
 
 function pathPlan(origin, dest) {
+  logDebug(TAG, `pathPlan: origin=${posStr(origin)}, dest=${posStr(dest)}`);
   const out = [];
   const dx = dest.x - origin.x;
   const dz = dest.z - origin.z;
@@ -135,10 +131,12 @@ function pathPlan(origin, dest) {
     const z = origin.z + Math.round((dz * i) / steps);
     out.push({ x, z, dy: 0, role: "path" });
   }
+  logDebug(TAG, `pathPlan menghasilkan ${out.length} langkah.`);
   return out;
 }
 
 function bridgePlan(origin, dir, length = 24) {
+  logDebug(TAG, `bridgePlan: origin=${posStr(origin)}, dir=[${dir}], length=${length}`);
   const [ux, uz] = dir;
   const side = [-uz, ux];
   const out = [];
@@ -150,11 +148,12 @@ function bridgePlan(origin, dir, length = 24) {
     out.push({ x: x - side[0], z: z - side[1], dy: 1, role: "fence" });
     if (i % 6 === 0) out.push({ x: x + side[0], z: z + side[1], dy: 2, role: "light" });
   }
+  logDebug(TAG, `bridgePlan menghasilkan ${out.length} langkah.`);
   return out;
 }
 
-/** Bangunan berdinding: dipakai gubuk (5x5) dan gudang (7x5). */
 function housePlan(origin, w, d, h, withChest) {
+  logDebug(TAG, `housePlan: origin=${posStr(origin)}, size=${w}x${d}x${h}, chest=${withChest}`);
   const out = [];
   const x0 = origin.x - Math.floor(w / 2);
   const z0 = origin.z - Math.floor(d / 2);
@@ -197,6 +196,7 @@ function housePlan(origin, w, d, h, withChest) {
   if (withChest) {
     out.push({ x: x1 - 1, z: z1 - 1, dy: 1, role: "chest" });
   }
+  logDebug(TAG, `housePlan menghasilkan ${out.length} langkah.`);
   return out;
 }
 
@@ -238,8 +238,6 @@ export const BLUEPRINTS = {
   },
 };
 
-// --- pelaksanaan ------------------------------------------------------------
-
 function context(entity, state, ownerId, owner) {
   const origin = state.plan?.build?.origin ?? {
     x: Math.floor(entity.location.x),
@@ -247,28 +245,33 @@ function context(entity, state, ownerId, owner) {
     z: Math.floor(entity.location.z),
   };
   const dir = state.plan?.build?.dir ?? [1, 0];
-  return {
-    origin,
-    dir,
-    area: workArea(entity, state, ownerId),
-    dest: owner ? { x: Math.floor(owner.location.x), z: Math.floor(owner.location.z) } : undefined,
-  };
+  const area = workArea(entity, state, ownerId);
+  const dest = owner ? { x: Math.floor(owner.location.x), z: Math.floor(owner.location.z) } : undefined;
+  logDebug(TAG, `Build context: origin=${posStr(origin)}, dir=[${dir}], dest=${posStr(dest)}`);
+  return { origin, dir, area, dest };
 }
 
-/** Ketinggian tanah untuk satu kolom, dipatok ±3 dari titik awal. */
 function groundY(dimension, x, z, baseY) {
+  logDebug(TAG, `Mencari ketinggian tanah: col(${x},${z}) sekitar base Y: ${baseY}`);
   for (let y = baseY + 3; y >= baseY - 4; y--) {
     const here = blockAt(dimension, x, y, z);
     const below = blockAt(dimension, x, y - 1, z);
     if (!here || !below) continue;
-    if (here.isAir && isSolid(below)) return y - 1;
+    if (here.isAir && isSolid(below)) {
+      logDebug(TAG, `Tanah ditemukan di Y=${y - 1} untuk col(${x},${z})`);
+      return y - 1;
+    }
   }
+  logWarn(TAG, `Tanah solid tidak ditemukan di col(${x},${z}) sekitar Y=${baseY}`);
   return undefined;
 }
 
-/** Mulai rancangan baru dari posisi companion sekarang. */
 export function startBlueprint(entity, state, name, owner) {
-  if (!BLUEPRINTS[name]) return false;
+  logInfo(TAG, `Memulai rancangan baru: "${name}" untuk ${entStr(entity)}`);
+  if (!BLUEPRINTS[name]) {
+    logError(TAG, `Rancangan "${name}" tidak valid / tidak terdaftar!`);
+    return false;
+  }
   const at = entity.location;
   let dir = [1, 0];
   try {
@@ -276,8 +279,9 @@ export function startBlueprint(entity, state, name, owner) {
     dir = Math.abs(view.x) > Math.abs(view.z)
       ? [Math.sign(view.x) || 1, 0]
       : [0, Math.sign(view.z) || 1];
-  } catch {
-    /* pakai arah bawaan */
+    logDebug(TAG, `Arah hadap pandangan companion dihitung: [${dir}]`);
+  } catch (e) {
+    logWarn(TAG, `Gagal membaca arah pandang, menggunakan default [1,0]`, e);
   }
   if (!state.plan) state.plan = {};
   state.plan.build = {
@@ -286,31 +290,49 @@ export function startBlueprint(entity, state, name, owner) {
   };
   state.blueprint = name;
   writeState(entity, state);
+  logInfo(TAG, `Rancangan "${name}" berhasil diinisialisasi pada origin: ${posStr(state.plan.build.origin)}`);
   return true;
 }
 
-/** Satu denyut mode membangun. */
 export function tickBuild(entity, state, owner) {
-  if (!alive(entity)) return "hilang";
-  if (isGreeting(entity)) return "berhenti karena disapa";
+  logDebug(TAG, `tickBuild dijalankan untuk ${entStr(entity)}`);
+  if (!alive(entity)) {
+    logWarn(TAG, `tickBuild batal: Entity tidak hidup.`);
+    return "hilang";
+  }
+  if (isGreeting(entity)) {
+    logDebug(TAG, `tickBuild jeda: Companion sedang menyapa pemain.`);
+    return "berhenti karena disapa";
+  }
 
   const dimension = entity.dimension;
   const station = ensureStation(entity, state);
   const container = station?.container;
-  if (!container) return "belum ada peti stasiun";
+  if (!container) {
+    logWarn(TAG, `${entStr(entity)} tidak menemukan peti stasiun.`);
+    return "belum ada peti stasiun";
+  }
 
   if (!state.plan?.build) {
+    logInfo(TAG, `state.plan.build kosong, mencoba auto-start blueprint "${state.blueprint ?? "fence"}"`);
     startBlueprint(entity, state, state.blueprint ?? "fence", owner);
   }
   const job = state.plan.build;
   const blueprint = BLUEPRINTS[job.name];
-  if (!blueprint) return "rancangan tidak dikenal";
+  if (!blueprint) {
+    logError(TAG, `Rancangan pekerjaan "${job.name}" tidak ditemukan di BLUEPRINTS!`);
+    return "rancangan tidak dikenal";
+  }
 
   const ctx = context(entity, state, owner?.id, owner);
   const steps = blueprint.plan(ctx);
-  if (!steps.length) return "rancangan kosong";
+  if (!steps.length) {
+    logWarn(TAG, `Blueprint "${job.name}" menghasilkan 0 langkah.`);
+    return "rancangan kosong";
+  }
 
   if (job.index >= steps.length) {
+    logInfo(TAG, `Blueprint "${blueprint.label}" selesai (${job.index}/${steps.length}).`);
     state.plan.build = null;
     writeState(entity, state);
     sayFrom(entity, "done");
@@ -322,24 +344,30 @@ export function tickBuild(entity, state, owner) {
   let missing;
   while (job.index < steps.length && placed < PLACE_PER_TICK) {
     const step = steps[job.index];
+    logDebug(TAG, `Menjalankan langkah build [${job.index + 1}/${steps.length}]: Role=${step.role}, RelPos=(${step.x},${step.dy},${step.z})`);
     const base = groundY(dimension, step.x, step.z, ctx.origin.y);
     if (base === undefined) {
+      logDebug(TAG, `Langkah ${job.index} dilewati: Ketinggian tanah tidak valid.`);
       job.index++;
       continue;
     }
     const y = base + (step.dy ?? 0) + (step.role === "path" || step.role === "floor" ? 0 : 1);
     const block = blockAt(dimension, step.x, y, step.z);
     if (!block) {
+      logWarn(TAG, `Langkah ${job.index} dilewati: Blok null di (${step.x}, ${y}, ${step.z}). Chunk belum dimuat?`);
       job.index++;
       continue;
     }
     if (PROTECTED.has(block.typeId)) {
-      job.index++;                              // jangan sentuh bangunan pemain
+      logWarn(TAG, `Blok terproteksi terdeteksi di (${step.x}, ${y}, ${step.z}): ${block.typeId}. Melewati langkah.`);
+      job.index++;
       continue;
     }
 
     const target = { x: step.x + 0.5, y, z: step.z + 0.5 };
-    if (dist2(entity.location, target) > REACH ** 2) {
+    const d2 = dist2(entity.location, target);
+    if (d2 > REACH ** 2) {
+      logDebug(TAG, `Target di luar jangkauan (${Math.sqrt(d2).toFixed(2)}m > ${REACH}m). Mengarahkan companion ke target.`);
       writeState(entity, state);
       steer(entity, target);
       return `menuju titik ${job.index + 1} dari ${steps.length}`;
@@ -348,9 +376,10 @@ export function tickBuild(entity, state, owner) {
     if (step.role === "air") {
       if (!block.isAir) {
         try {
+          logDebug(TAG, `Mengosongkan blok ke air di ${posStr(target)} (Tipe lama: ${block.typeId})`);
           block.setType("minecraft:air");
-        } catch {
-          /* tidak bisa dibongkar */
+        } catch (e) {
+          logWarn(TAG, `Gagal membongkar blok di ${posStr(target)}`, e);
         }
       }
       job.index++;
@@ -359,31 +388,39 @@ export function tickBuild(entity, state, owner) {
 
     const wanted = step.role === "chest" ? "minecraft:chest" : materialFor(container, step.role);
     if (!wanted) {
+      logWarn(TAG, `Bahan untuk peran "${step.role}" tidak tersedia di peti!`);
       missing = step.role;
       job.index++;
       continue;
     }
     if (step.role !== "chest" && takeFrom(container, wanted, 1) !== 1) {
+      logWarn(TAG, `Gagal mengambil bahan "${wanted}" dari peti untuk peran "${step.role}".`);
       missing = step.role;
       job.index++;
       continue;
     }
     try {
+      logInfo(TAG, `Memasang blok "${wanted}" di (${step.x}, ${y}, ${step.z})`);
       block.setType(wanted);
       placed++;
-    } catch {
+    } catch (e) {
+      logError(TAG, `Gagal eksekusi block.setType("${wanted}") di (${step.x}, ${y}, ${step.z})`, e);
       job.index++;
       continue;
     }
     face(entity, target);
     hold(entity, 14, { pose: POSE.build, reason: "build" });
     sound(dimension, "random.wood_click", target, { volume: 0.6 });
-    particle(dimension, "minecraft:villager_happy",
-             { x: target.x, y: y + 0.6, z: target.z });
+    particle(dimension, "minecraft:villager_happy", { x: target.x, y: y + 0.6, z: target.z });
     job.index++;
   }
 
   writeState(entity, state);
-  if (!placed && missing) return `peti kehabisan bahan untuk ${missing}`;
-  return `${blueprint.label}: ${job.index}/${steps.length}`;
+  if (!placed && missing) {
+    logWarn(TAG, `Companion kekurangan bahan: "${missing}".`);
+    return `peti kehabisan bahan untuk ${missing}`;
+  }
+  const statusStr = `${blueprint.label}: ${job.index}/${steps.length}`;
+  logDebug(TAG, `tickBuild progress: ${statusStr}`);
+  return statusStr;
 }

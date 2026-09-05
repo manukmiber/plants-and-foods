@@ -1,24 +1,8 @@
 /**
  * Mode menambang.
- *
- * Bukan "ambil ore yang kebetulan kelihatan": companion menggali tambangnya
- * sendiri, dengan bentuk yang sama seperti yang dipakai pemain sungguhan —
- *
- *   1. TANGGA turun dari permukaan sampai kedalaman sasaran, satu blok maju satu
- *      blok turun, dengan obor tiap delapan anak tangga.
- *   2. TEROWONGAN UTAMA setinggi dua blok ke satu arah, juga berobor.
- *   3. CABANG sepanjang delapan blok tiap tiga blok terowongan utama, berselang
- *      kiri dan kanan — jarak tiga blok itu yang bikin tidak ada urat bijih
- *      selebar dua blok yang terlewat.
- *   4. PULANG menyetor isi tas ke peti stasiun begitu penuh, lalu turun lagi.
- *
- * Yang digali hanya batu dan bijih (DIGGABLE). Blok buatan pemain, peti, dan
- * segala yang ada di PROTECTED tidak pernah disentuh; kalau ujung galian
- * membentur salah satunya, arah galian dibelokkan, bukan diterobos.
  */
 
 import { system } from "@minecraft/server";
-
 import { DIGGABLE, ORES, POSE, PROTECTED } from "./config.js";
 import { report, sayFrom } from "./chat.js";
 import { craftStep } from "./crafting.js";
@@ -30,7 +14,9 @@ import {
   alive, blockAt, dist2, face, getGear, isAir, isSolid, makeItem, particle,
   putIn, sound, steer,
 } from "./util.js";
+import { entStr, logDebug, logInfo, logWarn, posStr } from "./logger.js";
 
+const TAG = "MINING";
 const DIRS = [[1, 0], [0, 1], [-1, 0], [0, -1]];
 const TORCH_EVERY = 8;
 const BRANCH_EVERY = 3;
@@ -43,7 +29,7 @@ const LAVA = new Set(["minecraft:lava", "minecraft:flowing_lava"]);
 function targetDepth(dimensionId) {
   if (dimensionId === "minecraft:nether") return 14;
   if (dimensionId === "minecraft:the_end") return 20;
-  return -54;                 // ketinggian intan paling ramai di Overworld 1.21
+  return -54;
 }
 
 function bagCount(bag) {
@@ -52,9 +38,9 @@ function bagCount(bag) {
 
 function addToBag(state, id, amount = 1) {
   state.bag[id] = (state.bag[id] ?? 0) + amount;
+  logDebug(TAG, `Menambah item ke tas mining: +${amount} ${id} (total item tipe ini: ${state.bag[id]})`);
 }
 
-/** Aman digali? Bukan blok lindung, bukan lava, dan memang batu. */
 function diggable(block) {
   if (!block) return false;
   try {
@@ -70,25 +56,29 @@ function lavaNear(dimension, x, y, z) {
   for (const [dx, dy, dz] of [[1, 0, 0], [-1, 0, 0], [0, 0, 1], [0, 0, -1],
                               [0, 1, 0], [0, -1, 0], [0, 2, 0]]) {
     const block = blockAt(dimension, x + dx, y + dy, z + dz);
-    if (block && LAVA.has(block.typeId)) return true;
+    if (block && LAVA.has(block.typeId)) {
+      logWarn(TAG, `LAVA terdeteksi di sekitar (${x + dx}, ${y + dy}, ${z + dz})!`);
+      return true;
+    }
   }
   return false;
 }
 
-/** Gali satu blok. Bijih masuk tas, batu biasa sebagian saja supaya tas tidak penuh. */
 function dig(entity, state, block) {
   if (!block || block.isAir) return false;
   const id = block.typeId;
+  logDebug(TAG, `Menggali blok ${id} di ${posStr(block)}`);
   try {
     block.setType("minecraft:air");
-  } catch {
+  } catch (e) {
+    logWarn(TAG, `Gagal setType air pada blok di ${posStr(block)}`, e);
     return false;
   }
   const ore = ORES[id];
   if (ore) {
+    logInfo(TAG, `BIJIH DITEMUKAN: ${id} -> Menghasilkan ${ore}`);
     addToBag(state, ore, 1);
-    particle(entity.dimension, "minecraft:villager_happy",
-             { x: block.x + 0.5, y: block.y + 0.6, z: block.z + 0.5 });
+    particle(entity.dimension, "minecraft:villager_happy", { x: block.x + 0.5, y: block.y + 0.6, z: block.z + 0.5 });
     sound(entity.dimension, "random.orb", block.location, { volume: 0.4 });
   } else if ((state.bag["minecraft:cobblestone"] ?? 0) < 32 &&
              (id === "minecraft:stone" || id === "minecraft:cobblestone")) {
@@ -97,7 +87,6 @@ function dig(entity, state, block) {
   return true;
 }
 
-/** Pasang obor kalau ada di tas atau baru saja ada di peti. */
 function torchAt(entity, state, x, y, z) {
   if ((state.bag["minecraft:torch"] ?? 0) < 1) return false;
   const spot = blockAt(entity.dimension, x, y, z);
@@ -105,6 +94,7 @@ function torchAt(entity, state, x, y, z) {
   if (!isAir(spot) || !isSolid(floor)) return false;
   try {
     spot.setType("minecraft:torch");
+    logInfo(TAG, `Obor dipasang di (${x}, ${y}, ${z})`);
   } catch {
     return false;
   }
@@ -116,15 +106,17 @@ function torchAt(entity, state, x, y, z) {
 function freshPlan(entity) {
   const at = entity.location;
   const dir = Math.floor(Math.random() * 4);
-  return {
+  const plan = {
     phase: "descend",
     x: Math.floor(at.x), y: Math.floor(at.y), z: Math.floor(at.z),
     dir, step: 0, branch: 0, branchSide: 1, branchStep: 0,
   };
+  logInfo(TAG, `Rencana mining baru dibuat untuk ${entStr(entity)}: ${JSON.stringify(plan)}`);
+  return plan;
 }
 
-/** Satu denyut mode menambang. */
 export function tickMine(entity, state, owner) {
+  logDebug(TAG, `tickMine dimulai untuk ${entStr(entity)}`);
   if (!alive(entity)) return "hilang";
   if (isGreeting(entity)) return "berhenti karena disapa";
 
@@ -132,7 +124,6 @@ export function tickMine(entity, state, owner) {
   const station = ensureStation(entity, state);
   const container = station?.container;
 
-  // beliung dulu; tanpa itu tidak ada tambang
   const held = getGear(entity).mainhand;
   const craft = craftStep(entity, state, "pickaxe", container, held);
   if (craft === "no-material") return "peti kosong: butuh bahan untuk beliung";
@@ -147,18 +138,22 @@ export function tickMine(entity, state, owner) {
     return "beliung baru selesai";
   }
 
-  // ambil obor dari peti kalau tasnya habis
   if (container && (state.bag["minecraft:torch"] ?? 0) === 0) {
     const taken = takeTorches(container);
-    if (taken) addToBag(state, "minecraft:torch", taken);
+    if (taken) {
+      logInfo(TAG, `Mengambil ${taken} obor dari peti stasiun.`);
+      addToBag(state, "minecraft:torch", taken);
+    }
   }
 
   const plan = state.plan?.mine ?? freshPlan(entity);
   if (!state.plan) state.plan = {};
   state.plan.mine = plan;
 
-  // tas penuh: pulang dulu
-  if (bagCount(state.bag) >= BAG_LIMIT || plan.phase === "haul") {
+  const currentBag = bagCount(state.bag);
+  logDebug(TAG, `Kapasitas tas mining: ${currentBag}/${BAG_LIMIT} item.`);
+  if (currentBag >= BAG_LIMIT || plan.phase === "haul") {
+    logInfo(TAG, `Tas penuh (${currentBag}/${BAG_LIMIT}) atau mode haul. Pulang menyetor...`);
     const status = haul(entity, state, station);
     writeState(entity, state);
     return status;
@@ -188,9 +183,10 @@ function takeTorches(container) {
   return n;
 }
 
-/** Berdiri di ujung galian dulu, baru menggali. */
 function atFace(entity, target) {
-  if (dist2(entity.location, target) <= REACH ** 2) return true;
+  const d2 = dist2(entity.location, target);
+  if (d2 <= REACH ** 2) return true;
+  logDebug(TAG, `Menuju titik galian ${posStr(target)} (${Math.sqrt(d2).toFixed(1)}m > ${REACH}m)`);
   steer(entity, target);
   return false;
 }
@@ -203,7 +199,6 @@ function swing(entity, target) {
   }
 }
 
-/** Tangga turun: satu blok maju, satu blok turun, tinggi dua. */
 function descend(entity, state, plan) {
   const dimension = entity.dimension;
   const [dx, dz] = DIRS[plan.dir];
@@ -212,6 +207,7 @@ function descend(entity, state, plan) {
   if (plan.y <= floor) {
     plan.phase = "tunnel";
     plan.step = 0;
+    logInfo(TAG, `Mencapai kedalaman target (${plan.y} <= ${floor}). Beralih ke fase terowongan utama!`);
     report(entity, `Sampai kedalaman ${plan.y}. Mulai terowongan.`);
     return "mulai terowongan utama";
   }
@@ -227,19 +223,17 @@ function descend(entity, state, plan) {
     const ny = plan.y - 1;
     if (lavaNear(dimension, nx, ny, nz)) {
       plan.dir = (plan.dir + 1) % 4;
+      logWarn(TAG, `Lava menghalangi tangga! Membelokkan arah ke ${plan.dir}`);
       report(entity, "Ada lava di depan. Aku belok.");
       return "menghindari lava";
     }
-    // HANYA dua kotak: pijakan anak tangga berikutnya dan ruang kepalanya.
-    // Versi sebelumnya ikut menggali (plan.x, ny, plan.z) "supaya kepalanya
-    // muat" — padahal kotak itu adalah LANTAI anak tangga yang sedang dipijak,
-    // dan menggalinya bikin companion jatuh, bukan menuruni tangga.
     const cells = [
       blockAt(dimension, nx, ny, nz),
       blockAt(dimension, nx, ny + 1, nz),
     ];
     if (cells.some((b) => b && !diggable(b))) {
       plan.dir = (plan.dir + 1) % 4;
+      logWarn(TAG, `Blok tidak bisa digali di tangga. Membelokkan arah tangga ke ${plan.dir}`);
       return "membelokkan tangga";
     }
     for (const cell of cells) {
@@ -254,7 +248,6 @@ function descend(entity, state, plan) {
   return "menggali tangga turun";
 }
 
-/** Terowongan utama setinggi dua, dengan cabang berselang kiri-kanan. */
 function tunnel(entity, state, plan) {
   const dimension = entity.dimension;
   const main = DIRS[plan.dir];
@@ -270,11 +263,8 @@ function tunnel(entity, state, plan) {
     const nx = plan.x + dx;
     const nz = plan.z + dz;
     if (lavaNear(dimension, nx, plan.y, nz)) {
-      if (digging) {
-        plan.branchStep = 0;                    // cabang ini disudahi
-      } else {
-        plan.dir = (plan.dir + 1) % 4;
-      }
+      if (digging) plan.branchStep = 0;
+      else plan.dir = (plan.dir + 1) % 4;
       report(entity, "Lava. Aku tidak menembus situ.");
       return "menghindari lava";
     }
@@ -288,10 +278,7 @@ function tunnel(entity, state, plan) {
     dig(entity, state, lower);
     dig(entity, state, upper);
 
-    // Bijih yang menempel di dinding ikut diambil — itu gunanya menggali cabang,
-    // dan mengambilnya sekarang lebih murah daripada balik lagi nanti.
-    for (const [ox, oy, oz] of [[1, 0, 0], [-1, 0, 0], [0, 0, 1], [0, 0, -1],
-                                [0, 2, 0], [0, -1, 0]]) {
+    for (const [ox, oy, oz] of [[1, 0, 0], [-1, 0, 0], [0, 0, 1], [0, 0, -1], [0, 2, 0], [0, -1, 0]]) {
       const near = blockAt(dimension, nx + ox, plan.y + oy, nz + oz);
       if (near && ORES[near.typeId]) dig(entity, state, near);
     }
@@ -301,18 +288,17 @@ function tunnel(entity, state, plan) {
     if (digging) {
       plan.branchStep--;
       if (plan.branchStep <= 0) {
-        // balik ke sumbu terowongan utama
         plan.x -= side[0] * BRANCH_LENGTH;
         plan.z -= side[1] * BRANCH_LENGTH;
         plan.branchSide = -plan.branchSide;
+        logInfo(TAG, `Cabang selesai. Kembali ke sumbu terowongan utama.`);
       }
     } else {
       plan.step++;
-      if (plan.step % TORCH_EVERY === 0) {
-        torchAt(entity, state, plan.x, plan.y, plan.z);
-      }
+      if (plan.step % TORCH_EVERY === 0) torchAt(entity, state, plan.x, plan.y, plan.z);
       if (plan.step % BRANCH_EVERY === 0) {
         plan.branchStep = BRANCH_LENGTH;
+        logInfo(TAG, `Mulai menggali cabang baru sepanjang ${BRANCH_LENGTH} blok.`);
         return "menggali cabang";
       }
     }
@@ -320,15 +306,16 @@ function tunnel(entity, state, plan) {
   return digging ? "menggali cabang" : "menggali terowongan utama";
 }
 
-/** Pulang menyetor isi tas. */
 function haul(entity, state, station) {
   const plan = state.plan.mine;
   plan.phase = "haul";
   if (!station) return "tidak ada peti untuk menyetor";
   const chest = station.chest;
   const target = { x: chest.x + 0.5, y: chest.y, z: chest.z + 0.5 };
+  const d2 = dist2(entity.location, target);
 
-  if (dist2(entity.location, target) > 3.2 ** 2) {
+  if (d2 > 3.2 ** 2) {
+    logDebug(TAG, `Berjalan pulang menyetor ke peti (${Math.sqrt(d2).toFixed(1)}m > 3.2m)...`);
     steer(entity, target, 0.42);
     return "pulang membawa hasil tambang";
   }
@@ -349,6 +336,7 @@ function haul(entity, state, station) {
   face(entity, target);
   sound(entity.dimension, "random.chestopen", target);
   plan.phase = plan.y <= targetDepth(entity.dimension.id) ? "tunnel" : "descend";
+  logInfo(TAG, `Menyetor ${moved} barang ke peti stasiun. Kembali ke fase: ${plan.phase}`);
   if (moved) report(entity, `${moved} barang kusetor ke peti.`);
   return "menyetor hasil tambang";
 }

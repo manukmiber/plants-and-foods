@@ -1,46 +1,43 @@
 /**
  * Menahan companion di tempat untuk sesaat.
- *
- * Dipakai tiga hal yang semuanya perlu companion berhenti melakukan apa pun:
- * disapa pemain, memanen dengan jongkok, dan mengobrol dengan companion lain.
- * Semuanya lewat satu tempat supaya tidak ada dua sistem yang saling menyalakan
- * dan mematikan mode secara bergantian.
- *
- * Cara menahannya adalah menyalakan component group mode "diam di tempat" tanpa
- * mengubah catatan mode di dynamic property — jadi setelah dilepas, companion
- * kembali ke perintah yang sama, termasuk sesudah dunia ditutup dan dibuka lagi.
  */
 
 import { system } from "@minecraft/server";
-
 import { FACE, MODES, POSE } from "./config.js";
 import { alive, applyMode, getMode, setFace, setPose } from "./util.js";
+import { entStr, logDebug, logInfo, logWarn } from "./logger.js";
 
-const held = new Map();     // entityId -> { until, reason, pose }
+const TAG = "HOLD";
+const held = new Map(); // entityId -> { until, reason, pose }
 
-/**
- * Tahan satu companion. Memanggil ulang untuk companion yang sudah ditahan
- * hanya memperpanjang waktunya — tidak menyalakan ulang component group, karena
- * itu akan menghapus jalur yang sedang ditempuh pathfinding tiap denyut.
- */
 export function hold(entity, ticks, { pose = POSE.normal, face = FACE.auto, reason = "" } = {}) {
-  if (!alive(entity)) return false;
+  if (!alive(entity)) {
+    logWarn(TAG, `hold batal: entity ${entStr(entity)} tidak valid.`);
+    return false;
+  }
   const until = system.currentTick + ticks;
   const current = held.get(entity.id);
+
   if (current) {
     current.until = Math.max(current.until, until);
+    logDebug(TAG, `Memperpanjang hold ${entStr(entity)} (${reason}): sampai tick ${current.until} (+${ticks}t)`);
     if (current.pose !== pose) {
       current.pose = pose;
       setPose(entity, pose);
       setFace(entity, face);
+      logDebug(TAG, `Mengubah pose hold ${entStr(entity)} ke pose=${pose}, face=${face}`);
     }
     return true;
   }
+
+  logInfo(TAG, `Menahan ${entStr(entity)} selama ${ticks} tick (sampai tick ${until}). Alasan: "${reason}", pose=${pose}, face=${face}`);
   try {
     entity.triggerEvent(MODES.stay.event);
-  } catch {
+  } catch (e) {
+    logWarn(TAG, `Gagal triggerEvent MODES.stay pada ${entStr(entity)}`, e);
     return false;
   }
+
   setPose(entity, pose);
   setFace(entity, face);
   held.set(entity.id, { until, reason, pose });
@@ -49,30 +46,37 @@ export function hold(entity, ticks, { pose = POSE.normal, face = FACE.auto, reas
 
 export function isHeld(entity) {
   const row = held.get(entity?.id);
-  return Boolean(row) && row.until > system.currentTick;
+  const active = Boolean(row) && row.until > system.currentTick;
+  logDebug(TAG, `isHeld dicek untuk ${entStr(entity)}: ${active} (sisa: ${row ? row.until - system.currentTick : 0}t)`);
+  return active;
 }
 
 export function reasonFor(entity) {
   return held.get(entity?.id)?.reason;
 }
 
-/** Lepaskan sekarang juga, kembalikan ke mode yang tercatat. */
 export function release(entity) {
-  if (!held.delete(entity?.id)) return false;
+  if (!held.delete(entity?.id)) {
+    logDebug(TAG, `release dipanggil tapi ${entStr(entity)} tidak sedang dalam status hold.`);
+    return false;
+  }
   if (!alive(entity)) return false;
-  applyMode(entity, getMode(entity));
+
+  const currentMode = getMode(entity);
+  logInfo(TAG, `Melepaskan hold pada ${entStr(entity)}, mengembalikan ke mode: ${currentMode}`);
+  applyMode(entity, currentMode);
   setPose(entity, POSE.normal);
   setFace(entity, FACE.auto);
   return true;
 }
 
-/** Dipanggil denyut cepat: lepaskan yang waktunya habis. */
 export function tickHolds(byId) {
   const now = system.currentTick;
   for (const [id, row] of [...held]) {
     if (row.until > now) continue;
     held.delete(id);
     const entity = byId.get(id);
+    logInfo(TAG, `Waktu hold habis untuk ID: ${id} (${row.reason}). Mengembalikan mode entity...`);
     if (!alive(entity)) continue;
     applyMode(entity, getMode(entity));
     setPose(entity, POSE.normal);
@@ -81,5 +85,6 @@ export function tickHolds(byId) {
 }
 
 export function forget(id) {
-  held.delete(id);
+  const existed = held.delete(id);
+  logInfo(TAG, `forget hold untuk ID: ${id}. Dihapus? ${existed}`);
 }

@@ -1,23 +1,8 @@
 /**
  * Patok ladang: pemain menandai chunk mana yang boleh digarap companion.
- *
- * Alurnya sengaja dibalik dari yang biasa. Companion TIDAK boleh mulai melebarkan
- * ladang sampai pemain memberi izin, dan izin itu berbentuk barang yang bisa
- * dipegang: sebatang stick bernama "Patok Ladang". Klik/tap ke tanah mana pun,
- * chunk tempat blok itu berada jadi terpatok, dan sebuah penanda muncul di tengah
- * chunk dengan pancaran warna:
- *
- *   MERAH  — sudah dipatok, tapi belum digarap jadi ladang
- *   HIJAU  — sudah jadi ladang
- *
- * Klik lagi di chunk yang sama untuk mencabut patoknya.
- *
- * Patok disimpan di tingkat dunia, bukan di companion, supaya tetap ada walau
- * companion yang menggarapnya diistirahatkan atau diganti.
  */
 
 import { system, world } from "@minecraft/server";
-
 import { MARKER, STAKE_ITEM, STAKE_NAME } from "./config.js";
 import {
   claimKey, clearClaim, getClaim, readClaims, setClaim,
@@ -25,21 +10,23 @@ import {
 import {
   blockAt, chunkCenter, chunkOf, dist2, give, isSolid, makeItem, particle, sound,
 } from "./util.js";
+import { entStr, logDebug, logError, logInfo, logWarn, posStr } from "./logger.js";
 
+const TAG = "CLAIM";
 const BEAM_HEIGHT = 18;
 const BEAM_STEP = 2;
-// Dua partikel bawaan yang pasti ada di semua versi dan warnanya jelas beda dari
-// jauh. Sengaja bukan partikel redstone: identifiernya berbeda antar versi.
 const BEAM = {
   free: "minecraft:basic_flame_particle",
   claimed: "minecraft:villager_happy",
 };
 
-// --- barang patok ----------------------------------------------------------
-
 export function makeStake() {
+  logDebug(TAG, "Membuat ItemStack Patok Ladang...");
   const item = makeItem(STAKE_ITEM, 1);
-  if (!item) return undefined;
+  if (!item) {
+    logError(TAG, `Gagal membuat item patok dengan ID: ${STAKE_ITEM}`);
+    return undefined;
+  }
   item.nameTag = STAKE_NAME;
   try {
     item.setLore([
@@ -47,69 +34,91 @@ export function makeStake() {
       "§7sebagai ladang. Klik lagi untuk mencabut.",
       "§8Merah = belum digarap, hijau = sudah.",
     ]);
-  } catch {
-    /* setLore tidak ada di versi ini; namanya saja sudah cukup */
+  } catch (e) {
+    logWarn(TAG, "setLore tidak didukung pada versi ini, nama item tetap terpasang.", e);
   }
+  logDebug(TAG, "Patok ladang berhasil dibuat.");
   return item;
 }
 
 export function isStake(itemStack) {
-  return Boolean(itemStack) && itemStack.typeId === STAKE_ITEM &&
+  const result = Boolean(itemStack) && itemStack.typeId === STAKE_ITEM &&
     itemStack.nameTag === STAKE_NAME;
+  logDebug(TAG, `isStake dicek: ${itemStack?.typeId} ("${itemStack?.nameTag}") -> ${result}`);
+  return result;
 }
 
-/** Beri pemain satu patok kalau dia belum punya. */
 export function ensureStake(player) {
+  logDebug(TAG, `ensureStake dipanggil untuk pemain: ${player?.name}`);
   const container = player.getComponent("minecraft:inventory")?.container;
-  if (!container) return false;
+  if (!container) {
+    logWarn(TAG, `ensureStake gagal: Pemain ${player?.name} tidak memiliki inventory container.`);
+    return false;
+  }
   for (let i = 0; i < container.size; i++) {
-    if (isStake(container.getItem(i))) return false;
+    if (isStake(container.getItem(i))) {
+      logDebug(TAG, `Pemain ${player.name} sudah memiliki patok di slot ${i}.`);
+      return false;
+    }
   }
   give(player, makeStake());
   player.sendMessage(
     "§eKamu diberi §fPatok Ladang§e. §7Klik tanah untuk memilih chunk yang boleh " +
     "digarap. Penanda merah berarti belum digarap, hijau berarti sudah.");
+  logInfo(TAG, `Patok ladang diberikan ke pemain ${player.name}.`);
   return true;
 }
 
-// --- penanda ---------------------------------------------------------------
-
 function markersIn(dimension) {
   try {
-    return dimension.getEntities({ type: MARKER });
-  } catch {
+    const list = dimension.getEntities({ type: MARKER });
+    logDebug(TAG, `Ditemukan ${list.length} marker di dimensi ${dimension.id}`);
+    return list;
+  } catch (e) {
+    logWarn(TAG, `Gagal mencari marker di dimensi ${dimension.id}`, e);
     return [];
   }
 }
 
 function findMarker(dimension, cx, cz) {
+  logDebug(TAG, `Mencari marker di chunk (${cx}, ${cz})...`);
   for (const m of markersIn(dimension)) {
     const c = chunkOf(m.location);
-    if (c.cx === cx && c.cz === cz) return m;
+    if (c.cx === cx && c.cz === cz) {
+      logDebug(TAG, `Marker ditemukan: ${entStr(m)} di (${cx}, ${cz})`);
+      return m;
+    }
   }
+  logDebug(TAG, `Marker tidak ditemukan untuk chunk (${cx}, ${cz})`);
   return undefined;
 }
 
-/** Permukaan tanah di tengah chunk, supaya penandanya tidak melayang. */
 function groundAt(dimension, x, z, from) {
+  logDebug(TAG, `groundAt: mencari permukaan di (${x}, ${z}) mulai Y=${from}`);
   for (let y = Math.min(from + 12, 318); y > from - 40; y--) {
     const here = blockAt(dimension, x, y, z);
     const below = blockAt(dimension, x, y - 1, z);
     if (!here || !below) continue;
-    if (here.isAir && isSolid(below)) return y;
+    if (here.isAir && isSolid(below)) {
+      logDebug(TAG, `groundAt: ditemukan Y=${y}`);
+      return y;
+    }
   }
+  logDebug(TAG, `groundAt: fallback ke Y=${from}`);
   return from;
 }
 
 export function refreshMarker(dimension, cx, cz, entry) {
   const { x, z } = chunkCenter(cx, cz);
+  logInfo(TAG, `refreshMarker di chunk (${cx}, ${cz}) center=(${x}, ${z}), entry=${JSON.stringify(entry)}`);
   let marker = findMarker(dimension, cx, cz);
   if (!entry) {
     if (marker) {
       try {
+        logInfo(TAG, `Menghapus marker lama ${entStr(marker)} di chunk (${cx}, ${cz})`);
         marker.remove();
-      } catch {
-        /* sudah hilang */
+      } catch (e) {
+        logWarn(TAG, `Gagal menghapus marker di (${cx}, ${cz})`, e);
       }
     }
     return undefined;
@@ -118,26 +127,33 @@ export function refreshMarker(dimension, cx, cz, entry) {
     const y = groundAt(dimension, x, z, Math.floor(entry.y ?? 64));
     try {
       marker = dimension.spawnEntity(MARKER, { x: x + 0.5, y, z: z + 0.5 });
-    } catch {
-      return undefined;             // chunk belum dimuat
+      logInfo(TAG, `Marker baru berhasil di-spawn: ${entStr(marker)} di (${x + 0.5}, ${y}, ${z + 0.5})`);
+    } catch (e) {
+      logWarn(TAG, `Gagal spawn marker di (${x}, ${z}). Chunk belum dimuat?`, e);
+      return undefined;
     }
   }
   try {
-    marker.triggerEvent(entry.worked ? "vbs:set_claimed" : "vbs:set_free");
+    const eventName = entry.worked ? "vbs:set_claimed" : "vbs:set_free";
+    marker.triggerEvent(eventName);
     marker.nameTag = entry.worked
       ? `§aPatok Ladang §7(${cx}, ${cz})\n§asudah jadi ladang`
       : `§cPatok Ladang §7(${cx}, ${cz})\n§cbelum digarap`;
-  } catch {
-    /* penanda hilang di tengah jalan */
+    logDebug(TAG, `Marker ${entStr(marker)} di-update dengan event: ${eventName}`);
+  } catch (e) {
+    logWarn(TAG, `Gagal memperbarui status/nameTag marker di (${cx}, ${cz})`, e);
   }
   return marker;
 }
 
-/** Pancaran warna dari tiap penanda. Hanya digambar kalau ada pemain di dekatnya. */
 export function tickBeams() {
   const players = world.getAllPlayers();
   if (!players.length) return;
   const claims = readClaims();
+  const claimKeys = Object.keys(claims);
+  if (!claimKeys.length) return;
+
+  logDebug(TAG, `tickBeams: Memproses ${claimKeys.length} patok aktif.`);
   for (const [key, entry] of Object.entries(claims)) {
     const [dimId, coords] = key.split("|");
     const [cx, cz] = coords.split(",").map(Number);
@@ -151,6 +167,7 @@ export function tickBeams() {
     const watcher = players.find((p) => p.dimension.id === dimId &&
       dist2(p.location, { x, y: p.location.y, z }) < 64 * 64);
     if (!watcher) continue;
+
     const marker = findMarker(dimension, cx, cz);
     const base = marker ? marker.location.y : groundAt(dimension, x, z, 64);
     const id = entry.worked ? BEAM.claimed : BEAM.free;
@@ -160,21 +177,23 @@ export function tickBeams() {
   }
 }
 
-// --- pemakaian patok oleh pemain -------------------------------------------
-
-/** Balik status chunk tempat blok ini berada. Mengembalikan teks untuk pemain. */
 export function toggleClaim(player, block) {
   const { cx, cz } = chunkOf(block.location);
   const dimId = player.dimension.id;
+  logInfo(TAG, `Pemain ${player.name} toggleClaim pada blok ${posStr(block.location)} di chunk (${cx}, ${cz})`);
   const existing = getClaim(dimId, cx, cz);
   if (existing) {
+    logInfo(TAG, `Mencabut patok di chunk (${cx}, ${cz})`);
     clearClaim(dimId, cx, cz);
     refreshMarker(player.dimension, cx, cz, undefined);
     sound(player.dimension, "random.break", block.location);
     return `§7Patok chunk §f(${cx}, ${cz})§7 dicabut.`;
   }
-  const entry = { by: player.id, name: player.name, worked: false,
-                  y: Math.floor(block.location.y) + 1 };
+  const entry = {
+    by: player.id, name: player.name, worked: false,
+    y: Math.floor(block.location.y) + 1,
+  };
+  logInfo(TAG, `Memasang patok baru di chunk (${cx}, ${cz}) oleh ${player.name}`);
   setClaim(dimId, cx, cz, entry);
   refreshMarker(player.dimension, cx, cz, entry);
   sound(player.dimension, "random.orb", block.location);
@@ -182,18 +201,26 @@ export function toggleClaim(player, block) {
     "§7Suruh companionmu ke mode bertani, dia yang akan menggarapnya.";
 }
 
-/** Tandai satu chunk sudah jadi ladang: penandanya berubah merah -> hijau. */
 export function markWorked(dimension, cx, cz) {
+  logInfo(TAG, `markWorked: Menandai chunk (${cx}, ${cz}) sebagai selesai digarap.`);
   const entry = getClaim(dimension.id, cx, cz);
-  if (!entry || entry.worked) return false;
+  if (!entry) {
+    logWarn(TAG, `markWorked gagal: Chunk (${cx}, ${cz}) tidak ditemukan di klaim.`);
+    return false;
+  }
+  if (entry.worked) {
+    logDebug(TAG, `Chunk (${cx}, ${cz}) sudah bertatus worked sebelumnya.`);
+    return false;
+  }
   entry.worked = true;
   setClaim(dimension.id, cx, cz, entry);
   refreshMarker(dimension, cx, cz, entry);
+  logInfo(TAG, `Chunk (${cx}, ${cz}) berhasil ditandai sebagai ladang hijau.`);
   return true;
 }
 
-/** Chunk yang dipatok pemilik companion ini, terdekat dulu. */
 export function claimsNear(dimension, origin, ownerId, limit = 8) {
+  logDebug(TAG, `Mencari claimsNear: origin=${posStr(origin)}, ownerId=${ownerId}, limit=${limit}`);
   const out = [];
   const claims = readClaims();
   for (const [key, entry] of Object.entries(claims)) {
@@ -205,43 +232,50 @@ export function claimsNear(dimension, origin, ownerId, limit = 8) {
     out.push({ cx, cz, entry, d: Math.hypot(c.x - origin.x, c.z - origin.z) });
   }
   out.sort((a, b) => a.d - b.d);
-  return out.slice(0, limit);
+  const result = out.slice(0, limit);
+  logDebug(TAG, `claimsNear menemukan ${result.length} patok terdekat.`);
+  return result;
 }
 
 export function claimAt(dimension, loc, ownerId) {
   const { cx, cz } = chunkOf(loc);
+  logDebug(TAG, `claimAt dicek di ${posStr(loc)} -> chunk (${cx}, ${cz})`);
   const entry = getClaim(dimension.id, cx, cz);
   if (!entry) return undefined;
-  if (ownerId && entry.by !== ownerId) return undefined;
+  if (ownerId && entry.by !== ownerId) {
+    logDebug(TAG, `claimAt: Chunk dimilik oleh orang lain (${entry.by} !== ${ownerId})`);
+    return undefined;
+  }
   return { cx, cz, entry, key: claimKey(dimension.id, cx, cz) };
 }
 
-/** Kotak blok satu chunk: dipakai mode bertani untuk tahu batas garapannya. */
 export function chunkBounds(cx, cz) {
-  return { x0: cx * 16, z0: cz * 16, x1: cx * 16 + 15, z1: cz * 16 + 15 };
+  const bounds = { x0: cx * 16, z0: cz * 16, x1: cx * 16 + 15, z1: cz * 16 + 15 };
+  logDebug(TAG, `chunkBounds (${cx}, ${cz}) = ${JSON.stringify(bounds)}`);
+  return bounds;
 }
-
-// --- pasang pendengar ------------------------------------------------------
 
 let wired = false;
 
 export function wireStake() {
   if (wired) return;
   wired = true;
+  logInfo(TAG, "Mendaftarkan listener interaksi itemUseOn & playerInteractWithBlock untuk Patok Ladang...");
+
   const handle = (player, itemStack, block) => {
     if (!player || !block || !isStake(itemStack)) return false;
+    logDebug(TAG, `Event patok dipicu oleh pemain ${player.name} pada ${posStr(block.location)}`);
     system.run(() => {
       try {
-        player.sendMessage(toggleClaim(player, block));
-      } catch {
-        /* pemain keluar tepat saat mengklik */
+        const msg = toggleClaim(player, block);
+        player.sendMessage(msg);
+      } catch (e) {
+        logError(TAG, `Error saat mengeksekusi toggleClaim`, e);
       }
     });
     return true;
   };
 
-  // Dua nama event untuk hal yang sama di versi gim yang berbeda. Dipasang
-  // dua-duanya dan dijaga supaya tidak menangani klik yang sama dua kali.
   const seen = new Map();
   const once = (player, block) => {
     const key = `${player.id}:${block.x},${block.y},${block.z}`;
@@ -256,15 +290,17 @@ export function wireStake() {
       if (!once(ev.source, ev.block)) return;
       handle(ev.source, ev.itemStack, ev.block);
     });
-  } catch {
-    /* tidak ada di versi ini */
+    logDebug(TAG, "Berhasil subscribe ke world.afterEvents.itemUseOn");
+  } catch (e) {
+    logWarn(TAG, "Gagal subscribe ke world.afterEvents.itemUseOn", e);
   }
   try {
     world.afterEvents.playerInteractWithBlock.subscribe((ev) => {
       if (!once(ev.player, ev.block)) return;
       handle(ev.player, ev.itemStack ?? ev.beforeItemStack, ev.block);
     });
-  } catch {
-    /* tidak ada di versi ini */
+    logDebug(TAG, "Berhasil subscribe ke world.afterEvents.playerInteractWithBlock");
+  } catch (e) {
+    logWarn(TAG, "Gagal subscribe ke world.afterEvents.playerInteractWithBlock", e);
   }
 }

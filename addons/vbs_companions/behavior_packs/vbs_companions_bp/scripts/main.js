@@ -1,26 +1,8 @@
 /**
  * Titik masuk add-on VBS Companions.
- *
- * Berkas ini sengaja tidak berisi logika kerja satu pun. Isinya hanya denyut dan
- * penyaluran: siapa dipanggil kapan, dan apa yang harus dibereskan waktu
- * companion muncul, dimuat ulang, atau hilang. Semua yang "melakukan sesuatu"
- * ada di modulnya masing-masing.
- *
- * Ada tiga denyut, dan pembagiannya penting untuk server:
- *
- *   CEPAT (4 tick)  — hal yang harus terasa langsung: tatapan pemain, gelembung
- *                     teks, dan melepaskan companion yang tahanannya habis.
- *   KERJA (10 tick) — satu langkah pekerjaan tiap companion, apa pun modenya.
- *   LAMBAT          — tali penarik ke pemilik, pancaran patok, obrolan antar
- *                     companion, dan celoteh sesekali.
- *
- * Yang berat (memindai ladang, menggali, membangun) semuanya di denyut KERJA dan
- * masing-masing punya anggaran per denyut, jadi jumlah companion menentukan
- * beban secara linier, bukan meledak.
  */
 
 import { system, world } from "@minecraft/server";
-
 import { setActivity, forget as forgetActivity } from "./activity.js";
 import { sayFrom } from "./chat.js";
 import { forget as forgetCombat, syncWeapon, tickCombat } from "./combat.js";
@@ -40,49 +22,62 @@ import {
   alive, allCompanions, applyMode, dist2, getMode, getOwnerId, info, isCompanion,
   resolveOwner, setMode, setOwner, stopWalking, tickSteer,
 } from "./util.js";
+import { entStr, logDebug, logError, logInfo, logWarn, posStr } from "./logger.js";
 
+const TAG = "MAIN";
 const hintCooldown = new Map();
 const chatterAt = new Map();
 const CHATTER_EVERY = 1400;
 
-/** Baris celoteh yang cocok dengan mode yang sedang dijalankan. */
 const CHATTER_KEY = {
   farm: "farm", mine: "mine", wander: "wander", build: "build", attack: "attack",
 };
 
-/** Coba jadikan pemain pemilik resmi di mata mesin gim, supaya follow_owner jalan. */
 function tryTame(entity, player) {
+  logDebug(TAG, `Mencoba men-tame ${entStr(entity)} ke pemain ${player.name}...`);
   for (const id of ["minecraft:tameable", "minecraft:tamable"]) {
     try {
       const comp = entity.getComponent(id);
-      if (comp && typeof comp.tame === "function") return comp.tame(player) !== false;
-    } catch {
-      /* versi ini tidak menyediakannya; pemain masih bisa memberi roti */
+      if (comp && typeof comp.tame === "function") {
+        const res = comp.tame(player) !== false;
+        logInfo(TAG, `Hasil tame (${id}) untuk ${entStr(entity)}: ${res}`);
+        return res;
+      }
+    } catch (e) {
+      logWarn(TAG, `Gagal memanggil fungsi tame pada komponen ${id}`, e);
     }
   }
   return false;
 }
 
-/** Companion baru muncul: cari pemiliknya, beri penanda, nyalakan mode awal. */
 function bootstrap(entity, claimant) {
-  if (!alive(entity) || !isCompanion(entity)) return;
+  logInfo(TAG, `Memulai bootstrap untuk entity: ${entStr(entity)}`);
+  if (!alive(entity) || !isCompanion(entity)) {
+    logWarn(TAG, `Bootstrap batal: entity bukan companion atau mati.`);
+    return;
+  }
   if (!getOwnerId(entity)) {
     const owner = claimant ?? entity.dimension.getPlayers({
       location: entity.location, maxDistance: 10, closest: 1,
     })[0];
     if (owner) {
+      logInfo(TAG, `Menetapkan pemilik ${owner.name} untuk companion ${entStr(entity)}`);
       setOwner(entity, owner);
       tryTame(entity, owner);
-      owner.sendMessage(
-        `§a${info(entity).name} bergabung. §7Jongkok lalu klik kanan untuk memberi perintah.`);
+      owner.sendMessage(`§a${info(entity).name} bergabung. §7Jongkok lalu klik kanan untuk memberi perintah.`);
+    } else {
+      logWarn(TAG, `Bootstrap: Tidak ditemukan pemain di dekat companion untuk menjadi owner.`);
     }
   }
-  setMode(entity, getMode(entity) ?? DEFAULT_MODE);
+  const mode = getMode(entity) ?? DEFAULT_MODE;
+  logInfo(TAG, `Bootstrap: Mengatur mode awal "${mode}" untuk ${entStr(entity)}`);
+  setMode(entity, mode);
   syncWeapon(entity);
   refreshName(entity);
 }
 
 function forgetAll(id) {
+  logInfo(TAG, `Membersihkan SEMUA cache/state memori untuk entity ID: ${id}`);
   forgetActivity(id);
   forgetBubble(id);
   forgetCombat(id);
@@ -93,44 +88,49 @@ function forgetAll(id) {
   chatterAt.delete(id);
 }
 
-// --- kejadian --------------------------------------------------------------
-
 world.afterEvents.entitySpawn.subscribe((ev) => {
   if (!isCompanion(ev.entity)) return;
+  logInfo(TAG, `Event entitySpawn: Companion terdeteksi -> ${entStr(ev.entity)}`);
   system.run(() => bootstrap(ev.entity));
 });
 
 world.afterEvents.entityLoad.subscribe((ev) => {
   if (!isCompanion(ev.entity)) return;
+  logInfo(TAG, `Event entityLoad: Companion dimuat -> ${entStr(ev.entity)}`);
   system.run(() => {
     if (!alive(ev.entity)) return;
-    applyMode(ev.entity, getMode(ev.entity));    // samakan lagi component group
+    applyMode(ev.entity, getMode(ev.entity));
     syncWeapon(ev.entity);
     refreshName(ev.entity);
   });
 });
 
 try {
-  world.afterEvents.entityRemove.subscribe((ev) => forgetAll(ev.removedEntityId));
-} catch {
-  /* tidak ada di versi ini; peta catatannya cuma tumbuh pelan */
+  world.afterEvents.entityRemove.subscribe((ev) => {
+    logInfo(TAG, `Event entityRemove: Entity ID ${ev.removedEntityId} dihapus.`);
+    forgetAll(ev.removedEntityId);
+  });
+} catch (e) {
+  logWarn(TAG, "world.afterEvents.entityRemove tidak didukung.", e);
 }
 
 world.afterEvents.entityDie.subscribe((ev) => {
   if (!isCompanion(ev.deadEntity)) return;
+  logWarn(TAG, `Event entityDie: Companion ${entStr(ev.deadEntity)} MATI!`);
   forgetAll(ev.deadEntity.id);
 });
 
 world.afterEvents.entityHurt.subscribe((ev) => {
   const entity = ev.hurtEntity;
   if (!isCompanion(entity) || !alive(entity)) return;
+  logDebug(TAG, `Event entityHurt: ${entStr(entity)} terkena serangan.`);
   if (Math.random() < 0.35) sayFrom(entity, "hurt");
 });
 
-// Jongkok + klik kanan (atau tombol interact di layar sentuh) membuka UI.
 world.afterEvents.playerInteractWithEntity.subscribe((ev) => {
   const { player, target } = ev;
   if (!isCompanion(target)) return;
+  logDebug(TAG, `Pemain ${player.name} berinteraksi dengan ${entStr(target)} (Sneaking: ${player.isSneaking})`);
   if (!player.isSneaking) {
     const last = hintCooldown.get(player.id) ?? 0;
     if (system.currentTick - last > 60) {
@@ -142,42 +142,39 @@ world.afterEvents.playerInteractWithEntity.subscribe((ev) => {
   system.run(async () => {
     if (!alive(target)) return;
     if (!getOwnerId(target)) bootstrap(target, player);
+    logInfo(TAG, `Membuka UI untuk ${player.name} pada companion ${entStr(target)}`);
     await openMenu(player, target);
   });
 });
 
-world.afterEvents.playerLeave.subscribe((ev) => hintCooldown.delete(ev.playerId));
+world.afterEvents.playerLeave.subscribe((ev) => {
+  logDebug(TAG, `Pemain keluar: ID ${ev.playerId}`);
+  hintCooldown.delete(ev.playerId);
+});
 
 wireStake();
 
-// --- denyut cepat: tatapan, gelembung, pelepasan tahanan --------------------
-
+// DENYUT CEPAT (4 ticks)
 system.runInterval(() => {
   const companions = allCompanions(FAMILY).filter(alive);
   const byId = new Map(companions.map((c) => [c.id, c]));
   tickHolds(byId);
   tickBubbles(byId);
   if (LOOK.enabled) tickLook(companions);
-  // Langkah jalan diteruskan di sini, bukan di denyut kerja: yang sedang ditahan
-  // benar-benar berhenti, yang sedang menuju sesuatu berjalan dengan kecepatan
-  // yang wajar.
   for (const entity of companions) {
     if (isHeld(entity)) continue;
     tickSteer(entity);
   }
 }, TICKS.fast);
 
-// --- denyut kerja: satu langkah pekerjaan tiap companion --------------------
-
+// DENYUT KERJA (10 ticks)
 system.runInterval(() => {
   for (const entity of allCompanions(FAMILY)) {
     if (!alive(entity)) continue;
     try {
       workOnce(entity);
     } catch (err) {
-      // Satu companion yang bermasalah tidak boleh mematikan denyut untuk yang
-      // lain — itulah gunanya try/catch per companion, bukan per denyut.
-      console.warn(`[VBS] ${entity.typeId}: ${err}`);
+      logError(TAG, `Error saat workOnce pada ${entStr(entity)}`, err);
     }
   }
 }, TICKS.brain);
@@ -188,10 +185,12 @@ function workOnce(entity) {
   const owner = resolveOwner(entity);
   const state = readState(entity);
 
-  // Ditahan (disapa pemain, sedang mengobrol): benar-benar tidak mengerjakan
-  // apa pun. Ini yang bikin "dilihat berarti berhenti" berlaku untuk semua mode.
-  if (isHeld(entity)) return;
+  if (isHeld(entity)) {
+    logDebug(TAG, `workOnce: ${entStr(entity)} sedang di-hold, aksi kerja diskip.`);
+    return;
+  }
 
+  logDebug(TAG, `workOnce: Mengeksekusi mode "${mode}" untuk ${entStr(entity)}`);
   let status;
   switch (mode) {
     case "farm": status = tickFarm(entity, state, owner); break;
@@ -210,21 +209,18 @@ function workOnce(entity) {
   chatter(entity, mode);
 }
 
-/** Sesekali berkomentar tentang apa yang sedang dikerjakan. */
 function chatter(entity, mode) {
   if (readState(entity).quiet) return;
   const last = chatterAt.get(entity.id) ?? -CHATTER_EVERY;
   if (system.currentTick - last < CHATTER_EVERY) return;
   chatterAt.set(entity.id, system.currentTick + Math.floor(Math.random() * 400));
   if (Math.random() > 0.5) return;
-  sayFrom(entity, CHATTER_KEY[mode] ?? "idle");
+  const key = CHATTER_KEY[mode] ?? "idle";
+  logDebug(TAG, `Celoteh acak dipicu untuk ${entStr(entity)} (key: ${key})`);
+  sayFrom(entity, key);
 }
 
-// --- denyut lambat ---------------------------------------------------------
-
-// Tali tak kelihatan: kalau ketinggalan jauh atau beda dimensi, ditarik pulang.
-// Mode mengembara dan menambang sengaja dikecualikan — tugas keduanya memang
-// menjauh, dan yang menariknya pulang adalah modul modenya sendiri.
+// DENYUT LAMBAT (Leash, Beams, Social)
 system.runInterval(() => {
   for (const entity of allCompanions(FAMILY)) {
     try {
@@ -236,39 +232,37 @@ system.runInterval(() => {
       if (sameDimension && dist2(entity.location, owner.location) < TICKS.teleportAt ** 2) {
         continue;
       }
+      logInfo(TAG, `Teleportasi penarik: Menarik ${entStr(entity)} ke owner ${owner.name}`);
       const angle = Math.random() * Math.PI * 2;
       entity.teleport({
         x: owner.location.x + Math.cos(angle) * 1.5,
         y: owner.location.y,
         z: owner.location.z + Math.sin(angle) * 1.5,
       }, { dimension: owner.dimension });
-    } catch {
-      /* pemain baru keluar, atau chunk-nya belum dimuat */
+    } catch (e) {
+      logWarn(TAG, `Gagal melakukan teleportasi leash pada ${entStr(entity)}`, e);
     }
   }
 }, TICKS.leash);
 
-// Pancaran patok ladang.
 system.runInterval(() => {
   try {
     tickBeams();
-  } catch {
-    /* tidak ada patok, atau dunianya belum siap */
+  } catch (e) {
+    logWarn(TAG, "Error saat tickBeams", e);
   }
 }, 20);
 
-// Obrolan antar companion.
 system.runInterval(() => {
   const companions = allCompanions(FAMILY).filter(alive);
   if (companions.length < 2) return;
   try {
     tickSocial(companions);
   } catch (err) {
-    console.warn(`[VBS] obrolan: ${err}`);
+    logError(TAG, "Error saat tickSocial", err);
   }
 }, TICKS.social);
 
 system.run(() => {
-  console.log(`[VBS Companions] siap — ${Object.keys(MODES).length} mode, ` +
-              `keluarga entity "${FAMILY}", gelembung ${CHAT.bubbleRadius} blok`);
+  logInfo(TAG, `[VBS Companions] Sistem Siap! Total mode: ${Object.keys(MODES).length}`);
 });

@@ -13,7 +13,7 @@ import model
 BP = os.path.join(model.HERE, "..", "behavior_packs", "vbs_companions_bp")
 RP = os.path.join(model.HERE, "..", "resource_packs", "vbs_companions_rp")
 
-VERSION = [1, 0, 0]
+VERSION = [1, 1, 0]
 MIN_ENGINE = [1, 21, 0]
 
 # UUID ini adalah identitas pack di mata Minecraft. JANGAN diubah setelah dirilis:
@@ -253,8 +253,95 @@ def entity_doc(char):
 
 # --- resource pack: entity, tekstur item, teks -----------------------------
 
+# Wajah dipilih tiap frame dari apa yang sedang terjadi pada karakter, urut dari
+# yang paling mendesak. Semuanya jalan di klien: tidak ada satu pun tick server
+# yang dipakai untuk ini, dan tidak ada apa pun yang jalan saat tak ada yang
+# melihat. Nama ekspresi harus ada di model.FACES; yang tidak ada dilewati.
+FACE_RULES = (
+    ("query.hurt_time > 0", "hurt", "baru kena pukul"),
+    ("query.is_angry", "surprised", "sedang bertarung"),
+    ("!query.is_on_ground", "surprised", "sedang di udara"),
+    ("math.mod(query.life_time, 4.6) < 0.16", "blink", "pewaktu kedip"),
+    ("query.modified_move_speed > 0.86", "sing", "berlari"),
+    ("query.modified_move_speed > 0.08", "happy", "berjalan"),
+    ("math.mod(query.life_time, 37) < 2.4 && query.modified_move_speed < 0.02",
+     "sleepy", "diam lama"),
+    ("math.mod(query.life_time, 13) < 2.2", "smile", "diam, sesekali"),
+)
+
+FACE_VAR = "variable.vbs_face"
+
+
+def face_expression(faces):
+    """Rantai ternary Molang yang memilih indeks wajah; 0 kalau tak ada yang cocok."""
+    expr = "0"
+    for when, name, _why in reversed(FACE_RULES):
+        if name not in faces:
+            continue
+        index = faces.index(name)
+        expr = f"({when}) ? {index} : 0" if expr == "0" else f"({when}) ? {index} : ({expr})"
+    return expr
+
+
+def render_controller_doc(chars):
+    """Satu controller polos, plus satu per karakter yang punya ekspresi."""
+    controllers = {
+        "controller.render.vbs_companion": {
+            "geometry": "Geometry.default",
+            "materials": [{"*": "Material.default"}],
+            "textures": ["Texture.default"],
+        },
+    }
+    for char in chars:
+        faces = face_list(char)
+        if not faces:
+            continue
+        controllers[f"controller.render.vbs_companion.{char['id']}"] = {
+            "geometry": "Geometry.default",
+            "materials": [{"*": "Material.default"}],
+            "textures": ["Texture.default"],
+            # Semua bidang wajah bertumpuk di tempat yang sama, jadi tepat satu
+            # boleh terlihat; sisanya disembunyikan di sini.
+            "part_visibility": [{"*": True}] + [
+                {f"face_{name}": f"{FACE_VAR} == {i}"} for i, name in enumerate(faces)
+            ],
+        }
+    return {"format_version": "1.10.0", "render_controllers": controllers}
+
+
+def face_list(char):
+    """Ekspresi yang dideklarasikan badan karakter ini, urut."""
+    return [b["name"][len("face_"):] for b in model.build_bones(char)
+            if b["name"].startswith("face_")]
+
+
 def client_entity_doc(char):
     ident = f"vbs:{char['id']}"
+    faces = face_list(char)
+    detailed = char["style"].get("build") == "detailed"
+
+    animations = {
+        "look_at_target": "animation.vbs_companion.look_at_target",
+        "idle": "animation.vbs_companion.idle",
+        "walk": "animation.vbs_companion.walk",
+        "hair": "animation.vbs_companion.hair",
+        "combat": "animation.vbs_companion.combat",
+    }
+    animate = ["look_at_target", "idle", "walk", "hair", {"combat": "query.is_angry"}]
+    if detailed:
+        animations["detail"] = "animation.vbs_companion.detail"
+        animate.append("detail")
+
+    scripts = {"animate": animate}
+    if faces:
+        # pre_animation adalah satu-satunya tempat resource pack bisa menghitung
+        # ulang variabel Molang tiap frame tanpa script apa pun.
+        scripts["initialize"] = [f"{FACE_VAR} = 0;"]
+        scripts["pre_animation"] = [f"{FACE_VAR} = {face_expression(faces)};"]
+
+    controller = (f"controller.render.vbs_companion.{char['id']}" if faces
+                  else "controller.render.vbs_companion")
+
     return {
         "format_version": "1.10.0",
         "minecraft:client_entity": {
@@ -264,23 +351,9 @@ def client_entity_doc(char):
                 "materials": {"default": "entity_alphatest"},
                 "textures": {"default": f"textures/entity/vbs_companions/{char['id']}"},
                 "geometry": {"default": f"geometry.vbs_companion.{char['id']}"},
-                "animations": {
-                    "look_at_target": "animation.vbs_companion.look_at_target",
-                    "idle": "animation.vbs_companion.idle",
-                    "walk": "animation.vbs_companion.walk",
-                    "hair": "animation.vbs_companion.hair",
-                    "combat": "animation.vbs_companion.combat",
-                },
-                "scripts": {
-                    "animate": [
-                        "look_at_target",
-                        "idle",
-                        "walk",
-                        "hair",
-                        {"combat": "query.is_angry"},
-                    ],
-                },
-                "render_controllers": ["controller.render.vbs_companion"],
+                "animations": animations,
+                "scripts": scripts,
+                "render_controllers": [controller],
                 "spawn_egg": {"texture": f"vbs_spawn_egg_{char['id']}", "texture_index": 0},
                 "enable_attachables": False,
             },
@@ -320,6 +393,8 @@ def main():
     for c in chars:
         write(os.path.join(BP, "entities", f"{c['id']}.json"), entity_doc(c))
         write(os.path.join(RP, "entity", f"{c['id']}.entity.json"), client_entity_doc(c))
+    write(os.path.join(RP, "render_controllers", "vbs_companion.render_controllers.json"),
+          render_controller_doc(chars))
     write(os.path.join(RP, "textures", "item_texture.json"), item_texture_doc(chars))
     path = os.path.join(RP, "texts", "en_US.lang")
     os.makedirs(os.path.dirname(path), exist_ok=True)

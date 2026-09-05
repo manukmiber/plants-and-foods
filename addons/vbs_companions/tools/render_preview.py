@@ -87,7 +87,38 @@ def cube_faces(cube):
             for n, a, u, v in out]
 
 
-def render(geo, tex, yaw, pitch, w, h, scale, focus=None):
+def bone_transforms(geo):
+    """Fungsi transform tiap bone, memperhitungkan rotasi induk-induknya.
+
+    Build classic tidak memakai rotasi bone sama sekali, jadi ini dulu tidak
+    perlu. Build detailed memakainya untuk empat panel rok dan dua ekor rambut —
+    tanpa ini preview akan menggambar rok yang lurus padahal di gim mengembang,
+    yaitu preview yang berbohong.
+    """
+    by_name = {b["name"]: b for b in geo["bones"]}
+    cache = {}
+
+    def build(name):
+        if name in cache:
+            return cache[name]
+        bone = by_name[name]
+        parent = bone.get("parent")
+        up = build(parent) if parent in by_name else (lambda p: p)
+        rot, piv = bone.get("rotation"), bone["pivot"]
+        if not rot:
+            fn = up
+        else:
+            def fn(p, up=up, rot=rot, piv=piv):
+                q = tuple(p[i] - piv[i] for i in range(3))
+                q = rot_z(rot_y(rot_x(q, rot[0]), rot[1]), rot[2])
+                return up(tuple(q[i] + piv[i] for i in range(3)))
+        cache[name] = fn
+        return fn
+
+    return {b["name"]: build(b["name"]) for b in geo["bones"]}
+
+
+def render(geo, tex, yaw, pitch, w, h, scale, focus=None, hide=()):
     img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
     px = img.load()
     tpx = tex.load()
@@ -102,14 +133,18 @@ def render(geo, tex, yaw, pitch, w, h, scale, focus=None):
         q = rot_x(rot_y(p, yaw), pitch)
         return (cx + q[0] * scale, cy - q[1] * scale, q[2])
 
+    xforms = bone_transforms(geo)
     for bone in geo["bones"]:
+        if bone["name"] in hide:
+            continue
+        place = xforms[bone["name"]]
         for cube in bone.get("cubes", []):
             for name, a, u, v, (tx, ty, tuw, tvh) in cube_faces(cube):
                 if tuw <= 0 or tvh <= 0:
                     continue
-                pa = project(a)
-                pb = project(tuple(a[i] + u[i] for i in range(3)))
-                pd = project(tuple(a[i] + v[i] for i in range(3)))
+                pa = project(place(a))
+                pb = project(place(tuple(a[i] + u[i] for i in range(3))))
+                pd = project(place(tuple(a[i] + v[i] for i in range(3))))
                 ex, ey = pb[0] - pa[0], pb[1] - pa[1]
                 fx, fy = pd[0] - pa[0], pd[1] - pa[1]
                 det = ex * fy - ey * fx
@@ -178,12 +213,27 @@ def accent_of(ch):
     return tuple(int(h[i:i + 2], 16) for i in (0, 2, 4)) + (255,)
 
 
-def view(geo, tex, yaw, pitch, w, h, scale, focus=None):
-    img = render(geo, tex, yaw, pitch, w * SS, h * SS, scale * SS, focus)
+def face_bones(geo):
+    """Bone ekspresi yang dideklarasikan geometry ini, urut."""
+    return [b["name"] for b in geo["bones"] if b["name"].startswith("face_")]
+
+
+def hidden_faces(geo, show):
+    """Semua bone ekspresi kecuali satu — sisanya persis sebidang, jadi kalau
+    dibiarkan semuanya digambar dan z-buffer memilih sembarang."""
+    names = face_bones(geo)
+    return {n for n in names if n != f"face_{show}"}
+
+
+def view(geo, tex, yaw, pitch, w, h, scale, focus=None, hide=()):
+    img = render(geo, tex, yaw, pitch, w * SS, h * SS, scale * SS, focus, hide)
     return img.resize((w, h), Image.LANCZOS)
 
 
 def sheet(char, geo, tex):
+    faces = face_bones(geo)
+    resting = "smile" if "face_smile" in faces else "neutral"
+    body_hide = hidden_faces(geo, resting)
     head_w = 300
     w, h = VIEW_W * len(VIEWS) + head_w, VIEW_H + 60
     out = backdrop(w, h)
@@ -191,14 +241,16 @@ def sheet(char, geo, tex):
     for i, (label, yaw, pitch) in enumerate(VIEWS):
         vx = i * VIEW_W
         add_shadow(out, vx + VIEW_W / 2, VIEW_H - 22, 54, 13)
-        out.alpha_composite(view(geo, tex, yaw, pitch, VIEW_W, VIEW_H, SCALE), (vx, 0))
+        out.alpha_composite(
+            view(geo, tex, yaw, pitch, VIEW_W, VIEW_H, SCALE, hide=body_hide), (vx, 0))
         d.text((vx + VIEW_W / 2, VIEW_H + 6), label, fill=(196, 202, 220, 255),
                font=font(16), anchor="ma")
         if i:
             d.line([(vx, 16), (vx, VIEW_H - 16)], fill=(255, 255, 255, 26))
     hx = VIEW_W * len(VIEWS)
     d.line([(hx, 16), (hx, VIEW_H - 16)], fill=(255, 255, 255, 26))
-    out.alpha_composite(view(geo, tex, 16, 4, head_w, VIEW_H, 30, focus=(0, 28.6, 0)), (hx, 0))
+    out.alpha_composite(
+        view(geo, tex, 16, 4, head_w, VIEW_H, 30, focus=(0, 28.6, 0), hide=body_hide), (hx, 0))
     d.text((hx + head_w / 2, VIEW_H + 6), "Wajah (perbesaran)", fill=(196, 202, 220, 255),
            font=font(16), anchor="ma")
 
@@ -210,15 +262,41 @@ def sheet(char, geo, tex):
     return out
 
 
+def faces_sheet(char, geo, tex):
+    """Satu potret per ekspresi — cara paling jujur menunjukkan apa yang dipilih
+    render controller saat main."""
+    names = [n[len("face_"):] for n in face_bones(geo)]
+    cw, chh = 230, 250
+    cols = 4
+    rows = (len(names) + cols - 1) // cols
+    w, h = cw * cols, chh * rows + 28
+    out = backdrop(w, h)
+    d = ImageDraw.Draw(out)
+    for i, name in enumerate(names):
+        cx, cy = (i % cols) * cw, (i // cols) * chh
+        out.alpha_composite(
+            view(geo, tex, 0, 2, cw, chh - 26, 19, focus=(0, 28.7, 0),
+                 hide=hidden_faces(geo, name)), (cx, cy))
+        d.text((cx + cw / 2, cy + chh - 24), name, fill=(196, 202, 220, 255),
+               font=font(15), anchor="ma")
+        if i % cols:
+            d.line([(cx, cy + 12), (cx, cy + chh - 30)], fill=(255, 255, 255, 22))
+    d.rectangle([0, h - 26, w, h], fill=(12, 13, 20, 255))
+    d.text((14, h - 21), f"{char['name'].upper()}  ·  delapan ekspresi",
+           fill=accent_of(char), font=font(15))
+    return out
+
+
 def lineup(chars, geos, texs):
     w, h = VIEW_W * len(chars), VIEW_H + 42
     out = backdrop(w, h)
     d = ImageDraw.Draw(out)
     for i, ch in enumerate(chars):
         vx = i * VIEW_W
+        geo = geos[ch["id"]]
         add_shadow(out, vx + VIEW_W / 2, VIEW_H - 22, 54, 13)
-        out.alpha_composite(view(geos[ch["id"]], texs[ch["id"]], 28, 7,
-                                 VIEW_W, VIEW_H, SCALE), (vx, 0))
+        out.alpha_composite(view(geo, texs[ch["id"]], 28, 7, VIEW_W, VIEW_H, SCALE,
+                                 hide=hidden_faces(geo, "smile")), (vx, 0))
         d.text((vx + VIEW_W / 2, VIEW_H + 10), ch["name"].upper(),
                fill=accent_of(ch), font=font(18), anchor="ma")
     return out
@@ -236,6 +314,10 @@ def main():
         path = os.path.join(OUT, f"{ch['id']}.png")
         sheet(ch, geos[ch["id"]], texs[ch["id"]]).save(path)
         print("  " + os.path.relpath(path, model.HERE))
+        if face_bones(geos[ch["id"]]):
+            path = os.path.join(OUT, f"{ch['id']}-faces.png")
+            faces_sheet(ch, geos[ch["id"]], texs[ch["id"]]).save(path)
+            print("  " + os.path.relpath(path, model.HERE))
     path = os.path.join(OUT, "lineup.png")
     lineup(chars, geos, texs).save(path)
     print("  " + os.path.relpath(path, model.HERE))

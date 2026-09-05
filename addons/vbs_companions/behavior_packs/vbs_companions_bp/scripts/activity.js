@@ -1,29 +1,47 @@
 /**
  * Apa yang sedang dikerjakan tiap companion, dalam satu kalimat.
- *
- * Cuma catatan sementara di memori — tidak perlu selamat dari dunia ditutup.
- * Gunanya satu: waktu pemain membuka menu, dia langsung tahu companion sedang
- * apa, dan yang lebih penting, tahu ALASAN kalau companion berhenti bekerja
- * ("peti kehabisan bibit", "tidak ada sungai di dekat ladang"). Tanpa ini,
- * companion yang kekurangan bahan cuma terlihat seperti berdiri bengong.
  */
 
 import { system } from "@minecraft/server";
+import { entStr, logDebug, logInfo, logWarn } from "./logger.js";
 
-const notes = new Map();     // entityId -> { text, tick }
+const TAG = "ACTIVITY";
+const notes = new Map(); // entityId -> { text, tick }
 
 export function setActivity(entity, text) {
-  if (!entity || !text) return;
+  if (!entity) {
+    logWarn(TAG, "setActivity dipanggil dengan entity null/undefined.");
+    return;
+  }
+  if (!text) {
+    logWarn(TAG, `setActivity dipanggil untuk ${entStr(entity)} tanpa teks.`);
+    return;
+  }
+  const prev = notes.get(entity.id);
   notes.set(entity.id, { text, tick: system.currentTick });
+  logDebug(TAG, `Update aktivitas ${entStr(entity)}: "${text}" (Sebelumnya: "${prev?.text ?? "none"}")`);
 }
 
 export function getActivity(entity) {
-  const row = notes.get(entity?.id);
-  if (!row) return undefined;
-  if (system.currentTick - row.tick > 600) return undefined;    // sudah basi
+  if (!entity) {
+    logDebug(TAG, "getActivity dipanggil dengan entity null.");
+    return undefined;
+  }
+  const row = notes.get(entity.id);
+  if (!row) {
+    logDebug(TAG, `Aktivitas tidak ditemukan untuk ${entStr(entity)}`);
+    return undefined;
+  }
+  const age = system.currentTick - row.tick;
+  if (age > 600) {
+    logDebug(TAG, `Aktivitas untuk ${entStr(entity)} sudah basi (${age} ticks lalu): "${row.text}"`);
+    return undefined;
+  }
+  logDebug(TAG, `Aktivitas aktif untuk ${entStr(entity)}: "${row.text}" (${age} ticks lalu)`);
   return row.text;
 }
 
 export function forget(id) {
-  notes.delete(id);
+  const existed = notes.delete(id);
+  logInfo(TAG, `Menghapus aktivitas untuk entity ID: ${id}. Ditemukan? ${existed}`);
 }

@@ -1,20 +1,8 @@
 /**
  * Companion yang mengobrol dengan companion lain.
- *
- * Dua companion yang berdiri berdekatan cukup lama akan berhenti, saling
- * menghadap, dan bertukar beberapa kalimat. Topiknya dipilih dari mode yang
- * sedang mereka jalankan — dua petani membicarakan ladang, penambang yang
- * bertemu pengembara membicarakan perjalanan — jadi obrolannya nyambung dengan
- * apa yang sedang terjadi, bukan kalimat acak.
- *
- * Yang bicara ditahan lewat hold.js, sama seperti waktu disapa pemain, jadi
- * setelah obrolan selesai keduanya kembali ke perintah masing-masing sendiri.
- * Kalau pemain menatap salah satunya di tengah obrolan, tatapan pemain yang
- * menang — obrolannya dibatalkan.
  */
 
 import { system } from "@minecraft/server";
-
 import { POSE, TICKS } from "./config.js";
 import { say } from "./chat.js";
 import { hold } from "./hold.js";
@@ -22,14 +10,16 @@ import { TOPICS } from "./lines.js";
 import { isGreeting } from "./look.js";
 import { readState } from "./state.js";
 import { alive, dist2, face, getMode, getOwnerId, pick } from "./util.js";
+import { entStr, logDebug, logInfo } from "./logger.js";
 
+const TAG = "SOCIAL";
 const TALK_RADIUS = 7;
 const TURN_TICKS = 46;
-const COOLDOWN = 900;            // sekitar 45 detik sebelum pasangan yang sama boleh lagi
+const COOLDOWN = 900;
 const CHANCE = 0.5;
 
-const talking = new Map();       // entityId -> percakapan (dua-duanya menunjuk objek yang sama)
-const lastTalk = new Map();      // "idA|idB" -> tick
+const talking = new Map();
+const lastTalk = new Map();
 
 function pairKey(a, b) {
   return a < b ? `${a}|${b}` : `${b}|${a}`;
@@ -43,10 +33,11 @@ function topicFor(modeA, modeB) {
       return false;
     }
   });
-  return pick(fit.length ? fit : TOPICS);
+  const chosen = pick(fit.length ? fit : TOPICS);
+  logDebug(TAG, `Topik obrolan terpilih: "${chosen.tag}" untuk mode [${modeA}] & [${modeB}]`);
+  return chosen;
 }
 
-/** Mulai satu percakapan antara dua companion. */
 function begin(a, b) {
   const topic = topicFor(getMode(a), getMode(b));
   const convo = {
@@ -60,27 +51,23 @@ function begin(a, b) {
   talking.set(a.id, convo);
   talking.set(b.id, convo);
   lastTalk.set(pairKey(a.id, b.id), system.currentTick);
+  logInfo(TAG, `Mulai percakapan antara ${entStr(a)} dan ${entStr(b)}: Topik="${topic.tag}"`);
   return convo;
 }
 
 function end(convo) {
+  logInfo(TAG, `Mengakhiri obrolan topik: "${convo.tag}"`);
   for (const id of convo.speakers) talking.delete(id);
 }
 
-/** Sedang mengobrol? Dipakai mode kerja untuk berhenti sebentar. */
 export function isTalking(entity) {
   return talking.has(entity?.id);
 }
 
-/**
- * Satu denyut. Menjalankan percakapan yang sedang berlangsung, lalu mencoba
- * memulai yang baru dari pasangan yang berdekatan.
- */
 export function tickSocial(companions) {
   const now = system.currentTick;
   const byId = new Map(companions.map((c) => [c.id, c]));
 
-  // --- lanjutkan yang sedang berlangsung ---
   const seen = new Set();
   for (const convo of talking.values()) {
     if (seen.has(convo)) continue;
@@ -88,11 +75,13 @@ export function tickSocial(companions) {
     const [a, b] = convo.speakers.map((id) => byId.get(id));
     if (!alive(a) || !alive(b) || a.dimension.id !== b.dimension.id ||
         dist2(a.location, b.location) > (TALK_RADIUS + 4) ** 2) {
+      logDebug(TAG, `Obrolan "${convo.tag}" dibatalkan: lawan bicara menjauh/mati.`);
       end(convo);
       continue;
     }
     if (isGreeting(a) || isGreeting(b)) {
-      end(convo);                    // pemain lebih penting daripada obrolan
+      logDebug(TAG, `Obrolan "${convo.tag}" dibatalkan karena salah satu disapa pemilik.`);
+      end(convo);
       continue;
     }
     if (now < convo.nextAt) {
@@ -110,14 +99,12 @@ export function tickSocial(companions) {
     face(listener, speaker.location);
     hold(speaker, TURN_TICKS + 10, { pose: POSE.talk, reason: "talk" });
     hold(listener, TURN_TICKS + 10, { pose: POSE.normal, reason: "listen" });
-    // Di teks topik, {kamu} menunjuk LAWAN BICARA, bukan pemilik — itu sebabnya
-    // lawan bicaranya diteruskan ke say().
+    logInfo(TAG, `Turn obrolan [${convo.index + 1}/${convo.turns.length}] oleh ${entStr(speaker)}`);
     say(speaker, convo.turns[convo.index], { other: listener });
     convo.index++;
     convo.nextAt = now + TURN_TICKS;
   }
 
-  // --- coba mulai yang baru ---
   for (let i = 0; i < companions.length; i++) {
     const a = companions[i];
     if (talking.has(a.id) || isGreeting(a) || readState(a).quiet) continue;
@@ -130,7 +117,7 @@ export function tickSocial(companions) {
       const key = pairKey(a.id, b.id);
       if (now - (lastTalk.get(key) ?? -COOLDOWN) < COOLDOWN) continue;
       if (Math.random() > CHANCE) {
-        lastTalk.set(key, now - COOLDOWN + TICKS.social);   // coba lagi nanti
+        lastTalk.set(key, now - COOLDOWN + TICKS.social);
         continue;
       }
       begin(a, b);

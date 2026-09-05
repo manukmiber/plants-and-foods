@@ -162,8 +162,11 @@ export function readWaypoints() {
 export function addWaypoint(entry) {
   logInfo(TAG, `addWaypoint: ${entry.kind} di (${entry.x}, ${entry.y}, ${entry.z})`);
   const list = readWaypoints();
-  const near = list.find((w) => w.kind === entry.kind && w.dim === entry.dim &&
-    Math.hypot(w.x - entry.x, w.z - entry.z) < 24);
+  const near = list.find(
+    (w) => w.kind === entry.kind &&
+      w.dim === entry.dim &&
+      Math.hypot(w.x - entry.x, w.z - entry.z) < 24,
+  );
   if (near) {
     logDebug(TAG, `Waypoint duplikat (jarak < 24 blok). Dilewati.`);
     return false;

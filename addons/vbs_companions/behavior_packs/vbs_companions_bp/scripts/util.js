@@ -154,9 +154,9 @@ export function healthOf(entity) {
   };
 }
 
-export function bar(cur, max, width = 20) {
+export function bar(cur, max, width = 20, color = "§c") {
   const filled = max > 0 ? Math.max(0, Math.min(width, Math.round((cur / max) * width))) : 0;
-  return `§c${"|".repeat(filled)}§8${"|".repeat(width - filled)}`;
+  return `${color}${"|".repeat(filled)}§8${"|".repeat(width - filled)}`;
 }
 
 function equippable(entity) {

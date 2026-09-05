@@ -6,21 +6,25 @@ import { system, world } from "@minecraft/server";
 import { setActivity, forget as forgetActivity } from "./activity.js";
 import { sayFrom } from "./chat.js";
 import { forget as forgetCombat, syncWeapon, tickCombat } from "./combat.js";
-import { CHAT, DEFAULT_MODE, FAMILY, LOOK, MODES, TICKS } from "./config.js";
+import { CHAT, DEFAULT_MODE, FAMILY, FLOWERS, LOOK, MODES, TICKS } from "./config.js";
 import { tickBuild } from "./builder.js";
 import { tickBeams, wireStake } from "./claim.js";
+import { tickCrafter } from "./crafter.js";
+import { tickEnergy } from "./energy.js";
 import { tickFarm } from "./farming.js";
-import { forget as forgetHold, isHeld, tickHolds } from "./hold.js";
+import { tickLooter } from "./looter.js";
+import { forget as forgetHold, isHeld, reasonFor, tickHolds } from "./hold.js";
 import { forget as forgetLook, tickLook } from "./look.js";
 import { tickMine } from "./mining.js";
 import { forget as forgetBubble, refreshName, tickBubbles } from "./nametag.js";
 import { forget as forgetSocial, tickSocial } from "./social.js";
-import { readState } from "./state.js";
+import { readState, writeState } from "./state.js";
 import { openMenu } from "./ui.js";
+import { wireUserTalk } from "./usertalk.js";
 import { tickWander } from "./wander.js";
 import {
   alive, allCompanions, applyMode, dist2, getMode, getOwnerId, info, isCompanion,
-  resolveOwner, setMode, setOwner, stopWalking, tickSteer,
+  particle, resolveOwner, setMode, setOwner, stopWalking, tickSteer,
 } from "./util.js";
 import { entStr, logDebug, logError, logInfo, logWarn, posStr } from "./logger.js";
 
@@ -31,6 +35,7 @@ const CHATTER_EVERY = 1400;
 
 const CHATTER_KEY = {
   farm: "farm", mine: "mine", wander: "wander", build: "build", attack: "attack",
+  crafter: "crafter", looter: "looter",
 };
 
 function tryTame(entity, player) {
@@ -56,24 +61,62 @@ function bootstrap(entity, claimant) {
     logWarn(TAG, `Bootstrap batal: entity bukan companion atau mati.`);
     return;
   }
-  if (!getOwnerId(entity)) {
-    const owner = claimant ?? entity.dimension.getPlayers({
-      location: entity.location, maxDistance: 10, closest: 1,
-    })[0];
-    if (owner) {
-      logInfo(TAG, `Menetapkan pemilik ${owner.name} untuk companion ${entStr(entity)}`);
-      setOwner(entity, owner);
-      tryTame(entity, owner);
-      owner.sendMessage(`§a${info(entity).name} bergabung. §7Jongkok lalu klik kanan untuk memberi perintah.`);
-    } else {
-      logWarn(TAG, `Bootstrap: Tidak ditemukan pemain di dekat companion untuk menjadi owner.`);
-    }
+  // Secara default companion LIAR (untamed) begitu muncul — tidak ada lagi
+  // pengambilan pemilik otomatis dari pemain terdekat. Satu-satunya jalan
+  // menjadi pemiliknya adalah memberinya bunga (lihat tryFeedFlower di bawah),
+  // dan claimant di sini hanya diisi dari jalur itu.
+  if (claimant && !getOwnerId(entity)) {
+    logInfo(TAG, `Menetapkan pemilik ${claimant.name} untuk companion ${entStr(entity)}`);
+    setOwner(entity, claimant);
+    tryTame(entity, claimant);
+    claimant.sendMessage(
+      `§a${info(entity).name} jinak dan sekarang mengikutimu. ` +
+      "§7Jongkok lalu klik kanan untuk memberi perintah.");
   }
   const mode = getMode(entity) ?? DEFAULT_MODE;
   logInfo(TAG, `Bootstrap: Mengatur mode awal "${mode}" untuk ${entStr(entity)}`);
   setMode(entity, mode);
   syncWeapon(entity);
   refreshName(entity);
+}
+
+function heldFlower(player) {
+  try {
+    const eq = player.getComponent("minecraft:equippable");
+    const stack = eq?.getEquipment("Mainhand");
+    return stack && FLOWERS.has(stack.typeId) ? stack : undefined;
+  } catch (e) {
+    logWarn(TAG, `Gagal membaca item di tangan ${player?.name} saat cek bunga`, e);
+    return undefined;
+  }
+}
+
+function consumeOne(player, stack) {
+  const eq = player.getComponent("minecraft:equippable");
+  if (stack.amount > 1) {
+    stack.amount -= 1;
+    eq.setEquipment("Mainhand", stack);
+  } else {
+    eq.setEquipment("Mainhand", undefined);
+  }
+}
+
+function tryFeedFlower(entity, player) {
+  const stack = heldFlower(player);
+  if (!stack) return false;
+  logInfo(TAG, `${player.name} memberi bunga (${stack.typeId}) ke ${entStr(entity)} untuk menjinakkannya.`);
+  try {
+    consumeOne(player, stack);
+  } catch (e) {
+    logWarn(TAG, `Gagal mengambil bunga dari tangan ${player.name}`, e);
+    return false;
+  }
+  bootstrap(entity, player);
+  particle(entity.dimension, "minecraft:heart_particle", {
+    x: entity.location.x, y: entity.location.y + 2.1, z: entity.location.z,
+  });
+  player.playSound("random.eat", { location: player.location });
+  return true;
 }
 
 function forgetAll(id) {
@@ -131,6 +174,17 @@ world.afterEvents.playerInteractWithEntity.subscribe((ev) => {
   const { player, target } = ev;
   if (!isCompanion(target)) return;
   logDebug(TAG, `Pemain ${player.name} berinteraksi dengan ${entStr(target)} (Sneaking: ${player.isSneaking})`);
+
+  if (!getOwnerId(target)) {
+    if (!player.isSneaking && tryFeedFlower(target, player)) return;
+    const last = hintCooldown.get(player.id) ?? 0;
+    if (system.currentTick - last > 60) {
+      hintCooldown.set(player.id, system.currentTick);
+      player.sendMessage("§7Companion ini masih liar. Beri dia satu bunga (apa saja) untuk menjinakkannya.");
+    }
+    return;
+  }
+
   if (!player.isSneaking) {
     const last = hintCooldown.get(player.id) ?? 0;
     if (system.currentTick - last > 60) {
@@ -141,7 +195,6 @@ world.afterEvents.playerInteractWithEntity.subscribe((ev) => {
   }
   system.run(async () => {
     if (!alive(target)) return;
-    if (!getOwnerId(target)) bootstrap(target, player);
     logInfo(TAG, `Membuka UI untuk ${player.name} pada companion ${entStr(target)}`);
     await openMenu(player, target);
   });
@@ -153,6 +206,7 @@ world.afterEvents.playerLeave.subscribe((ev) => {
 });
 
 wireStake();
+wireUserTalk();
 
 // DENYUT CEPAT (4 ticks)
 system.runInterval(() => {
@@ -185,8 +239,23 @@ function workOnce(entity) {
   const owner = resolveOwner(entity);
   const state = readState(entity);
 
-  if (isHeld(entity)) {
+  // Hold karena "rest" sengaja tidak menghentikan workOnce sepenuhnya — kalau
+  // begitu, tickEnergy (yang justru menjalankan pemulihan tenaga dan
+  // pengecekan "sudah cukup istirahat belum") tidak akan pernah terpanggil
+  // lagi selama companion ditahan diam oleh hold-nya sendiri.
+  if (isHeld(entity) && reasonFor(entity) !== "rest") {
     logDebug(TAG, `workOnce: ${entStr(entity)} sedang di-hold, aksi kerja diskip.`);
+    return;
+  }
+
+  if (!getOwnerId(entity)) {
+    logDebug(TAG, `workOnce: ${entStr(entity)} masih liar, tidak bekerja sebelum dijinakkan.`);
+    return;
+  }
+
+  if (tickEnergy(entity, state, mode)) {
+    writeState(entity, state);
+    setActivity(entity, "beristirahat memulihkan tenaga");
     return;
   }
 
@@ -197,6 +266,8 @@ function workOnce(entity) {
     case "mine": status = tickMine(entity, state, owner); break;
     case "wander": status = tickWander(entity, state, owner); break;
     case "build": status = tickBuild(entity, state, owner); break;
+    case "crafter": status = tickCrafter(entity, state, owner); break;
+    case "looter": status = tickLooter(entity, state, owner); break;
     case "attack": {
       const n = tickCombat(entity, meta?.damage ?? 5);
       status = n ? `bertarung (${n} musuh dekat)` : "berjaga, tidak ada musuh";
@@ -205,6 +276,7 @@ function workOnce(entity) {
     case "stay": status = "berjaga di tempat"; break;
     default: status = "mengikuti"; break;
   }
+  writeState(entity, state);
   if (status) setActivity(entity, status);
   chatter(entity, mode);
 }
@@ -225,7 +297,11 @@ system.runInterval(() => {
   for (const entity of allCompanions(FAMILY)) {
     try {
       const mode = getMode(entity);
-      if (mode === "stay" || mode === "wander" || mode === "mine") continue;
+      // Cuma mode "Ikuti Aku" yang boleh ditarik paksa ke pemilik. Mode kerja
+      // lainnya (bertani, menambang, membangun, bertarung, mengembara, merajin,
+      // mencari barang, diam) harus tetap di chunk tempat mereka bekerja —
+      // ditarik terus-terusan cuma bikin mereka tidak pernah selesai kerja.
+      if (mode !== "follow") continue;
       const owner = resolveOwner(entity);
       if (!owner) continue;
       const sameDimension = owner.dimension.id === entity.dimension.id;

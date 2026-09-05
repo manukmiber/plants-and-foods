@@ -6,6 +6,62 @@ reconstructed afterwards, which is why the builder refuses to save without one.
 
 ## Unreleased
 
+### VBS Companions v1.3.0
+
+Rombakan besar berdasarkan 16 keluhan/permintaan pemain: bug bertani dan
+menambang, dua role bantuan baru, taming ulang, energi, dan chat dua arah.
+
+**Perbaikan perilaku:**
+
+- **Ladang diratakan dulu sebelum dicangkul.** Sebelumnya companion mencangkul
+  kontur tanah asli apa adanya, jadi farmland-nya berundak dan sebagian petak
+  tidak kebagian air. Sekarang seluruh chunk berpatok diratakan ke satu Y acuan
+  (rata-rata tempat pemain mematok) — kelebihan tanah dibongkar gratis,
+  kekurangannya ditimbun tanah dari peti kalau ada.
+- **Hasil panen selalu masuk peti stasiun**, bukan lagi langsung ke kantong
+  pemain kalau kebetulan sedang dekat — supaya companion lain bisa memakainya
+  dan hasilnya kelihatan menumpuk.
+- **Terowongan tambang jadi 1×3** (lebar×tinggi), naik dari 1×2, plus deteksi
+  bijih di langit-langit ikut disesuaikan.
+- **Alat dibuat tier demi tier.** `bestTier()` dulu langsung memilih tingkat
+  terbaik yang bahannya ada (kalau ada besi, langsung besi walau kayu juga
+  ada) — sekarang naik satu tingkat setiap panggilan, sama seperti pemain
+  sungguhan naik dari kayu ke batu ke besi.
+- **Leash cuma menarik companion mode Ikuti Aku.** Sebelumnya farm/build/attack
+  juga ikut ditarik paksa ke pemilik tiap beberapa detik kalau lebih dari 24
+  blok — itu membuat mereka tidak pernah selesai kerja di lokasi jauh.
+
+**Fitur baru:**
+
+- **Taming pakai bunga.** Companion sekarang **liar (untamed)** begitu muncul —
+  tidak ada lagi pengambilan pemilik otomatis dari pemain terdekat. Beri satu
+  bunga (apa saja) sambil berdiri (tidak jongkok) untuk menjinakkannya.
+  `minecraft:tameable.tame_items` dikosongkan supaya taming sepenuhnya
+  dikendalikan script, bukan mesin taming bawaan.
+- **Dua role baru: Merajin dan Mencari Barang.** Petani/penambang yang
+  kehabisan bahan alat memasang permintaan bantuan; Merajin membacanya,
+  menempa dari peti sendiri, dan mengantarnya. Mencari Barang menebang kayu,
+  menggali batu permukaan, dan memungut barang untuk Merajin/Pembangun.
+- **Energi, kelelahan, dan istirahat.** Mode kerja menguras tenaga; begitu
+  habis, companion mencari rumah desa → stasiun sendiri → pohon terdekat untuk
+  beristirahat sebelum lanjut kerja. Ngobrol dengan companion lain juga
+  memulihkan sedikit tenaga.
+- **Membangun kampung.** Pembangun bisa diminta membuat rumah (lengkap
+  ranjang) di tiap chunk yang dipatok pemain lewat `Patok Desa` — dikerjakan
+  lebih dulu sebelum rancangan blueprint biasa. Posisi ranjangnya jadi tujuan
+  istirahat companion lain.
+- **Toggle nama pemilik di penanda.** Menu Pengaturan punya saklar
+  sembunyikan/tampilkan segmen pemilik di nametag, per companion.
+- **Chat dua arah.** Mengetik `chat <nama> <pesan>` (tanpa garis miring — custom
+  command butuh Beta APIs eksperimental yang sengaja dihindari add-on ini)
+  mengirim pesan ke companion tertentu dan mendapat balasan sesuai konteks
+  (status kerja, sapaan, ucapan terima kasih, dst).
+- **Lebih banyak obrolan** di semua role dan karakter: baris idle/greet/hurt
+  baru, plus baris khusus untuk merajin, mencari barang, kampung, dan
+  kelelahan.
+- **Logging tetap ultra-verbose** di semua modul baru, mengikuti pola
+  `logger.js` yang sudah ada di rilis sebelumnya.
+
 ### VBS Companions v1.2.0
 
 Rilis terbesar sejauh ini: tiga role baru, sistem bertani yang benar-benar

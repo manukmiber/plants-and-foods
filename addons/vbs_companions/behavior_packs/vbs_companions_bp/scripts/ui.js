@@ -3,12 +3,13 @@
  */
 
 import { ActionFormData, MessageFormData, ModalFormData } from "@minecraft/server-ui";
-import { FOOD_HEAL, MODES } from "./config.js";
+import { ENERGY, FOOD_HEAL, MODES } from "./config.js";
 import { getActivity } from "./activity.js";
 import { BLUEPRINTS, startBlueprint } from "./builder.js";
-import { claimsNear, ensureStake } from "./claim.js";
+import { claimsNear, ensureStake, ensureVillageStake } from "./claim.js";
 import { syncWeapon } from "./combat.js";
 import { bestTier, tierName, toolRank } from "./crafting.js";
+import { energyOf, isResting } from "./energy.js";
 import { setExpand } from "./farming.js";
 import { displayName, refreshName } from "./nametag.js";
 import { patchState, readState } from "./state.js";
@@ -55,6 +56,7 @@ function statusBody(entity) {
   const armor = armorSummary(gear);
   const mode = MODES[getMode(entity)];
   const doing = getActivity(entity);
+  const energy = Math.round(energyOf(state));
   return [
     `§7Pemilik   §f${getOwnerName(entity)}`,
     `§7Tugas     §f${mode.label}  §8${mode.hint}`,
@@ -62,6 +64,8 @@ function statusBody(entity) {
     "",
     `§cNyawa     §f${cur}§7/§f${max}`,
     bar(cur, max),
+    `§eTenaga    §f${energy}§7/§f${ENERGY.max}${isResting(state) ? " §8(beristirahat)" : ""}`,
+    bar(energy, ENERGY.max, 20, "§e"),
     `§9Armor     §f${armor.points} §7(${armor.label})`,
     `§7Senjata   §f${prettyItem(gear.mainhand)}`,
     toolLine(entity, state),
@@ -130,6 +134,7 @@ async function openSettings(player, entity) {
     .button("§eRancangan Bangunan\n§8Pilih yang akan dibangun", "textures/items/brick")
     .button("§bCatatan Pengembara\n§8Temuan beserta koordinatnya", "textures/items/map_filled")
     .button(`§7Celoteh: ${state.quiet ? "§cmati" : "§ahidup"}\n§8Gelembung teks dan obrolan`, "textures/items/book_normal")
+    .button(`§7Nama pemilik di penanda: ${state.hideOwner ? "§csembunyi" : "§aterlihat"}\n§8Kalau disembunyikan, pemain lain tidak tahu ini punya siapa`, "textures/items/paper")
     .button("§bGanti Nama", "textures/items/name_tag")
     .button("§dPanggil ke Sini\n§8Tarik dia ke tempatmu berdiri", "textures/items/ender_pearl")
     .button("§cIstirahatkan\n§8Companion dihilangkan dari dunia", "textures/items/barrier")
@@ -146,9 +151,10 @@ async function openSettings(player, entity) {
     case 4: await openBlueprints(player, entity); break;
     case 5: await openWaypoints(player, entity); break;
     case 6: toggleQuiet(player, entity); break;
-    case 7: await rename(player, entity); break;
-    case 8: recall(player, entity); break;
-    case 9: await dismiss(player, entity); break;
+    case 7: toggleHideOwner(player, entity); break;
+    case 8: await rename(player, entity); break;
+    case 9: recall(player, entity); break;
+    case 10: await dismiss(player, entity); break;
     default: await openMenu(player, entity); return;
   }
 }
@@ -201,16 +207,26 @@ async function openBlueprints(player, entity) {
       "§7dan alasannya muncul di baris §fSekarang§7 di menu utama.",
       "",
       `§7Rancangan sekarang: §f${BLUEPRINTS[state.blueprint]?.label ?? "belum dipilih"}`,
+      "",
+      "§7Mau bikin kampung kecil? Ambil §fPatok Desa§7 di bawah, patok beberapa",
+      "§7chunk, lalu suruh dia ke Mode Membangun — rumah lengkap ranjang akan",
+      "§7dibangun duluan sebelum rancangan di atas.",
     ].join("\n"));
   for (const key of keys) {
     const bp = BLUEPRINTS[key];
     const mark = key === state.blueprint ? " §8(sekarang)" : "";
     form.button(`§f${bp.label}${mark}\n§8${bp.hint}`);
   }
+  form.button("§2Ajukan Desa\n§8Minta Patok Desa untuk menandai chunk yang boleh dibangun rumah");
   form.button("§8« Kembali");
 
   const res = await forceShow(player, form);
   if (!res || res.canceled || res.selection === undefined) return;
+  if (res.selection === keys.length) {
+    if (!ensureVillageStake(player)) player.sendMessage("§7Patok Desa sudah ada di kantongmu.");
+    await openBlueprints(player, entity);
+    return;
+  }
   if (res.selection < keys.length) {
     const key = keys[res.selection];
     const fresh = readState(entity);
@@ -241,6 +257,15 @@ function toggleQuiet(player, entity) {
   player.sendMessage(state.quiet
     ? "§aCeloteh dihidupkan lagi."
     : "§7Celoteh dimatikan. Dia tetap bekerja, cuma diam.");
+}
+
+function toggleHideOwner(player, entity) {
+  const state = readState(entity);
+  patchState(entity, { hideOwner: !state.hideOwner });
+  refreshName(entity);
+  player.sendMessage(state.hideOwner
+    ? "§aNama pemilik ditampilkan lagi di penanda."
+    : "§7Nama pemilik disembunyikan. Pemain lain di server tidak akan tahu ini punya siapa.");
 }
 
 function heldStack(player) {

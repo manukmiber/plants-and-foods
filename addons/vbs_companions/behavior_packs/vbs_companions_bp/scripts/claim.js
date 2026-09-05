@@ -3,7 +3,9 @@
  */
 
 import { system, world } from "@minecraft/server";
-import { MARKER, STAKE_ITEM, STAKE_NAME } from "./config.js";
+import {
+  MARKER, STAKE_ITEM, STAKE_NAME, VILLAGE_STAKE_ITEM, VILLAGE_STAKE_NAME,
+} from "./config.js";
 import {
   claimKey, clearClaim, getClaim, readClaims, setClaim,
 } from "./state.js";
@@ -66,6 +68,55 @@ export function ensureStake(player) {
     "§eKamu diberi §fPatok Ladang§e. §7Klik tanah untuk memilih chunk yang boleh " +
     "digarap. Penanda merah berarti belum digarap, hijau berarti sudah.");
   logInfo(TAG, `Patok ladang diberikan ke pemain ${player.name}.`);
+  return true;
+}
+
+export function makeVillageStake() {
+  logDebug(TAG, "Membuat ItemStack Patok Desa...");
+  const item = makeItem(VILLAGE_STAKE_ITEM, 1);
+  if (!item) {
+    logError(TAG, `Gagal membuat item patok desa dengan ID: ${VILLAGE_STAKE_ITEM}`);
+    return undefined;
+  }
+  item.nameTag = VILLAGE_STAKE_NAME;
+  try {
+    item.setLore([
+      "§7Klik tanah untuk mematok chunk itu",
+      "§7sebagai lahan desa. Klik lagi untuk mencabut.",
+      "§8Bisa lebih dari satu chunk — Pembangun akan",
+      "§8membuatkan satu rumah berisi ranjang di tiap chunk.",
+    ]);
+  } catch (e) {
+    logWarn(TAG, "setLore tidak didukung pada versi ini, nama item tetap terpasang.", e);
+  }
+  return item;
+}
+
+export function isVillageStake(itemStack) {
+  const result = Boolean(itemStack) && itemStack.typeId === VILLAGE_STAKE_ITEM &&
+    itemStack.nameTag === VILLAGE_STAKE_NAME;
+  logDebug(TAG, `isVillageStake dicek: ${itemStack?.typeId} ("${itemStack?.nameTag}") -> ${result}`);
+  return result;
+}
+
+export function ensureVillageStake(player) {
+  logDebug(TAG, `ensureVillageStake dipanggil untuk pemain: ${player?.name}`);
+  const container = player.getComponent("minecraft:inventory")?.container;
+  if (!container) {
+    logWarn(TAG, `ensureVillageStake gagal: Pemain ${player?.name} tidak memiliki inventory container.`);
+    return false;
+  }
+  for (let i = 0; i < container.size; i++) {
+    if (isVillageStake(container.getItem(i))) {
+      logDebug(TAG, `Pemain ${player.name} sudah memiliki patok desa di slot ${i}.`);
+      return false;
+    }
+  }
+  give(player, makeVillageStake());
+  player.sendMessage(
+    "§eKamu diberi §fPatok Desa§e. §7Klik tanah untuk memilih chunk yang boleh dibangun " +
+    "rumah. Bisa lebih dari satu chunk — suruh Pembangun ke Mode Membangun sesudahnya.");
+  logInfo(TAG, `Patok desa diberikan ke pemain ${player.name}.`);
   return true;
 }
 
@@ -177,12 +228,17 @@ export function tickBeams() {
   }
 }
 
-export function toggleClaim(player, block) {
+export function toggleClaim(player, block, kind = "farm") {
   const { cx, cz } = chunkOf(block.location);
   const dimId = player.dimension.id;
-  logInfo(TAG, `Pemain ${player.name} toggleClaim pada blok ${posStr(block.location)} di chunk (${cx}, ${cz})`);
+  logInfo(TAG, `Pemain ${player.name} toggleClaim (${kind}) pada blok ${posStr(block.location)} di chunk (${cx}, ${cz})`);
   const existing = getClaim(dimId, cx, cz);
   if (existing) {
+    if ((existing.kind ?? "farm") !== kind) {
+      logInfo(TAG, `toggleClaim ditolak: chunk (${cx}, ${cz}) sudah dipatok untuk "${existing.kind ?? "farm"}", bukan "${kind}".`);
+      const already = existing.kind === "village" ? "desa" : "ladang";
+      return `§cChunk itu sudah dipatok untuk ${already}. Cabut dulu dengan patok yang sesuai.`;
+    }
     logInfo(TAG, `Mencabut patok di chunk (${cx}, ${cz})`);
     clearClaim(dimId, cx, cz);
     refreshMarker(player.dimension, cx, cz, undefined);
@@ -190,13 +246,17 @@ export function toggleClaim(player, block) {
     return `§7Patok chunk §f(${cx}, ${cz})§7 dicabut.`;
   }
   const entry = {
-    by: player.id, name: player.name, worked: false,
+    by: player.id, name: player.name, worked: false, kind,
     y: Math.floor(block.location.y) + 1,
   };
-  logInfo(TAG, `Memasang patok baru di chunk (${cx}, ${cz}) oleh ${player.name}`);
+  logInfo(TAG, `Memasang patok baru (${kind}) di chunk (${cx}, ${cz}) oleh ${player.name}`);
   setClaim(dimId, cx, cz, entry);
   refreshMarker(player.dimension, cx, cz, entry);
   sound(player.dimension, "random.orb", block.location);
+  if (kind === "village") {
+    return `§2Chunk (${cx}, ${cz}) dipatok untuk desa§7 — belum dibangun. ` +
+      "§7Suruh Pembangun ke Mode Membangun, dia yang akan membuatkan rumah di sana.";
+  }
   return `§cChunk (${cx}, ${cz}) dipatok§7 — belum digarap. ` +
     "§7Suruh companionmu ke mode bertani, dia yang akan menggarapnya.";
 }
@@ -219,13 +279,14 @@ export function markWorked(dimension, cx, cz) {
   return true;
 }
 
-export function claimsNear(dimension, origin, ownerId, limit = 8) {
-  logDebug(TAG, `Mencari claimsNear: origin=${posStr(origin)}, ownerId=${ownerId}, limit=${limit}`);
+export function claimsNear(dimension, origin, ownerId, limit = 8, kind = "farm") {
+  logDebug(TAG, `Mencari claimsNear: origin=${posStr(origin)}, ownerId=${ownerId}, limit=${limit}, kind=${kind}`);
   const out = [];
   const claims = readClaims();
   for (const [key, entry] of Object.entries(claims)) {
     const [dimId, coords] = key.split("|");
     if (dimId !== dimension.id) continue;
+    if ((entry.kind ?? "farm") !== kind) continue;
     if (ownerId && entry.by !== ownerId) continue;
     const [cx, cz] = coords.split(",").map(Number);
     const c = chunkCenter(cx, cz);
@@ -237,11 +298,15 @@ export function claimsNear(dimension, origin, ownerId, limit = 8) {
   return result;
 }
 
-export function claimAt(dimension, loc, ownerId) {
+export function claimAt(dimension, loc, ownerId, kind = "farm") {
   const { cx, cz } = chunkOf(loc);
-  logDebug(TAG, `claimAt dicek di ${posStr(loc)} -> chunk (${cx}, ${cz})`);
+  logDebug(TAG, `claimAt dicek di ${posStr(loc)} -> chunk (${cx}, ${cz}), kind=${kind}`);
   const entry = getClaim(dimension.id, cx, cz);
   if (!entry) return undefined;
+  if ((entry.kind ?? "farm") !== kind) {
+    logDebug(TAG, `claimAt: Chunk (${cx}, ${cz}) berjenis "${entry.kind ?? "farm"}", bukan "${kind}".`);
+    return undefined;
+  }
   if (ownerId && entry.by !== ownerId) {
     logDebug(TAG, `claimAt: Chunk dimilik oleh orang lain (${entry.by} !== ${ownerId})`);
     return undefined;
@@ -260,14 +325,18 @@ let wired = false;
 export function wireStake() {
   if (wired) return;
   wired = true;
-  logInfo(TAG, "Mendaftarkan listener interaksi itemUseOn & playerInteractWithBlock untuk Patok Ladang...");
+  logInfo(TAG, "Mendaftarkan listener interaksi itemUseOn & playerInteractWithBlock untuk Patok Ladang/Desa...");
 
   const handle = (player, itemStack, block) => {
-    if (!player || !block || !isStake(itemStack)) return false;
-    logDebug(TAG, `Event patok dipicu oleh pemain ${player.name} pada ${posStr(block.location)}`);
+    if (!player || !block) return false;
+    let kind;
+    if (isStake(itemStack)) kind = "farm";
+    else if (isVillageStake(itemStack)) kind = "village";
+    else return false;
+    logDebug(TAG, `Event patok (${kind}) dipicu oleh pemain ${player.name} pada ${posStr(block.location)}`);
     system.run(() => {
       try {
-        const msg = toggleClaim(player, block);
+        const msg = toggleClaim(player, block, kind);
         player.sendMessage(msg);
       } catch (e) {
         logError(TAG, `Error saat mengeksekusi toggleClaim`, e);

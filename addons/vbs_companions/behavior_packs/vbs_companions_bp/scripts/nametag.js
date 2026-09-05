@@ -5,7 +5,7 @@
 import { system } from "@minecraft/server";
 import { MODES } from "./config.js";
 import { readState } from "./state.js";
-import { alive, getMode, getOwnerName, info } from "./util.js";
+import { alive, getMode, getOwnerId, getOwnerName, info } from "./util.js";
 import { entStr, logDebug, logInfo } from "./logger.js";
 
 const TAG = "NAMETAG";
@@ -21,8 +21,13 @@ export function displayName(entity) {
 export function tagOf(entity) {
   const meta = info(entity);
   if (!meta) return "";
+  if (!getOwnerId(entity)) {
+    return `§7[${meta.color}${displayName(entity)}§7, §cliar§7]`;
+  }
   const mode = MODES[getMode(entity)] ?? MODES.follow;
-  return `§7[${meta.color}${displayName(entity)}§7, §f${mode.label}§7, §b${getOwnerName(entity)}§7]`;
+  const hideOwner = readState(entity).hideOwner;
+  const ownerPart = hideOwner ? "" : `§7, §b${getOwnerName(entity)}`;
+  return `§7[${meta.color}${displayName(entity)}§7, §f${mode.label}${ownerPart}§7]`;
 }
 
 export function refreshName(entity) {

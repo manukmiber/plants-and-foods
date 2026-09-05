@@ -4,14 +4,15 @@
 
 import { POSE, PROTECTED } from "./config.js";
 import { report, sayFrom } from "./chat.js";
+import { claimsNear, markWorked } from "./claim.js";
 import { workArea } from "./farming.js";
 import { hold } from "./hold.js";
 import { isGreeting } from "./look.js";
-import { writeState } from "./state.js";
+import { addVillageHome, writeState } from "./state.js";
 import { ensureStation } from "./station.js";
 import {
-  alive, blockAt, countIn, dist2, face, isAir, isSolid, particle, sound, steer,
-  takeFrom,
+  alive, blockAt, chunkCenter, countIn, dist2, face, getOwnerId, isAir,
+  isSolid, particle, sound, steer, takeFrom,
 } from "./util.js";
 import { entStr, logDebug, logError, logInfo, logWarn, posStr } from "./logger.js";
 
@@ -49,6 +50,14 @@ const DOORS = [
   "minecraft:oak_door", "minecraft:spruce_door", "minecraft:birch_door",
   "minecraft:iron_door",
 ];
+const BEDS = [
+  "minecraft:red_bed", "minecraft:white_bed", "minecraft:blue_bed",
+  "minecraft:green_bed", "minecraft:brown_bed", "minecraft:black_bed",
+  "minecraft:gray_bed", "minecraft:light_gray_bed", "minecraft:cyan_bed",
+  "minecraft:purple_bed", "minecraft:magenta_bed", "minecraft:pink_bed",
+  "minecraft:lime_bed", "minecraft:yellow_bed", "minecraft:orange_bed",
+  "minecraft:light_blue_bed",
+];
 
 const MATERIALS = {
   floor: [...PLANKS, ...STONE, "minecraft:gravel"],
@@ -62,6 +71,7 @@ const MATERIALS = {
   fence: FENCES,
   path: ["minecraft:gravel", "minecraft:cobblestone", "minecraft:coarse_dirt",
          ...PLANKS, ...STONE],
+  bed: BEDS,
 };
 
 function materialFor(container, role) {
@@ -200,6 +210,17 @@ function housePlan(origin, w, d, h, withChest) {
   return out;
 }
 
+// Rumah gubuk biasa ditambah satu ranjang — inilah yang dipakai companion
+// mengisi chunk yang dipatok pemain lewat Patok Desa. Tempat tidurnya di
+// sudut yang berlawanan dengan peti supaya tidak berebut ubin yang sama.
+function villageHousePlan(origin) {
+  const steps = housePlan(origin, 5, 5, 3, true);
+  const x0 = origin.x - 2;
+  const z1 = origin.z + 2;
+  steps.push({ x: x0 + 1, z: z1 - 1, dy: 1, role: "bed" });
+  return steps;
+}
+
 export const BLUEPRINTS = {
   fence: {
     label: "Pagar keliling ladang",
@@ -294,58 +315,18 @@ export function startBlueprint(entity, state, name, owner) {
   return true;
 }
 
-export function tickBuild(entity, state, owner) {
-  logDebug(TAG, `tickBuild dijalankan untuk ${entStr(entity)}`);
-  if (!alive(entity)) {
-    logWarn(TAG, `tickBuild batal: Entity tidak hidup.`);
-    return "hilang";
-  }
-  if (isGreeting(entity)) {
-    logDebug(TAG, `tickBuild jeda: Companion sedang menyapa pemain.`);
-    return "berhenti karena disapa";
-  }
-
-  const dimension = entity.dimension;
-  const station = ensureStation(entity, state);
-  const container = station?.container;
-  if (!container) {
-    logWarn(TAG, `${entStr(entity)} tidak menemukan peti stasiun.`);
-    return "belum ada peti stasiun";
-  }
-
-  if (!state.plan?.build) {
-    logInfo(TAG, `state.plan.build kosong, mencoba auto-start blueprint "${state.blueprint ?? "fence"}"`);
-    startBlueprint(entity, state, state.blueprint ?? "fence", owner);
-  }
-  const job = state.plan.build;
-  const blueprint = BLUEPRINTS[job.name];
-  if (!blueprint) {
-    logError(TAG, `Rancangan pekerjaan "${job.name}" tidak ditemukan di BLUEPRINTS!`);
-    return "rancangan tidak dikenal";
-  }
-
-  const ctx = context(entity, state, owner?.id, owner);
-  const steps = blueprint.plan(ctx);
-  if (!steps.length) {
-    logWarn(TAG, `Blueprint "${job.name}" menghasilkan 0 langkah.`);
-    return "rancangan kosong";
-  }
-
-  if (job.index >= steps.length) {
-    logInfo(TAG, `Blueprint "${blueprint.label}" selesai (${job.index}/${steps.length}).`);
-    state.plan.build = null;
-    writeState(entity, state);
-    sayFrom(entity, "done");
-    report(entity, `${blueprint.label} selesai.`);
-    return `${blueprint.label} selesai`;
-  }
+// Menjalankan sebagian langkah dari satu rancangan (blueprint biasa maupun
+// rumah desa) — dipakai bersama supaya logika jalan/pasang/ambil-bahan tidak
+// perlu ditulis dua kali.
+function runBuildSteps(entity, dimension, container, job, originY, steps) {
+  if (job.index >= steps.length) return { done: true };
 
   let placed = 0;
   let missing;
   while (job.index < steps.length && placed < PLACE_PER_TICK) {
     const step = steps[job.index];
     logDebug(TAG, `Menjalankan langkah build [${job.index + 1}/${steps.length}]: Role=${step.role}, RelPos=(${step.x},${step.dy},${step.z})`);
-    const base = groundY(dimension, step.x, step.z, ctx.origin.y);
+    const base = groundY(dimension, step.x, step.z, originY);
     if (base === undefined) {
       logDebug(TAG, `Langkah ${job.index} dilewati: Ketinggian tanah tidak valid.`);
       job.index++;
@@ -368,9 +349,8 @@ export function tickBuild(entity, state, owner) {
     const d2 = dist2(entity.location, target);
     if (d2 > REACH ** 2) {
       logDebug(TAG, `Target di luar jangkauan (${Math.sqrt(d2).toFixed(2)}m > ${REACH}m). Mengarahkan companion ke target.`);
-      writeState(entity, state);
       steer(entity, target);
-      return `menuju titik ${job.index + 1} dari ${steps.length}`;
+      return { waiting: true, index: job.index, total: steps.length };
     }
 
     if (step.role === "air") {
@@ -415,12 +395,106 @@ export function tickBuild(entity, state, owner) {
     job.index++;
   }
 
-  writeState(entity, state);
-  if (!placed && missing) {
-    logWarn(TAG, `Companion kekurangan bahan: "${missing}".`);
-    return `peti kehabisan bahan untuk ${missing}`;
+  return { placed, missing, index: job.index, total: steps.length };
+}
+
+// Membangun satu rumah (dengan ranjang) di chunk yang dipatok pemain lewat
+// Patok Desa. Dicek DULU sebelum rancangan blueprint biasa — kalau ada chunk
+// desa yang belum dibangun, itu yang dikerjakan lebih dulu.
+function villageStep(entity, state, dimension, container, claim, ownerId) {
+  if (!state.plan) state.plan = {};
+  let job = state.plan.village;
+  if (!job || job.cx !== claim.cx || job.cz !== claim.cz) {
+    const center = chunkCenter(claim.cx, claim.cz);
+    const y = claim.entry.y ?? Math.floor(entity.location.y);
+    job = { cx: claim.cx, cz: claim.cz, index: 0, origin: { x: center.x, y, z: center.z } };
+    state.plan.village = job;
+    logInfo(TAG, `Mulai membangun rumah desa di chunk (${claim.cx}, ${claim.cz}), origin=${posStr(job.origin)}`);
   }
-  const statusStr = `${blueprint.label}: ${job.index}/${steps.length}`;
+
+  const steps = villageHousePlan(job.origin);
+  const result = runBuildSteps(entity, dimension, container, job, job.origin.y, steps);
+
+  if (result.done) {
+    state.plan.village = null;
+    writeState(entity, state);
+    markWorked(dimension, claim.cx, claim.cz);
+    const bed = { x: job.origin.x - 1, y: job.origin.y + 1, z: job.origin.z + 1, dim: dimension.id };
+    addVillageHome(ownerId, bed);
+    logInfo(TAG, `Rumah desa selesai di chunk (${claim.cx}, ${claim.cz}). Ranjang dicatat di ${posStr(bed)}`);
+    sayFrom(entity, "village");
+    report(entity, `Rumah baru selesai di chunk (${claim.cx}, ${claim.cz}). Companion bisa tidur di sana malam ini.`);
+    return "rumah desa selesai";
+  }
+
+  writeState(entity, state);
+  if (result.waiting) return `menuju rumah desa (${result.index + 1}/${result.total})`;
+  if (!result.placed && result.missing) return `peti kehabisan bahan rumah desa untuk ${result.missing}`;
+  return `membangun rumah desa: ${result.index}/${result.total}`;
+}
+
+export function tickBuild(entity, state, owner) {
+  logDebug(TAG, `tickBuild dijalankan untuk ${entStr(entity)}`);
+  if (!alive(entity)) {
+    logWarn(TAG, `tickBuild batal: Entity tidak hidup.`);
+    return "hilang";
+  }
+  if (isGreeting(entity)) {
+    logDebug(TAG, `tickBuild jeda: Companion sedang menyapa pemain.`);
+    return "berhenti karena disapa";
+  }
+
+  const dimension = entity.dimension;
+  const station = ensureStation(entity, state);
+  const container = station?.container;
+  if (!container) {
+    logWarn(TAG, `${entStr(entity)} tidak menemukan peti stasiun.`);
+    return "belum ada peti stasiun";
+  }
+
+  const ownerId = getOwnerId(entity);
+  const villages = ownerId
+    ? claimsNear(dimension, entity.location, ownerId, 16, "village").filter((c) => !c.entry.worked)
+    : [];
+  if (villages.length) {
+    return villageStep(entity, state, dimension, container, villages[0], ownerId);
+  }
+
+  if (!state.plan?.build) {
+    logInfo(TAG, `state.plan.build kosong, mencoba auto-start blueprint "${state.blueprint ?? "fence"}"`);
+    startBlueprint(entity, state, state.blueprint ?? "fence", owner);
+  }
+  const job = state.plan.build;
+  const blueprint = BLUEPRINTS[job.name];
+  if (!blueprint) {
+    logError(TAG, `Rancangan pekerjaan "${job.name}" tidak ditemukan di BLUEPRINTS!`);
+    return "rancangan tidak dikenal";
+  }
+
+  const ctx = context(entity, state, owner?.id, owner);
+  const steps = blueprint.plan(ctx);
+  if (!steps.length) {
+    logWarn(TAG, `Blueprint "${job.name}" menghasilkan 0 langkah.`);
+    return "rancangan kosong";
+  }
+
+  if (job.index >= steps.length) {
+    logInfo(TAG, `Blueprint "${blueprint.label}" selesai (${job.index}/${steps.length}).`);
+    state.plan.build = null;
+    writeState(entity, state);
+    sayFrom(entity, "done");
+    report(entity, `${blueprint.label} selesai.`);
+    return `${blueprint.label} selesai`;
+  }
+
+  const result = runBuildSteps(entity, dimension, container, job, ctx.origin.y, steps);
+  writeState(entity, state);
+  if (result.waiting) return `menuju titik ${result.index + 1} dari ${result.total}`;
+  if (!result.placed && result.missing) {
+    logWarn(TAG, `Companion kekurangan bahan: "${result.missing}".`);
+    return `peti kehabisan bahan untuk ${result.missing}`;
+  }
+  const statusStr = `${blueprint.label}: ${result.index}/${result.total}`;
   logDebug(TAG, `tickBuild progress: ${statusStr}`);
   return statusStr;
 }

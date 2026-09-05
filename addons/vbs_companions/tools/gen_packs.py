@@ -1,8 +1,27 @@
 """Tulis manifest, file entity behavior pack, dan file entity resource pack.
 
-Kelima karakter memakai kerangka yang sama persis dan hanya berbeda di identifier,
+Semua karakter memakai kerangka yang sama persis dan hanya berbeda di identifier,
 statistik dan tekstur, jadi filenya dibuat dari satu cetakan di sini. Menambah
 karakter keenam cukup dengan menambah satu entri di characters.json.
+
+Tiga hal yang perlu dipahami sebelum mengubah berkas ini:
+
+1. PRIORITY GOAL HARUS UNIK di seluruh daftar satu entity — komponen dasar dan
+   component group yang sedang aktif dihitung bersama. Dua goal dengan angka
+   sama membuat Bedrock memilih salah satu dan mengabaikan sisanya diam-diam,
+   dan itulah sebab mode bertarung versi lama tidak melakukan apa pun. Tabel
+   PRIORITY di bawah satu-satunya tempat angka itu ditulis.
+
+2. Yang menggerakkan badan dan wajah saat bekerja adalah ENTITY PROPERTY, bukan
+   query bawaan. vbs:pose, vbs:face dan vbs:hat disetel script lewat
+   setProperty(), dan resource pack membacanya lewat query.property(). Karena
+   nilai bawaannya 0 dan 0 berarti "otomatis", add-on tetap tampil benar kalau
+   properti gagal disetel.
+
+3. Senjata memilih GRUP, bukan cabang di dalam satu grup: vbs:weapon_melee
+   memasang behavior.melee_attack, vbs:weapon_bow memasang minecraft:shooter dan
+   behavior.ranged_attack. Keduanya memakai priority yang sama karena tidak
+   pernah aktif bersamaan.
 """
 
 import json
@@ -13,7 +32,7 @@ import model
 BP = os.path.join(model.HERE, "..", "behavior_packs", "vbs_companions_bp")
 RP = os.path.join(model.HERE, "..", "resource_packs", "vbs_companions_rp")
 
-VERSION = [1, 1, 0]
+VERSION = [1, 2, 0]
 MIN_ENGINE = [1, 21, 0]
 
 # UUID ini adalah identitas pack di mata Minecraft. JANGAN diubah setelah dirilis:
@@ -34,7 +53,57 @@ SERVER_UI_MODULE = "1.2.0"
 CROP_BLOCKS = ["minecraft:wheat", "minecraft:carrots", "minecraft:potatoes",
                "minecraft:beetroot", "minecraft:nether_wart"]
 
-MODE_GROUPS = ["vbs:mode_follow", "vbs:mode_farm", "vbs:mode_attack", "vbs:mode_stay"]
+ORE_BLOCKS = [
+    "minecraft:coal_ore", "minecraft:deepslate_coal_ore",
+    "minecraft:iron_ore", "minecraft:deepslate_iron_ore",
+    "minecraft:copper_ore", "minecraft:deepslate_copper_ore",
+    "minecraft:gold_ore", "minecraft:deepslate_gold_ore",
+    "minecraft:redstone_ore", "minecraft:lit_redstone_ore",
+    "minecraft:deepslate_redstone_ore",
+    "minecraft:lapis_ore", "minecraft:deepslate_lapis_ore",
+    "minecraft:diamond_ore", "minecraft:deepslate_diamond_ore",
+    "minecraft:emerald_ore", "minecraft:deepslate_emerald_ore",
+    "minecraft:quartz_ore", "minecraft:ancient_debris",
+]
+
+# Tujuh perintah yang bisa dipilih pemain. Urutannya sama dengan MODES di
+# config.js; validate.py yang memeriksa keduanya tidak melenceng.
+MODES = ["follow", "farm", "attack", "stay", "mine", "wander", "build"]
+MODE_GROUPS = [f"vbs:mode_{m}" for m in MODES]
+WEAPON_GROUPS = ["vbs:weapon_melee", "vbs:weapon_bow"]
+
+# Satu-satunya tempat angka priority ditulis. Angka kecil = lebih mendesak.
+# Semuanya unik supaya tidak ada goal yang ditelan diam-diam.
+PRIORITY = {
+    "float": 0,
+    "hurt_by_target": 1,
+    "owner_hurt_by_target": 2,
+    "owner_hurt_target": 3,
+    "nearest_attackable_target": 4,
+    "attack": 5,                 # melee ATAU ranged, tidak pernah dua-duanya
+    "move_to_block": 6,
+    "follow_owner": 7,
+    "stroll": 9,
+    "look_at_player": 11,
+    "random_look_around": 12,
+}
+
+# Entity property: nilai 0 selalu berarti "biarkan bawaan". Kalau setProperty
+# gagal (versi gim lama), semuanya tetap 0 dan add-on jalan seperti sebelum ada
+# fitur ini — itu sebabnya 0 dipilih sebagai "otomatis", bukan sebagai salah satu
+# pose sungguhan.
+PROPERTIES = {
+    # 0 = wajah dipilih otomatis oleh Molang, 1..8 = paksa ekspresi indeks-1
+    "vbs:face": {"type": "int", "range": [0, 8], "default": 0, "client_sync": True},
+    # 0 normal, 1 memanen, 2 menyapa, 3 menambang, 4 membangun,
+    # 5 kuda-kuda pedang, 6 membidik busur, 7 mengobrol
+    "vbs:pose": {"type": "int", "range": [0, 7], "default": 0, "client_sync": True},
+    # 0 tanpa perlengkapan, 1 topi jerami, 2 helm penambang, 3 ransel
+    "vbs:hat": {"type": "int", "range": [0, 3], "default": 0, "client_sync": True},
+}
+
+POSE = {"normal": 0, "harvest": 1, "greet": 2, "mine": 3, "build": 4,
+        "guard": 5, "aim": 6, "talk": 7}
 
 
 def write(path, doc):
@@ -51,8 +120,8 @@ def manifests():
         "format_version": 2,
         "header": {
             "name": "VBS Companions §7[Behavior]",
-            "description": "Karakter pendamping yang mengikuti, bertani, dan bertarung "
-                           "sesuai perintah yang dipilih pemain lewat UI.",
+            "description": "Karakter pendamping yang mengikuti, bertani, bertarung, "
+                           "menambang, mengembara dan membangun sesuai perintah.",
             "uuid": UUID["bp_header"],
             "version": VERSION,
             "min_engine_version": MIN_ENGINE,
@@ -86,11 +155,31 @@ def manifests():
     })
 
 
-# --- behavior pack: entity -------------------------------------------------
+# --- behavior pack: entity companion ---------------------------------------
 
-def follow_owner(priority, speed, start, stop):
-    return {"priority": priority, "speed_multiplier": speed,
+def follow_owner(speed, start, stop):
+    return {"priority": PRIORITY["follow_owner"], "speed_multiplier": speed,
             "start_distance": start, "stop_distance": stop}
+
+
+def stroll(speed, xz=10, y=7, interval=120):
+    return {"priority": PRIORITY["stroll"], "speed_multiplier": speed,
+            "xz_dist": xz, "y_dist": y, "interval": interval}
+
+
+def move_to_block(blocks, search_range=12, height=4, stay=1.5):
+    return {
+        "priority": PRIORITY["move_to_block"],
+        "tick_interval": 20,
+        "start_chance": 1.0,
+        "search_range": search_range,
+        "search_height": height,
+        "goal_radius": 1.5,
+        "stay_duration": stay,
+        "target_offset": [0.0, 1.0, 0.0],
+        "target_selection_method": "nearest",
+        "target_blocks": blocks,
+    }
 
 
 def entity_doc(char):
@@ -119,6 +208,10 @@ def entity_doc(char):
         "minecraft:pushable": {"is_pushable": True, "is_pushable_by_piston": True},
         "minecraft:breathable": {"total_supply": 15, "suffocate_time": 0},
         "minecraft:nameable": {"always_show": True, "allow_name_tag_renaming": True},
+        # Daftar slot sengaja kosong: yang dipakai script adalah
+        # EntityEquippableComponent, dan itu memetakan ke slot bawaan mob, bukan
+        # ke daftar di sini. Mengisi daftarnya justru mengubah arti komponen
+        # menjadi "apa yang boleh dipasangkan pemain lewat interaksi".
         "minecraft:equippable": {"slots": []},
         "minecraft:conditional_bandwidth_optimization": {},
         # Tanpa minecraft:despawn — companion tidak boleh hilang sendiri.
@@ -132,8 +225,6 @@ def entity_doc(char):
             ],
         },
         # Kepemilikan sisi mesin gim: yang membuat behavior.follow_owner punya tuan.
-        # Script mencoba menjadikannya milik pemanggil begitu muncul; memberi roti
-        # adalah jalan cadangan kalau versi gimnya tidak mengizinkan cara itu.
         "minecraft:tameable": {
             "probability": 1.0,
             "tame_items": ["bread", "apple", "cake", "cookie"],
@@ -165,60 +256,88 @@ def entity_doc(char):
                 {"cause": "fall", "deals_damage": False},
             ],
         },
-        "minecraft:behavior.float": {"priority": 0},
-        "minecraft:behavior.hurt_by_target": {"priority": 1},
-        "minecraft:behavior.look_at_player": {"priority": 9, "look_distance": 8.0,
-                                              "probability": 0.3},
-        "minecraft:behavior.random_look_around": {"priority": 10},
+        "minecraft:behavior.float": {"priority": PRIORITY["float"]},
+        # Membalas siapa pun yang memukulnya, mode apa pun. Ada di komponen dasar,
+        # bukan di grup mode, supaya petani pun tidak berdiri diam saat digigit.
+        "minecraft:behavior.hurt_by_target": {"priority": PRIORITY["hurt_by_target"]},
+        "minecraft:behavior.look_at_player": {"priority": PRIORITY["look_at_player"],
+                                              "look_distance": 8.0, "probability": 0.3},
+        "minecraft:behavior.random_look_around": {"priority": PRIORITY["random_look_around"]},
     }
 
     component_groups = {
         "vbs:mode_follow": {
-            "minecraft:behavior.follow_owner": follow_owner(4, 1.15, 4.0, 2.0),
-            "minecraft:behavior.random_stroll": {"priority": 7, "speed_multiplier": 0.7},
+            "minecraft:behavior.follow_owner": follow_owner(1.15, 4.0, 2.0),
+            "minecraft:behavior.random_stroll": stroll(0.7, xz=6, y=4),
         },
         "vbs:mode_farm": {
-            "minecraft:behavior.move_to_block": {
-                "priority": 4,
-                "tick_interval": 20,
-                "start_chance": 1.0,
-                "search_range": 12,
-                "search_height": 4,
-                "goal_radius": 1.5,
-                "stay_duration": 1.5,
-                "target_offset": [0.0, 1.0, 0.0],
-                "target_selection_method": "nearest",
-                "target_blocks": CROP_BLOCKS,
-            },
-            "minecraft:behavior.follow_owner": follow_owner(6, 1.0, 14.0, 8.0),
-            "minecraft:behavior.random_stroll": {"priority": 8, "speed_multiplier": 0.6},
+            "minecraft:behavior.move_to_block": move_to_block(CROP_BLOCKS),
+            "minecraft:behavior.follow_owner": follow_owner(1.0, 18.0, 10.0),
+            "minecraft:behavior.random_stroll": stroll(0.6, xz=8, y=3),
         },
         "vbs:mode_attack": {
-            "minecraft:behavior.owner_hurt_by_target": {"priority": 1},
-            "minecraft:behavior.owner_hurt_target": {"priority": 1},
+            # Tiga pemilih sasaran, tiga priority berbeda: dibalas duluan yang
+            # menyerang pemiliknya, lalu yang dipukul pemiliknya, baru monster
+            # terdekat. Versi lama menaruh ketiganya di priority 1 dan hasilnya
+            # cuma satu yang jalan.
+            "minecraft:behavior.owner_hurt_by_target": {
+                "priority": PRIORITY["owner_hurt_by_target"]},
+            "minecraft:behavior.owner_hurt_target": {
+                "priority": PRIORITY["owner_hurt_target"]},
             "minecraft:behavior.nearest_attackable_target": {
-                "priority": 2,
+                "priority": PRIORITY["nearest_attackable_target"],
                 "must_see": True,
                 "must_see_forget_duration": 12.0,
                 "reselect_targets": True,
-                "within_radius": 16.0,
-                "entity_types": [{
-                    "filters": {"test": "is_family", "subject": "other", "value": "monster"},
-                    "max_dist": 16,
-                }],
+                "scan_interval": 10,
+                "within_radius": 20.0,
+                "entity_types": [
+                    {"filters": {"test": "is_family", "subject": "other",
+                                 "value": "monster"}, "max_dist": 20},
+                    {"filters": {"test": "is_family", "subject": "other",
+                                 "value": "slime"}, "max_dist": 20},
+                ],
             },
-            "minecraft:behavior.melee_attack": {"priority": 3, "speed_multiplier": 1.25,
-                                                "track_target": True},
-            "minecraft:behavior.follow_owner": follow_owner(6, 1.2, 8.0, 3.0),
-            # Dipakai animasi kuda-kuda lewat query.is_angry.
-            "minecraft:angry": {
-                "duration": -1,
-                "broadcast_anger": False,
-                "calm_event": {"event": "vbs:set_follow", "target": "self"},
-            },
+            "minecraft:behavior.follow_owner": follow_owner(1.2, 10.0, 4.0),
+            "minecraft:behavior.random_stroll": stroll(0.7, xz=5, y=3),
         },
         # Diam di tempat = tidak ada satu pun goal gerak.
         "vbs:mode_stay": {},
+        "vbs:mode_mine": {
+            "minecraft:behavior.move_to_block": move_to_block(ORE_BLOCKS, 14, 6, 2.5),
+            "minecraft:behavior.follow_owner": follow_owner(1.0, 24.0, 12.0),
+            "minecraft:behavior.random_stroll": stroll(0.7, xz=8, y=6, interval=60),
+        },
+        "vbs:mode_wander": {
+            # Pengembara sengaja tidak punya follow_owner: tugasnya menjauh.
+            # Yang menariknya pulang adalah script, bukan goal.
+            "minecraft:behavior.random_stroll": stroll(1.0, xz=16, y=8, interval=40),
+        },
+        "vbs:mode_build": {
+            "minecraft:behavior.follow_owner": follow_owner(1.0, 16.0, 8.0),
+            "minecraft:behavior.random_stroll": stroll(0.6, xz=6, y=3),
+        },
+        # --- senjata: dipilih script dari isi tangan companion ---------------
+        "vbs:weapon_melee": {
+            "minecraft:behavior.melee_attack": {
+                "priority": PRIORITY["attack"],
+                "speed_multiplier": 1.25,
+                "track_target": True,
+                "reach_multiplier": 1.6,
+            },
+        },
+        "vbs:weapon_bow": {
+            "minecraft:shooter": {"def": "minecraft:arrow"},
+            "minecraft:behavior.ranged_attack": {
+                "priority": PRIORITY["attack"],
+                "attack_interval_min": 1.0,
+                "attack_interval_max": 2.0,
+                "attack_radius": 16.0,
+                "speed_multiplier": 1.1,
+                "target_in_sight_time": 0.2,
+                "ranged_fov": 90.0,
+            },
+        },
     }
 
     def switch(group):
@@ -226,14 +345,17 @@ def entity_doc(char):
                 "add": {"component_groups": [group]}}
 
     events = {
-        "minecraft:entity_spawned": {"add": {"component_groups": ["vbs:mode_follow"]}},
+        "minecraft:entity_spawned": {
+            "add": {"component_groups": ["vbs:mode_follow", "vbs:weapon_melee"]}},
         "vbs:on_tamed": {"add": {"component_groups": ["vbs:mode_follow"]}},
         "vbs:menu_opened": {},          # dipakai tombol interact layar sentuh
-        "vbs:set_follow": switch("vbs:mode_follow"),
-        "vbs:set_farm": switch("vbs:mode_farm"),
-        "vbs:set_attack": switch("vbs:mode_attack"),
-        "vbs:set_stay": switch("vbs:mode_stay"),
+        "vbs:use_melee": {"remove": {"component_groups": WEAPON_GROUPS},
+                          "add": {"component_groups": ["vbs:weapon_melee"]}},
+        "vbs:use_bow": {"remove": {"component_groups": WEAPON_GROUPS},
+                        "add": {"component_groups": ["vbs:weapon_bow"]}},
     }
+    for mode in MODES:
+        events[f"vbs:set_{mode}"] = switch(f"vbs:mode_{mode}")
 
     return {
         "format_version": "1.20.0",
@@ -243,6 +365,7 @@ def entity_doc(char):
                 "is_spawnable": True,
                 "is_summonable": True,
                 "is_experimental": False,
+                "properties": PROPERTIES,
             },
             "component_groups": component_groups,
             "components": components,
@@ -251,7 +374,115 @@ def entity_doc(char):
     }
 
 
+# --- behavior pack: patok chunk --------------------------------------------
+
+MARKER = "vbs:marker"
+
+
+def marker_entity_doc():
+    """Patok yang menandai satu chunk ladang.
+
+    Tidak punya AI, tidak bisa dipukul, tidak jatuh, tidak hilang sendiri. Semua
+    yang dilakukannya — beam warna dan tulisan koordinat — dikerjakan script;
+    entity ini cuma badan yang bisa diberi nameTag dan bisa ditemukan kembali
+    lewat getEntities().
+    """
+    return {
+        "format_version": "1.20.0",
+        "minecraft:entity": {
+            "description": {
+                "identifier": MARKER,
+                "is_spawnable": False,
+                "is_summonable": True,
+                "is_experimental": False,
+            },
+            "component_groups": {
+                "vbs:mark_free": {"minecraft:variant": {"value": 0}},
+                "vbs:mark_claimed": {"minecraft:variant": {"value": 1}},
+            },
+            "components": {
+                "minecraft:type_family": {"family": ["vbs_marker", "inanimate"]},
+                "minecraft:collision_box": {"width": 0.4, "height": 1.0},
+                "minecraft:health": {"value": 1, "max": 1},
+                "minecraft:physics": {"has_gravity": False, "has_collision": False},
+                "minecraft:pushable": {"is_pushable": False, "is_pushable_by_piston": False},
+                "minecraft:knockback_resistance": {"value": 1.0},
+                "minecraft:nameable": {"always_show": True,
+                                       "allow_name_tag_renaming": False},
+                "minecraft:damage_sensor": {"triggers": [{"deals_damage": False}]},
+                "minecraft:conditional_bandwidth_optimization": {},
+            },
+            "events": {
+                "minecraft:entity_spawned": {"add": {"component_groups": ["vbs:mark_free"]}},
+                "vbs:set_free": {"remove": {"component_groups": ["vbs:mark_claimed"]},
+                                 "add": {"component_groups": ["vbs:mark_free"]}},
+                "vbs:set_claimed": {"remove": {"component_groups": ["vbs:mark_free"]},
+                                    "add": {"component_groups": ["vbs:mark_claimed"]}},
+            },
+        },
+    }
+
+
+def marker_geometry_doc():
+    """Patok kayu bertopi: satu tiang, satu kepala berwarna, satu bendera kecil.
+
+    Ditulis tangan dan memakai box-uv 32x32, bukan lewat model.py — bentuknya
+    tidak ada hubungannya dengan karakter dan tidak ikut berubah kalau palet
+    karakter berubah.
+    """
+    return {
+        "format_version": "1.12.0",
+        "minecraft:geometry": [{
+            "description": {
+                "identifier": "geometry.vbs_marker",
+                "texture_width": 32,
+                "texture_height": 32,
+                "visible_bounds_width": 2,
+                "visible_bounds_height": 2.5,
+                "visible_bounds_offset": [0, 1, 0],
+            },
+            "bones": [
+                {"name": "root", "pivot": [0, 0, 0], "cubes": [
+                    {"origin": [-1, 0, -1], "size": [2, 14, 2], "uv": [0, 0]},
+                ]},
+                {"name": "head", "parent": "root", "pivot": [0, 14, 0], "cubes": [
+                    {"origin": [-2.5, 14, -2.5], "size": [5, 4, 5], "uv": [0, 18]},
+                ]},
+                {"name": "flag", "parent": "head", "pivot": [1, 16, 0], "cubes": [
+                    {"origin": [1, 12, -0.5], "size": [7, 4, 1], "uv": [0, 27]},
+                ]},
+            ],
+        }],
+    }
+
+
+def marker_client_doc():
+    return {
+        "format_version": "1.10.0",
+        "minecraft:client_entity": {
+            "description": {
+                "identifier": MARKER,
+                "min_engine_version": "1.21.0",
+                "materials": {"default": "entity_alphatest"},
+                "textures": {
+                    "free": "textures/entity/vbs_companions/marker_free",
+                    "claimed": "textures/entity/vbs_companions/marker_claimed",
+                },
+                "geometry": {"default": "geometry.vbs_marker"},
+                "animations": {"spin": "animation.vbs_marker.spin"},
+                "scripts": {"animate": ["spin"]},
+                "render_controllers": ["controller.render.vbs_marker"],
+            },
+        },
+    }
+
+
 # --- resource pack: entity, tekstur item, teks -----------------------------
+
+FACE_VAR = "variable.vbs_face"
+PROP_FACE = "query.property('vbs:face')"
+PROP_POSE = "query.property('vbs:pose')"
+PROP_HAT = "query.property('vbs:hat')"
 
 # Wajah dipilih tiap frame dari apa yang sedang terjadi pada karakter, urut dari
 # yang paling mendesak. Semuanya jalan di klien: tidak ada satu pun tick server
@@ -259,8 +490,11 @@ def entity_doc(char):
 # melihat. Nama ekspresi harus ada di model.FACES; yang tidak ada dilewati.
 FACE_RULES = (
     ("query.hurt_time > 0", "hurt", "baru kena pukul"),
-    ("query.is_angry", "surprised", "sedang bertarung"),
+    (f"{PROP_POSE} == {POSE['guard']} || {PROP_POSE} == {POSE['aim']}",
+     "surprised", "sedang bertarung"),
     ("!query.is_on_ground", "surprised", "sedang di udara"),
+    (f"{PROP_POSE} == {POSE['harvest']} || {PROP_POSE} == {POSE['mine']} "
+     f"|| {PROP_POSE} == {POSE['build']}", "happy", "sedang bekerja"),
     ("math.mod(query.life_time, 4.6) < 0.16", "blink", "pewaktu kedip"),
     ("query.modified_move_speed > 0.86", "sing", "berlari"),
     ("query.modified_move_speed > 0.08", "happy", "berjalan"),
@@ -269,50 +503,72 @@ FACE_RULES = (
     ("math.mod(query.life_time, 13) < 2.2", "smile", "diam, sesekali"),
 )
 
-FACE_VAR = "variable.vbs_face"
+# Pose -> animasi yang dipasang di atas idle/walk. Urutannya penting: Bedrock
+# menjumlahkan animasi yang aktif bersamaan, dan yang belakangan yang menang
+# untuk bone yang sama.
+POSE_ANIMATIONS = (
+    ("harvest", POSE["harvest"]),
+    ("mine", POSE["mine"]),
+    ("build", POSE["build"]),
+    ("combat", POSE["guard"]),
+    ("aim", POSE["aim"]),
+    ("talk", POSE["talk"]),
+    ("greet", POSE["greet"]),
+)
 
 
 def face_expression(faces):
-    """Rantai ternary Molang yang memilih indeks wajah; 0 kalau tak ada yang cocok."""
+    """Rantai ternary Molang yang memilih indeks wajah.
+
+    Dibungkus pemeriksaan vbs:face: kalau script memaksa satu ekspresi (nilai
+    1..8), itu yang menang; kalau nilainya 0 — termasuk kalau setProperty tidak
+    tersedia sama sekali — rantai otomatis yang jalan seperti sebelumnya.
+    """
     expr = "0"
     for when, name, _why in reversed(FACE_RULES):
         if name not in faces:
             continue
         index = faces.index(name)
         expr = f"({when}) ? {index} : 0" if expr == "0" else f"({when}) ? {index} : ({expr})"
-    return expr
-
-
-def render_controller_doc(chars):
-    """Satu controller polos, plus satu per karakter yang punya ekspresi."""
-    controllers = {
-        "controller.render.vbs_companion": {
-            "geometry": "Geometry.default",
-            "materials": [{"*": "Material.default"}],
-            "textures": ["Texture.default"],
-        },
-    }
-    for char in chars:
-        faces = face_list(char)
-        if not faces:
-            continue
-        controllers[f"controller.render.vbs_companion.{char['id']}"] = {
-            "geometry": "Geometry.default",
-            "materials": [{"*": "Material.default"}],
-            "textures": ["Texture.default"],
-            # Semua bidang wajah bertumpuk di tempat yang sama, jadi tepat satu
-            # boleh terlihat; sisanya disembunyikan di sini.
-            "part_visibility": [{"*": True}] + [
-                {f"face_{name}": f"{FACE_VAR} == {i}"} for i, name in enumerate(faces)
-            ],
-        }
-    return {"format_version": "1.10.0", "render_controllers": controllers}
+    return f"({PROP_FACE} > 0) ? ({PROP_FACE} - 1) : ({expr})"
 
 
 def face_list(char):
     """Ekspresi yang dideklarasikan badan karakter ini, urut."""
     return [b["name"][len("face_"):] for b in model.build_bones(char)
             if b["name"].startswith("face_")]
+
+
+def render_controller_doc(chars):
+    """Satu controller per karakter: perlengkapan role selalu ada, wajah kalau punya."""
+    controllers = {
+        "controller.render.vbs_marker": {
+            "geometry": "Geometry.default",
+            "materials": [{"*": "Material.default"}],
+            "textures": ["Array.skins[query.variant]"],
+            "arrays": {"textures": {"Array.skins": ["Texture.free", "Texture.claimed"]}},
+        },
+    }
+    for char in chars:
+        faces = face_list(char)
+        visibility = [{"*": True}]
+        # Semua bidang wajah bertumpuk di tempat yang sama, jadi tepat satu
+        # boleh terlihat; sisanya disembunyikan di sini.
+        visibility += [{f"face_{name}": f"{FACE_VAR} == {i}"} for i, name in enumerate(faces)]
+        # Perlengkapan role: satu nilai vbs:hat, satu perlengkapan.
+        visibility += [
+            {"gear_hat": f"{PROP_HAT} == 1"},
+            {"gear_helm": f"{PROP_HAT} == 2"},
+            {"gear_lamp": f"{PROP_HAT} == 2"},
+            {"gear_pack": f"{PROP_HAT} == 3"},
+        ]
+        controllers[f"controller.render.vbs_companion.{char['id']}"] = {
+            "geometry": "Geometry.default",
+            "materials": [{"*": "Material.default"}],
+            "textures": ["Texture.default"],
+            "part_visibility": visibility,
+        }
+    return {"format_version": "1.10.0", "render_controllers": controllers}
 
 
 def client_entity_doc(char):
@@ -325,12 +581,14 @@ def client_entity_doc(char):
         "idle": "animation.vbs_companion.idle",
         "walk": "animation.vbs_companion.walk",
         "hair": "animation.vbs_companion.hair",
-        "combat": "animation.vbs_companion.combat",
     }
-    animate = ["look_at_target", "idle", "walk", "hair", {"combat": "query.is_angry"}]
+    animate = ["look_at_target", "idle", "walk", "hair"]
     if detailed:
         animations["detail"] = "animation.vbs_companion.detail"
         animate.append("detail")
+    for name, value in POSE_ANIMATIONS:
+        animations[name] = f"animation.vbs_companion.{name}"
+        animate.append({name: f"{PROP_POSE} == {value}"})
 
     scripts = {"animate": animate}
     if faces:
@@ -339,8 +597,11 @@ def client_entity_doc(char):
         scripts["initialize"] = [f"{FACE_VAR} = 0;"]
         scripts["pre_animation"] = [f"{FACE_VAR} = {face_expression(faces)};"]
 
-    controller = (f"controller.render.vbs_companion.{char['id']}" if faces
-                  else "controller.render.vbs_companion")
+    # Selalu controller milik karakter ini, bukan yang polos: kelima karakter
+    # sekarang punya bone perlengkapan role yang harus disembunyikan menurut
+    # vbs:hat, jadi tidak ada lagi karakter yang cukup dengan controller tanpa
+    # part_visibility.
+    controller = f"controller.render.vbs_companion.{char['id']}"
 
     return {
         "format_version": "1.10.0",
@@ -377,6 +638,7 @@ def lang_lines(chars):
     lines = [
         "## VBS Companions",
         "action.interact.vbs_menu=Buka Menu",
+        f"entity.{MARKER}.name=Patok Ladang",
         "",
     ]
     for c in chars:
@@ -393,6 +655,9 @@ def main():
     for c in chars:
         write(os.path.join(BP, "entities", f"{c['id']}.json"), entity_doc(c))
         write(os.path.join(RP, "entity", f"{c['id']}.entity.json"), client_entity_doc(c))
+    write(os.path.join(BP, "entities", "marker.json"), marker_entity_doc())
+    write(os.path.join(RP, "entity", "marker.entity.json"), marker_client_doc())
+    write(os.path.join(RP, "models", "entity", "vbs_marker.geo.json"), marker_geometry_doc())
     write(os.path.join(RP, "render_controllers", "vbs_companion.render_controllers.json"),
           render_controller_doc(chars))
     write(os.path.join(RP, "textures", "item_texture.json"), item_texture_doc(chars))
@@ -400,7 +665,8 @@ def main():
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
         f.write(lang_lines(chars))
-    print(f"tulis 2 manifest, {len(chars)} entity behavior, {len(chars)} entity resource, "
+    print(f"tulis 2 manifest, {len(chars)} entity behavior + patok, "
+          f"{len(chars)} entity resource, geometry patok, render controller, "
           f"item_texture.json, en_US.lang")
 
 

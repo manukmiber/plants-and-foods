@@ -97,6 +97,17 @@ def main():
                 check(bone in bones,
                       f"animasi {anim_name} memakai bone '{bone}' yang tidak ada di {ident}")
 
+    # patok punya geometry dan berkas animasi sendiri; bone-nya (flag, head)
+    # sengaja tidak ada di geometry companion, jadi diperiksa terpisah
+    marker_geo = load(os.path.join(RP, "models", "entity", "vbs_marker.geo.json"))
+    marker_bones = {b["name"] for b in marker_geo["minecraft:geometry"][0]["bones"]}
+    marker_anims = load(os.path.join(
+        RP, "animations", "vbs_marker.animation.json"))["animations"]
+    for anim_name, anim in marker_anims.items():
+        for bone in anim.get("bones", {}):
+            check(bone in marker_bones,
+                  f"animasi patok {anim_name} memakai bone '{bone}' yang tidak ada")
+
     # 5. entity behavior <-> resource <-> script <-> teks
     lang = open(os.path.join(RP, "texts", "en_US.lang"), encoding="utf-8").read()
     script = open(os.path.join(BP, "scripts", "config.js"), encoding="utf-8").read()
@@ -133,29 +144,81 @@ def main():
             key = entry if isinstance(entry, str) else next(iter(entry))
             check(key in rp["animations"], f"{cid}: animate menyebut '{key}' yang tidak terdaftar")
 
-        # wajah: tiap bone ekspresi harus punya barisnya sendiri di
-        # part_visibility, dan variabel yang dipakainya harus benar-benar
-        # dihitung di pre_animation — kalau tidak, semua wajah tergambar
-        # sekaligus dan yang menang ditentukan z-buffer
-        faces = [b for b in bones_per_geom[rp["geometry"]["default"]]
-                 if b.startswith("face_")]
-        if faces:
-            ctrl_name = rp["render_controllers"][0]
-            ctrl = controllers.get(ctrl_name)
-            check(ctrl is not None, f"{cid}: render controller {ctrl_name} tidak ada")
-            if ctrl:
-                shown = {k for entry in ctrl.get("part_visibility", []) for k in entry
-                         if k != "*"}
-                check(shown == set(faces),
-                      f"{cid}: part_visibility tidak menyebut persis semua bone wajah")
-                pre = " ".join(rp["scripts"].get("pre_animation", []))
-                for entry in ctrl.get("part_visibility", []):
-                    for key, expr in entry.items():
-                        if key == "*":
-                            continue
-                        var = str(expr).split(" ")[0]
+        # Bone yang disembunyikan render controller ada dua jenis, dan syaratnya
+        # berbeda: bone WAJAH dipilih lewat variable.vbs_face, yang harus benar
+        # -benar dihitung di pre_animation; bone PERLENGKAPAN dipilih lewat
+        # entity property, yang harus benar-benar dideklarasikan di behavior
+        # pack dengan client_sync. Kalau salah satunya putus, hasilnya bukan
+        # galat melainkan semua bone tergambar sekaligus, dan itu baru kelihatan
+        # setelah add-on dipasang.
+        geom_bones = bones_per_geom[rp["geometry"]["default"]]
+        faces = [b for b in geom_bones if b.startswith("face_")]
+        gear = [b for b in geom_bones if b.startswith("gear_")]
+        ctrl_name = rp["render_controllers"][0]
+        ctrl = controllers.get(ctrl_name)
+        check(ctrl is not None, f"{cid}: render controller {ctrl_name} tidak ada")
+        if ctrl:
+            shown = {k for entry in ctrl.get("part_visibility", []) for k in entry
+                     if k != "*"}
+            check(shown >= set(faces),
+                  f"{cid}: part_visibility tidak menyebut semua bone wajah")
+            check(shown >= set(gear),
+                  f"{cid}: part_visibility tidak menyebut semua bone perlengkapan")
+            for name in shown:
+                check(name in geom_bones,
+                      f"{cid}: part_visibility menyebut bone '{name}' yang tidak ada di geometry")
+            pre = " ".join(rp["scripts"].get("pre_animation", []))
+            declared = set(bp["description"].get("properties", {}))
+            for entry in ctrl.get("part_visibility", []):
+                for key, expr in entry.items():
+                    if key == "*":
+                        continue
+                    text = str(expr)
+                    for prop in re.findall(r"query\.property\('([^']+)'\)", text):
+                        check(prop in declared,
+                              f"{cid}: {key} memakai property {prop} yang tidak dideklarasikan")
+                        row = bp["description"].get("properties", {}).get(prop, {})
+                        check(row.get("client_sync") is True,
+                              f"{cid}: property {prop} tidak client_sync, "
+                              "resource pack tidak bisa membacanya")
+                    if "query.property" not in text:
+                        var = text.split(" ")[0]
                         check(var in pre,
                               f"{cid}: {key} memakai {var} yang tidak dihitung pre_animation")
+
+        # Molang di pre_animation dan di daftar animate juga hanya boleh menyebut
+        # property yang dideklarasikan
+        declared = set(bp["description"].get("properties", {}))
+        molang = " ".join(rp["scripts"].get("pre_animation", []))
+        for entry in rp["scripts"]["animate"]:
+            if isinstance(entry, dict):
+                molang += " " + " ".join(str(v) for v in entry.values())
+        for prop in set(re.findall(r"query\.property\('([^']+)'\)", molang)):
+            check(prop in declared,
+                  f"{cid}: Molang memakai property {prop} yang tidak dideklarasikan")
+
+        # Priority tiap goal harus UNIK di seluruh daftar yang aktif bersamaan:
+        # komponen dasar + satu grup mode + satu grup senjata. Priority kembar
+        # membuat Bedrock memilih satu goal dan mengabaikan sisanya diam-diam,
+        # dan itulah yang dulu bikin mode bertarung tidak melakukan apa pun.
+        groups = bp["component_groups"]
+        base_prio = [(k, v["priority"]) for k, v in bp["components"].items()
+                     if k.startswith("minecraft:behavior.")]
+        mode_groups = [g for g in groups if g.startswith("vbs:mode_")]
+        weapon_groups = [g for g in groups if g.startswith("vbs:weapon_")]
+        for mode in mode_groups:
+            for weapon in weapon_groups:
+                rows = list(base_prio)
+                for g in (mode, weapon):
+                    rows += [(f"{g}/{k}", v["priority"])
+                             for k, v in groups[g].items()
+                             if k.startswith("minecraft:behavior.")]
+                seen = {}
+                for name, prio in rows:
+                    if prio in seen:
+                        check(False, f"{cid}: {mode}+{weapon} memakai priority {prio} "
+                                     f"dua kali ({seen[prio]} dan {name})")
+                    seen[prio] = name
 
         egg = rp["spawn_egg"]["texture"]
         egg_png = os.path.join(RP, "textures", "items", f"{egg}.png")
@@ -181,10 +244,27 @@ def main():
         check(f"vbs_spawn_egg_{cid}" in itex,
               f"{cid}: spawn egg belum terdaftar di item_texture.json")
 
-    # 7. render controller
+    # 7. render controller: satu per karakter, plus satu untuk patok
     rc = load(os.path.join(RP, "render_controllers",
                            "vbs_companion.render_controllers.json"))["render_controllers"]
-    check("controller.render.vbs_companion" in rc, "render controller tidak ditemukan")
+    check("controller.render.vbs_marker" in rc, "render controller patok tidak ada")
+    for cid in ids:
+        check(f"controller.render.vbs_companion.{cid}" in rc,
+              f"{cid}: render controller khusus karakter ini tidak ada")
+
+    # 7b. patok: entity behavior, entity resource, geometry dan dua teksturnya
+    mbp = load(os.path.join(BP, "entities", "marker.json"))["minecraft:entity"]
+    mrp = load(os.path.join(RP, "entity", "marker.entity.json"))["minecraft:client_entity"]
+    check(mbp["description"]["identifier"] == mrp["description"]["identifier"],
+          "identifier patok di behavior dan resource tidak sama")
+    check(mrp["description"]["geometry"]["default"] ==
+          marker_geo["minecraft:geometry"][0]["description"]["identifier"],
+          "geometry patok yang ditunjuk resource tidak ada")
+    for key, path in mrp["description"]["textures"].items():
+        full = os.path.join(RP, path + ".png")
+        check(os.path.exists(full), f"tekstur patok '{key}' hilang: {rel(full)}")
+    for name in ("vbs:set_free", "vbs:set_claimed"):
+        check(name in mbp["events"], f"patok: event {name} tidak ada")
 
     # 8. manifest
     bpm = load(os.path.join(BP, "manifest.json"))
@@ -217,7 +297,26 @@ def main():
             target = os.path.join(script_dir, imported)
             check(os.path.exists(target), f"{name}: import {imported} tidak ada")
 
-    # 10. ikon pack
+    # 10. config.js dan gen_packs.py harus sepakat soal mode dan pose
+    import gen_packs
+    listed_modes = set(re.findall(r'event:\s*"vbs:set_([a-z_]+)"', script))
+    check(listed_modes == set(gen_packs.MODES),
+          f"daftar mode di config.js {sorted(listed_modes)} tidak sama dengan "
+          f"gen_packs.py {sorted(gen_packs.MODES)}")
+    pose_block = re.search(r"export const POSE = \{(.*?)\};", script, re.S)
+    check(pose_block is not None, "POSE tidak ditemukan di config.js")
+    if pose_block:
+        script_pose = {k: int(v) for k, v in
+                       re.findall(r"(\w+):\s*(\d+)", pose_block.group(1))}
+        check(script_pose == gen_packs.POSE,
+              f"POSE di config.js {script_pose} tidak sama dengan "
+              f"gen_packs.py {gen_packs.POSE}")
+    # tiap pose yang punya animasi harus benar-benar ada animasinya
+    for name, value in gen_packs.POSE_ANIMATIONS:
+        check(f"animation.vbs_companion.{name}" in anims,
+              f"pose {name} (nilai {value}) tidak punya animasi")
+
+    # 11. ikon pack
     for pack in (BP, RP):
         check(os.path.exists(os.path.join(pack, "pack_icon.png")),
               f"pack_icon.png hilang di {os.path.basename(pack)}")

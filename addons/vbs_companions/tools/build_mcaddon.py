@@ -17,7 +17,7 @@ PACKS = [
     os.path.join(ROOT, "behavior_packs", "vbs_companions_bp"),
     os.path.join(ROOT, "resource_packs", "vbs_companions_rp"),
 ]
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 OUT = os.path.join(ROOT, f"VBS-Companions-v{VERSION}.mcaddon")
 
 SKIP = {".DS_Store", "Thumbs.db"}

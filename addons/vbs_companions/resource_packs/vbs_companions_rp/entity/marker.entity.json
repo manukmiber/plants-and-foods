@@ -1,0 +1,30 @@
+{
+  "format_version": "1.10.0",
+  "minecraft:client_entity": {
+    "description": {
+      "identifier": "vbs:marker",
+      "min_engine_version": "1.21.0",
+      "materials": {
+        "default": "entity_alphatest"
+      },
+      "textures": {
+        "free": "textures/entity/vbs_companions/marker_free",
+        "claimed": "textures/entity/vbs_companions/marker_claimed"
+      },
+      "geometry": {
+        "default": "geometry.vbs_marker"
+      },
+      "animations": {
+        "spin": "animation.vbs_marker.spin"
+      },
+      "scripts": {
+        "animate": [
+          "spin"
+        ]
+      },
+      "render_controllers": [
+        "controller.render.vbs_marker"
+      ]
+    }
+  }
+}

@@ -1,0 +1,58 @@
+{
+  "format_version": 2,
+  "header": {
+    "name": "VBS Companions §7[Behavior]",
+    "description": "Karakter pendamping yang mengikuti, bertani, dan bertarung sesuai perintah yang dipilih pemain lewat UI.",
+    "uuid": "e980994d-a9a6-469e-af1b-a31c3e9f7838",
+    "version": [
+      1,
+      0,
+      0
+    ],
+    "min_engine_version": [
+      1,
+      21,
+      0
+    ]
+  },
+  "modules": [
+    {
+      "type": "data",
+      "uuid": "af3c1db7-aa03-4fc3-9498-e89d6498c07c",
+      "version": [
+        1,
+        0,
+        0
+      ]
+    },
+    {
+      "type": "script",
+      "language": "javascript",
+      "uuid": "cb1e953f-fc5c-43c5-bab9-a0b7e845c632",
+      "version": [
+        1,
+        0,
+        0
+      ],
+      "entry": "scripts/main.js"
+    }
+  ],
+  "dependencies": [
+    {
+      "uuid": "b5872873-2873-40c9-8d5b-424bc5592785",
+      "version": [
+        1,
+        0,
+        0
+      ]
+    },
+    {
+      "module_name": "@minecraft/server",
+      "version": "1.11.0"
+    },
+    {
+      "module_name": "@minecraft/server-ui",
+      "version": "1.2.0"
+    }
+  ]
+}

@@ -1,0 +1,21 @@
+{
+  "resource_pack_name": "vbs_companions",
+  "texture_name": "atlas.items",
+  "texture_data": {
+    "vbs_spawn_egg_akito": {
+      "textures": "textures/items/vbs_spawn_egg_akito"
+    },
+    "vbs_spawn_egg_kohane": {
+      "textures": "textures/items/vbs_spawn_egg_kohane"
+    },
+    "vbs_spawn_egg_an": {
+      "textures": "textures/items/vbs_spawn_egg_an"
+    },
+    "vbs_spawn_egg_toya": {
+      "textures": "textures/items/vbs_spawn_egg_toya"
+    },
+    "vbs_spawn_egg_flins": {
+      "textures": "textures/items/vbs_spawn_egg_flins"
+    }
+  }
+}

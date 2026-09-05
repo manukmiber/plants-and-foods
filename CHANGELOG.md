@@ -95,6 +95,10 @@ priority ditulis di satu tabel di `gen_packs.py`, `minecraft:angry` dibuang, dan
   tangga yang sedang dipijaknya. Ditambah satu lagi: obor yang dipasang penambang
   tidak ada di daftar blok yang bisa dilewati, jadi dia terkurung oleh obornya
   sendiri.
+- **Paketnya dipecah dua**, `-BP.mcaddon` dan `-RP.mcaddon`, satu per pack. Di
+  server keduanya memang masuk ke folder yang berbeda dan didaftarkan di berkas
+  yang berbeda, dan pemain yang cuma butuh modelnya cukup diberi yang RP. Keduanya
+  tetap harus dipasang bersama; manifestnya saling menyebut sebagai dependensi.
 - `validate.py` naik ke 2183 pemeriksaan: priority kembar, entity property yang
   dipakai Molang tapi tidak dideklarasikan atau tidak `client_sync`, bone
   perlengkapan yang tidak disebut `part_visibility`, berkas dan animasi patok, dan

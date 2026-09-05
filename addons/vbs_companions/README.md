@@ -15,11 +15,21 @@ teksturnya (1024×1024) digambar dari nol untuk add-on ini.
 
 ## Pasang
 
+Add-on ini dibungkus jadi **dua berkas terpisah**, satu per pack:
+
+| Berkas | Isinya |
+|---|---|
+| `VBS-Companions-v1.2.0-BP.mcaddon` | Behavior pack — entity, mode, dan seluruh script |
+| `VBS-Companions-v1.2.0-RP.mcaddon` | Resource pack — model, tekstur, animasi, teks |
+
+**Keduanya harus dipasang.** Manifest keduanya saling menyebut sebagai dependensi,
+jadi memasang salah satu saja akan membuat Minecraft mengeluh pasangannya tidak ada.
+Urutan pemasangannya bebas.
+
 ### Di HP / PC (client)
 
-Buka **`VBS-Companions-v1.2.0.mcaddon`** yang ada di folder ini. Minecraft memasang
-kedua pack sekaligus. Lalu di pengaturan dunia, aktifkan **VBS Companions [Behavior]**
-dan **[Resource]**.
+Buka kedua berkas itu satu per satu. Minecraft memasang masing-masing ke tempatnya.
+Lalu di pengaturan dunia, aktifkan **VBS Companions [Behavior]** dan **[Resource]**.
 
 Tidak ada satu pun toggle *Experimental* yang perlu dinyalakan — script-nya memakai
 API versi stabil.
@@ -27,7 +37,8 @@ API versi stabil.
 ### Di dedicated server (BDS)
 
 ```bash
-unzip VBS-Companions-v1.2.0.mcaddon -d /tmp/vbs
+unzip VBS-Companions-v1.2.0-BP.mcaddon -d /tmp/vbs
+unzip VBS-Companions-v1.2.0-RP.mcaddon -d /tmp/vbs
 cp -r /tmp/vbs/vbs_companions_bp  <server>/behavior_packs/
 cp -r /tmp/vbs/vbs_companions_rp  <server>/resource_packs/
 ```
@@ -376,7 +387,7 @@ python3 gen_textures.py      # -> semua PNG (tekstur 1024x1024, spawn egg, patok
 python3 gen_packs.py         # -> manifest, entity behavior + resource, render controller, lang
 python3 render_preview.py    # -> docs/preview/*.png
 python3 validate.py          # periksa semua kaitan antar berkas
-python3 build_mcaddon.py     # -> VBS-Companions-v1.2.0.mcaddon
+python3 build_mcaddon.py     # -> VBS-Companions-v1.2.0-BP.mcaddon dan -RP.mcaddon
 ```
 
 Butuh Python 3 dan Pillow (`pip install pillow`). Hasil generatornya ikut di-commit,

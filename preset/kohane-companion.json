@@ -57,7 +57,7 @@
       "node": "entity:kohane",
       "slot": "main",
       "fileName": "kohane.png",
-      "url": "textures/companion/kohane/kohane.png",
+      "url": "textures/characters/kohane/kohane.png",
       "width": 512,
       "height": 512
     },
@@ -65,7 +65,7 @@
       "node": "entity:kohane",
       "slot": "spawn_egg",
       "fileName": "kohane_spawn_egg.png",
-      "url": "textures/companion/kohane/kohane_spawn_egg.png",
+      "url": "textures/characters/kohane/kohane_spawn_egg.png",
       "width": 128,
       "height": 128
     }

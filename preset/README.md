@@ -66,7 +66,7 @@ of its own images to a texture slot on a node the preset creates:
     "node": "entity:kohane",
     "slot": "main",
     "fileName": "kohane.png",
-    "url": "textures/companion/kohane/kohane.png",
+    "url": "textures/characters/kohane/kohane.png",
     "width": 512,
     "height": 512
   }

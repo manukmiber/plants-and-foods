@@ -3,26 +3,39 @@
  */
 
 import { ActionFormData, MessageFormData, ModalFormData } from "@minecraft/server-ui";
-import { ENERGY, FOOD_HEAL, MODES } from "./config.js";
+import { ENERGY, FAMILY, FOOD_HEAL, MODES, SLEEP } from "./config.js";
 import { getActivity } from "./activity.js";
 import { BLUEPRINTS, startBlueprint } from "./builder.js";
 import { claimsNear, ensureStake, ensureVillageStake } from "./claim.js";
 import { syncWeapon } from "./combat.js";
 import { bestTier, tierName, toolRank } from "./crafting.js";
-import { energyOf, isResting } from "./energy.js";
-import { setExpand } from "./farming.js";
+import { energyOf, isResting, isSleeping, needsLabel, sleepOf } from "./energy.js";
+import { farmPhaseLabel, setExpand } from "./farming.js";
 import { displayName, refreshName } from "./nametag.js";
-import { patchState, readState } from "./state.js";
+import { requestLines } from "./requests.js";
+import { patchState, readSettings, readState, writeSettings } from "./state.js";
 import { stationContainer } from "./station.js";
 import { waypointLines } from "./wander.js";
 import {
-  armorSummary, bar, forceShow, getGear, getMode, getOwnerName, healthOf, info,
-  makeItem, prettyItem, setGear, setMode, SLOT_KEYS, SLOT_LABEL, slotFor,
+  alive, allCompanions, armorSummary, bar, forceShow, getGear, getMode,
+  getOwnerName, healthOf, info, makeItem, prettyItem, setGear, setMode,
+  SLOT_KEYS, SLOT_LABEL, slotFor,
 } from "./util.js";
-import { entStr, logDebug, logInfo, logWarn } from "./logger.js";
+import {
+  entStr, isWatching, logDebug, logInfo, logStats, logWarn,
+  recentLogs, watchLogs,
+} from "./logger.js";
 
 const TAG = "UI";
 const MODE_KEYS = Object.keys(MODES);
+
+function getOwnerIdOf(entity) {
+  try {
+    return entity.getDynamicProperty("vbs:owner");
+  } catch {
+    return undefined;
+  }
+}
 
 function title(entity) {
   const meta = info(entity);
@@ -57,22 +70,33 @@ function statusBody(entity) {
   const mode = MODES[getMode(entity)];
   const doing = getActivity(entity);
   const energy = Math.round(energyOf(state));
-  return [
-    `§7Pemilik   §f${getOwnerName(entity)}`,
+  const sleepy = Math.round(sleepOf(state));
+  const hidden = state.hideOwner || readSettings(getOwnerIdOf(entity)).hideOwner;
+  const lines = [
+    `§7Pemilik   §f${hidden ? "§8disembunyikan" : getOwnerName(entity)}`,
     `§7Tugas     §f${mode.label}  §8${mode.hint}`,
     doing ? `§7Sekarang  §a${doing}` : "§7Sekarang  §8menunggu perintah",
+  ];
+  if (getMode(entity) === "farm") lines.push(`§7Tahap     §f${farmPhaseLabel(state)}`);
+  lines.push(
     "",
     `§cNyawa     §f${cur}§7/§f${max}`,
     bar(cur, max),
     `§eTenaga    §f${energy}§7/§f${ENERGY.max}${isResting(state) ? " §8(beristirahat)" : ""}`,
     bar(energy, ENERGY.max, 20, "§e"),
+    `§bKantuk    §f${sleepy}§7/§f${SLEEP.max}${isSleeping(state) ? " §8(tidur)" : ""}`,
+    bar(sleepy, SLEEP.max, 20, "§b"),
+    `§7Kondisi   §f${needsLabel(state)}`,
+    "",
     `§9Armor     §f${armor.points} §7(${armor.label})`,
     `§7Senjata   §f${prettyItem(gear.mainhand)}`,
     toolLine(entity, state),
     stationLine(entity, state),
     "",
     `§8${meta.name} akan menuruti perintah yang kamu pilih di bawah.`,
-  ].join("\n");
+    "§8Bisa juga diajak bicara: §7chat " + `${displayName(entity)} halo`,
+  );
+  return lines.join("\n");
 }
 
 export async function openMenu(player, entity) {
@@ -120,6 +144,7 @@ export function applyMode(player, entity, key) {
 async function openSettings(player, entity) {
   logInfo(TAG, `openSettings dibuka oleh ${player.name}`);
   const state = readState(entity);
+  const global = readSettings(player.id);
   const gear = getGear(entity);
   const worn = SLOT_KEYS.map((k) => `§7${SLOT_LABEL[k]}: §f${prettyItem(gear[k])}`).join("\n");
   const held = player.getComponent("minecraft:equippable")?.getEquipment("Mainhand")?.typeId;
@@ -134,7 +159,10 @@ async function openSettings(player, entity) {
     .button("§eRancangan Bangunan\n§8Pilih yang akan dibangun", "textures/items/brick")
     .button("§bCatatan Pengembara\n§8Temuan beserta koordinatnya", "textures/items/map_filled")
     .button(`§7Celoteh: ${state.quiet ? "§cmati" : "§ahidup"}\n§8Gelembung teks dan obrolan`, "textures/items/book_normal")
-    .button(`§7Nama pemilik di penanda: ${state.hideOwner ? "§csembunyi" : "§aterlihat"}\n§8Kalau disembunyikan, pemain lain tidak tahu ini punya siapa`, "textures/items/paper")
+    .button(`§7Nama pemilik (dia saja): ${state.hideOwner ? "§csembunyi" : "§aterlihat"}\n§8Berlaku untuk companion ini saja`, "textures/items/paper")
+    .button(`§7Nama pemilik (SEMUA milikku): ${global.hideOwner ? "§csembunyi" : "§aterlihat"}\n§8Kalau disembunyikan, tidak ada pemain di server yang tahu ini punya siapa`, "textures/items/paper")
+    .button("§6Permintaan Bantuan\n§8Siapa sedang menunggu bahan atau alat", "textures/items/emerald")
+    .button("§bCatatan Kejadian (Log)\n§8Untuk melacak error dan memperbaikinya", "textures/items/book_writable")
     .button("§bGanti Nama", "textures/items/name_tag")
     .button("§dPanggil ke Sini\n§8Tarik dia ke tempatmu berdiri", "textures/items/ender_pearl")
     .button("§cIstirahatkan\n§8Companion dihilangkan dari dunia", "textures/items/barrier")
@@ -152,11 +180,68 @@ async function openSettings(player, entity) {
     case 5: await openWaypoints(player, entity); break;
     case 6: toggleQuiet(player, entity); break;
     case 7: toggleHideOwner(player, entity); break;
-    case 8: await rename(player, entity); break;
-    case 9: recall(player, entity); break;
-    case 10: await dismiss(player, entity); break;
+    case 8: toggleHideOwnerAll(player, entity); break;
+    case 9: await openRequests(player, entity); break;
+    case 10: await openLogs(player, entity); break;
+    case 11: await rename(player, entity); break;
+    case 12: recall(player, entity); break;
+    case 13: await dismiss(player, entity); break;
     default: await openMenu(player, entity); return;
   }
+}
+
+/**
+ * Papan permintaan: siapa sedang menunggu bahan atau alat dari siapa. Ini
+ * jendela pemain ke rantai kerja pencari barang -> perajin -> pekerja lain.
+ */
+async function openRequests(player, entity) {
+  const form = new ActionFormData()
+    .title("§l§6Permintaan Bantuan")
+    .body([
+      "§7Companion yang kehabisan bahan memasang permintaan di sini.",
+      "§7Perajin mengerjakan pesanan alat dan barang, pencari barang",
+      "§7mengerjakan pesanan bahan mentah.",
+      "",
+      ...requestLines(player.id, 10),
+      "",
+      "§8Kalau ada yang menggantung lama, pastikan ada companion bermode",
+      "§8§fMerajin§8 dan §fMencari Barang§8 di dekat mereka.",
+    ].join("\n"))
+    .button("§8« Kembali");
+  await forceShow(player, form);
+  await openSettings(player, entity);
+}
+
+/**
+ * Jendela log di dalam game. Content log Minecraft tidak selalu bisa dibaca
+ * pemain (apalagi di HP dan di server), padahal justru di situ error tercatat.
+ */
+async function openLogs(player, entity) {
+  const stats = logStats();
+  const watching = isWatching(player.id);
+  const form = new ActionFormData()
+    .title("§l§bCatatan Kejadian")
+    .body([
+      `§7Tercatat: §f${stats.INFO} info§7, §6${stats.WARN} peringatan§7, §c${stats.ERROR} error§7.`,
+      `§7Tersimpan di ingatan: §f${stats.buffered}§7 baris terakhir.`,
+      "",
+      "§8Baris terbaru di bawah (paling baru di bawah sendiri):",
+      "",
+      ...recentLogs(14).map((l) => `§8${l.slice(0, 120)}`),
+    ].join("\n"))
+    .button(watching
+      ? "§cBerhenti kirim peringatan ke chat\n§8Peringatan & error tidak lagi masuk chatmu"
+      : "§aKirim peringatan & error ke chat\n§8Setiap WARN/ERROR langsung muncul di chatmu")
+    .button("§8« Kembali");
+  const res = await forceShow(player, form);
+  if (res && !res.canceled && res.selection === 0) {
+    const on = watchLogs(player.id, !watching);
+    player.sendMessage(on
+      ? "§aPeringatan dan error akan dikirim ke chatmu."
+      : "§7Pengiriman peringatan ke chat dimatikan.");
+    logInfo(TAG, `${player.name} mengubah pemantauan log ke: ${on}`);
+  }
+  await openSettings(player, entity);
 }
 
 async function openFarm(player, entity) {
@@ -263,9 +348,35 @@ function toggleHideOwner(player, entity) {
   const state = readState(entity);
   patchState(entity, { hideOwner: !state.hideOwner });
   refreshName(entity);
+  logInfo(TAG, `${player.name} menyetel sembunyikan-pemilik ${entStr(entity)} = ${!state.hideOwner}`);
   player.sendMessage(state.hideOwner
-    ? "§aNama pemilik ditampilkan lagi di penanda."
-    : "§7Nama pemilik disembunyikan. Pemain lain di server tidak akan tahu ini punya siapa.");
+    ? "§aNama pemilik ditampilkan lagi di penanda companion ini."
+    : "§7Nama pemilik companion ini disembunyikan.");
+}
+
+/**
+ * Saklar menyeluruh: semua companion milik pemain ini berhenti memajang nama
+ * pemiliknya, di penanda kepala maupun di papan stasiun. Inilah yang membuat
+ * pemain lain di server tidak bisa tahu companion itu punya siapa.
+ */
+function toggleHideOwnerAll(player, entity) {
+  const before = readSettings(player.id).hideOwner;
+  const next = writeSettings(player.id, { hideOwner: !before });
+  logInfo(TAG, `${player.name} menyetel sembunyikan-pemilik MENYELURUH = ${next.hideOwner}`);
+  let touched = 0;
+  try {
+    for (const c of allCompanions(FAMILY)) {
+      if (!alive(c)) continue;
+      refreshName(c);
+      touched++;
+    }
+  } catch (e) {
+    logWarn(TAG, "Gagal menyegarkan penanda seluruh companion", e);
+  }
+  player.sendMessage(next.hideOwner
+    ? `§7Nama pemilik disembunyikan di §fSEMUA§7 companionmu (${touched} disegarkan). ` +
+      "§8Pemain lain di server tidak akan tahu ini punya siapa."
+    : "§aNama pemilik ditampilkan lagi di semua companionmu.");
 }
 
 function heldStack(player) {

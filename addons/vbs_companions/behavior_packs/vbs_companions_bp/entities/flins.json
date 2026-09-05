@@ -52,43 +52,7 @@
           "interval": 120
         }
       },
-      "vbs:mode_farm": {
-        "minecraft:behavior.move_to_block": {
-          "priority": 6,
-          "tick_interval": 20,
-          "start_chance": 1.0,
-          "search_range": 12,
-          "search_height": 4,
-          "goal_radius": 1.5,
-          "stay_duration": 1.5,
-          "target_offset": [
-            0.0,
-            1.0,
-            0.0
-          ],
-          "target_selection_method": "nearest",
-          "target_blocks": [
-            "minecraft:wheat",
-            "minecraft:carrots",
-            "minecraft:potatoes",
-            "minecraft:beetroot",
-            "minecraft:nether_wart"
-          ]
-        },
-        "minecraft:behavior.follow_owner": {
-          "priority": 7,
-          "speed_multiplier": 1.0,
-          "start_distance": 18.0,
-          "stop_distance": 10.0
-        },
-        "minecraft:behavior.random_stroll": {
-          "priority": 9,
-          "speed_multiplier": 0.6,
-          "xz_dist": 8,
-          "y_dist": 3,
-          "interval": 120
-        }
-      },
+      "vbs:mode_farm": {},
       "vbs:mode_attack": {
         "minecraft:behavior.owner_hurt_by_target": {
           "priority": 2
@@ -125,8 +89,8 @@
         "minecraft:behavior.follow_owner": {
           "priority": 7,
           "speed_multiplier": 1.2,
-          "start_distance": 10.0,
-          "stop_distance": 4.0
+          "start_distance": 16.0,
+          "stop_distance": 8.0
         },
         "minecraft:behavior.random_stroll": {
           "priority": 9,
@@ -137,105 +101,11 @@
         }
       },
       "vbs:mode_stay": {},
-      "vbs:mode_mine": {
-        "minecraft:behavior.move_to_block": {
-          "priority": 6,
-          "tick_interval": 20,
-          "start_chance": 1.0,
-          "search_range": 14,
-          "search_height": 6,
-          "goal_radius": 1.5,
-          "stay_duration": 2.5,
-          "target_offset": [
-            0.0,
-            1.0,
-            0.0
-          ],
-          "target_selection_method": "nearest",
-          "target_blocks": [
-            "minecraft:coal_ore",
-            "minecraft:deepslate_coal_ore",
-            "minecraft:iron_ore",
-            "minecraft:deepslate_iron_ore",
-            "minecraft:copper_ore",
-            "minecraft:deepslate_copper_ore",
-            "minecraft:gold_ore",
-            "minecraft:deepslate_gold_ore",
-            "minecraft:redstone_ore",
-            "minecraft:lit_redstone_ore",
-            "minecraft:deepslate_redstone_ore",
-            "minecraft:lapis_ore",
-            "minecraft:deepslate_lapis_ore",
-            "minecraft:diamond_ore",
-            "minecraft:deepslate_diamond_ore",
-            "minecraft:emerald_ore",
-            "minecraft:deepslate_emerald_ore",
-            "minecraft:quartz_ore",
-            "minecraft:ancient_debris"
-          ]
-        },
-        "minecraft:behavior.follow_owner": {
-          "priority": 7,
-          "speed_multiplier": 1.0,
-          "start_distance": 24.0,
-          "stop_distance": 12.0
-        },
-        "minecraft:behavior.random_stroll": {
-          "priority": 9,
-          "speed_multiplier": 0.7,
-          "xz_dist": 8,
-          "y_dist": 6,
-          "interval": 60
-        }
-      },
-      "vbs:mode_wander": {
-        "minecraft:behavior.random_stroll": {
-          "priority": 9,
-          "speed_multiplier": 1.0,
-          "xz_dist": 16,
-          "y_dist": 8,
-          "interval": 40
-        }
-      },
-      "vbs:mode_build": {
-        "minecraft:behavior.follow_owner": {
-          "priority": 7,
-          "speed_multiplier": 1.0,
-          "start_distance": 16.0,
-          "stop_distance": 8.0
-        },
-        "minecraft:behavior.random_stroll": {
-          "priority": 9,
-          "speed_multiplier": 0.6,
-          "xz_dist": 6,
-          "y_dist": 3,
-          "interval": 120
-        }
-      },
-      "vbs:mode_crafter": {
-        "minecraft:behavior.follow_owner": {
-          "priority": 7,
-          "speed_multiplier": 1.0,
-          "start_distance": 16.0,
-          "stop_distance": 8.0
-        },
-        "minecraft:behavior.random_stroll": {
-          "priority": 9,
-          "speed_multiplier": 0.6,
-          "xz_dist": 6,
-          "y_dist": 3,
-          "interval": 120
-        }
-      },
-      "vbs:mode_looter": {
-        "minecraft:behavior.random_stroll": {
-          "priority": 9,
-          "speed_multiplier": 0.8,
-          "xz_dist": 10,
-          "y_dist": 5,
-          "interval": 50
-        }
-      },
+      "vbs:mode_mine": {},
+      "vbs:mode_wander": {},
+      "vbs:mode_build": {},
+      "vbs:mode_crafter": {},
+      "vbs:mode_looter": {},
       "vbs:weapon_melee": {
         "minecraft:behavior.melee_attack": {
           "priority": 5,

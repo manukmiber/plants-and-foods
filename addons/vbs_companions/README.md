@@ -19,8 +19,8 @@ Add-on ini dibungkus jadi **dua berkas terpisah**, satu per pack:
 
 | Berkas | Isinya |
 |---|---|
-| `VBS-Companions-v1.3.0-BP.mcaddon` | Behavior pack — entity, mode, dan seluruh script |
-| `VBS-Companions-v1.3.0-RP.mcaddon` | Resource pack — model, tekstur, animasi, teks |
+| `VBS-Companions-v1.4.0-BP.mcaddon` | Behavior pack — entity, mode, dan seluruh script |
+| `VBS-Companions-v1.4.0-RP.mcaddon` | Resource pack — model, tekstur, animasi, teks |
 
 **Keduanya harus dipasang.** Manifest keduanya saling menyebut sebagai dependensi,
 jadi memasang salah satu saja akan membuat Minecraft mengeluh pasangannya tidak ada.
@@ -37,8 +37,8 @@ API versi stabil.
 ### Di dedicated server (BDS)
 
 ```bash
-unzip VBS-Companions-v1.3.0-BP.mcaddon -d /tmp/vbs
-unzip VBS-Companions-v1.3.0-RP.mcaddon -d /tmp/vbs
+unzip VBS-Companions-v1.4.0-BP.mcaddon -d /tmp/vbs
+unzip VBS-Companions-v1.4.0-RP.mcaddon -d /tmp/vbs
 cp -r /tmp/vbs/vbs_companions_bp  <server>/behavior_packs/
 cp -r /tmp/vbs/vbs_companions_rp  <server>/resource_packs/
 ```
@@ -47,7 +47,7 @@ Lalu daftarkan ke dunianya. `<server>/worlds/<nama dunia>/world_behavior_packs.j
 
 ```json
 [
-  { "pack_id": "e980994d-a9a6-469e-af1b-a31c3e9f7838", "version": [1, 3, 0] }
+  { "pack_id": "e980994d-a9a6-469e-af1b-a31c3e9f7838", "version": [1, 4, 0] }
 ]
 ```
 
@@ -55,7 +55,7 @@ Lalu daftarkan ke dunianya. `<server>/worlds/<nama dunia>/world_behavior_packs.j
 
 ```json
 [
-  { "pack_id": "b5872873-2873-40c9-8d5b-424bc5592785", "version": [1, 3, 0] }
+  { "pack_id": "b5872873-2873-40c9-8d5b-424bc5592785", "version": [1, 4, 0] }
 ]
 ```
 
@@ -108,14 +108,15 @@ companion itu milik siapa hanya dengan melihat penandanya.
 | **Mode Menambang** | Menggali tangga turun sampai kedalaman intan, membuat terowongan bercabang selebar 1 dan setinggi 3 blok berobor, mengumpulkan bijih, dan menyetorkannya ke peti. |
 | **Mode Mengembara** | Menjelajah spiral melebar dari base, mencatat temuan beserta koordinatnya, memungut barang di jalan, dan pulang menyetor. |
 | **Mode Membangun** | Membangun rumah desa (kalau ada chunk yang dipatok) lalu rancangan pilihanmu, dari bahan yang ada di peti stasiun. |
-| **Mode Merajin** | Menempakan alat untuk companion lain yang kehabisan bahan, lalu mengantarnya. |
-| **Mode Mencari Barang** | Menebang kayu, menggali batu permukaan, memungut barang, dan mengantarnya ke Merajin atau Pembangun. |
+| **Mode Merajin** | Menempakan alat DAN barang (ember, peti, papan nama, meja kerja, obor) pesanan companion lain, lalu mengantarnya ke peti si pemesan. |
+| **Mode Mencari Barang** | Mencari bahan yang **diminta** companion lain — kayu, batu, besi, tanah, arang, bibit — lalu mengantarnya ke peti si pemesan. |
 
 Menu **Pengaturan & Perlengkapan** berisi: memakaikan zirah/senjata/alat dari
 tanganmu, memberi makan, melepas perlengkapan, mengatur ladang dan patok, memilih
 rancangan bangunan, membaca catatan pengembara, mematikan celotehnya,
-menyembunyikan/menampilkan nama pemilik di penanda, mengganti nama panggilan,
-memanggilnya ke tempatmu, dan mengistirahatkannya.
+menyembunyikan nama pemilik (untuk dia saja atau untuk semua companion milikmu),
+melihat **papan permintaan bantuan**, membaca **catatan kejadian/log**, mengganti
+nama panggilan, memanggilnya ke tempatmu, dan mengistirahatkannya.
 
 Mode yang dipilih **tersimpan** — dunia ditutup lalu dibuka lagi, perintahnya tetap.
 
@@ -149,11 +150,41 @@ Mode ini yang paling banyak berubah. Urutan yang dikerjakan companion selalu sam
 dan dia berhenti di langkah pertama yang belum beres — **alasannya selalu terbaca
 di baris "Sekarang" di menu utama**, jadi companion yang berdiri diam bukan misteri.
 
+Ladang dikerjakan sebagai **rangkaian fase yang tidak boleh dibalik**:
+
+| Fase | Yang dikerjakan |
+|---|---|
+| **Meratakan** | Seluruh petak berpatok diturunkan/ditimbun ke satu ketinggian |
+| **Mengairi** | Parit digali utuh, ember dibuat dan diisi di sungai, air dituang |
+| **Mencangkul** | Hanya petak yang **sudah kebagian air** yang jadi farmland |
+| **Menanam** | Bibit ditanam berjalur |
+| **Merawat** | Panen, tanam ulang, perbaiki petak yang mengering, menghias |
+
+Fase yang sedang berjalan ikut ditampilkan di menu utama (baris **Tahap**).
+
+Urutan inilah inti perbaikannya. Versi sebelumnya mencampur semuanya dalam satu
+sapuan — tanah dicangkul lebih dulu di kolom mana pun yang kebetulan disentuh,
+paritnya baru digali belakangan — sehingga petak yang keburu jadi farmland tanpa
+air balik lagi jadi tanah biasa. Sekarang **tidak ada satu petak pun dicangkul
+sebelum benar-benar ada air yang menjangkaunya**, dihitung persis seperti aturan
+Minecraft: air dalam empat blok mendatar, setinggi atau satu di atas farmland.
+
 ### 1. Stasiun
 
-Companion mencari peti dalam radius 10 blok. Kalau tidak ada, dia **memasang peti
-sendiri beserta papan nama** bertuliskan namanya, tugasnya, pemiliknya, dan chunk
-tempatnya berdiri. Peti itu satu-satunya jalan masuk dan keluar barang.
+Companion memakai peti stasiun **miliknya sendiri** — atau peti stasiun companion
+lain milik pemilik yang sama. Peti pemain yang kebetulan ada di dekat situ tidak
+pernah diserobot, jadi hasil kerjanya tidak akan tercampur ke petimu.
+
+Peti dan papan namanya **tidak muncul dari udara**: peti butuh **delapan papan**,
+papan nama butuh **enam papan dan satu stik**. Selama bahannya belum ada,
+companion tetap bekerja memakai **kantong pribadinya** — bentuknya sama persis
+dengan peti, cuma tidak kelihatan — dan seluruh isinya dipindahkan ke peti begitu
+petinya berdiri. Kalau kayunya kurang, dia memasang permintaan ke **Mencari
+Barang** dan tetap bekerja sambil menunggu.
+
+Papan namanya bertuliskan nama companion, tugasnya, pemiliknya dan chunk tempatnya
+berdiri — kecuali kalau nama pemilik disembunyikan (lihat *Menyembunyikan nama
+pemilik* di bawah).
 
 ### 2. Alat
 
@@ -219,12 +250,25 @@ kebagian air karena bedanya ketinggian.
 
 ### 7. Mengairi dan melebar
 
-Kalau di peti ada **ember** (atau **tiga besi**, yang akan ditempanya jadi ember)
-**dan** ada sungai dalam 12 blok dari ladang, companion menggali **parit air tiap
-delapan blok** dan mencangkul sisa chunk jadi ladang — sampai satu chunk penuh.
+Pengairan dikerjakan sungguhan, langkah demi langkah:
 
-Petak yang kebetulan sudah dekat air alami tetap dicangkul walau tidak ada ember,
-supaya fitur ini masih berguna buat base yang jauh dari sungai.
+1. Companion menggali **parit selebar satu blok tiap delapan kolom**, utuh dari
+   ujung ke ujung petak. Lantai paritnya ditambal supaya airnya tidak bocor, dan
+   tanah galiannya disimpan untuk menimbun petak yang cekung.
+2. Kalau di peti belum ada **ember**, dia **membuatnya sendiri** dari **tiga
+   batang besi** di meja kerja. Tidak ada besi? Dia memasang permintaan besi ke
+   **Merajin** dan **Mencari Barang**, lalu menunggu sambil mengerjakan yang lain.
+3. Ember dibawa ke **sungai terdekat**, diisi, dibawa balik, dan dituang jadi
+   **sumber air tiap enam blok** sepanjang parit. Airnya mengalir mengisi sisanya.
+4. Baru sesudah itu petak di kiri-kanan parit dicangkul. Jarak parit sengaja
+   delapan blok supaya petak terjauh pun tetap dalam empat blok dari air.
+
+Kalau ternyata tidak ada sungai sama sekali dalam jangkauan, companion melapor ke
+pemiliknya dan mengerjakan petak yang kebetulan sudah dekat air alami saja — jadi
+fitur ini tetap berguna untuk base yang jauh dari sungai.
+
+Kalau nanti ada petak yang mengering lagi (paritnya tertimbun, airnya diambil),
+fase merawat mendeteksinya dan companion kembali memperbaiki pengairannya.
 
 Untuk melebar **satu chunk lagi**, nyalakan izinnya di menu **Ladang & Patok**, dan
 patok chunk keduanya. Tanpa izin itu, companion berhenti di chunk pertama.
@@ -307,23 +351,53 @@ pemain yang sama akan pergi tidur kalau tenaganya habis di malam hari (lihat
 Kelima role di atas bisa saling kehabisan bahan sendirian. Dua role ini tugasnya
 membantu yang lain, bukan menggarap sesuatu untuk pemain langsung.
 
+Rantainya utuh dari hulu ke hilir:
+
+```
+Mencari Barang  --bahan mentah-->  Merajin  --alat & barang jadi-->  Petani
+     ^                                                              Penambang
+     |------------------ permintaan bahan -----------------------  Pembangun
+```
+
+### Papan permintaan
+
+Companion yang kehabisan sesuatu **memasang permintaan**, bukan berdiri diam.
+Ada tiga jenis:
+
+| Jenis | Isinya | Dikerjakan oleh |
+|---|---|---|
+| **Alat** | cangkul, beliung, kapak, sekop | Merajin |
+| **Barang** | ember, peti, papan nama, meja kerja, obor | Merajin |
+| **Bahan** | kayu, papan, batu, besi, tanah timbun, arang, bibit | Mencari Barang |
+
+Daftar permintaan yang sedang menggantung bisa dilihat kapan saja di
+**Pengaturan » Permintaan Bantuan**, jadi kalau ada companion yang mandek kamu
+langsung tahu dia sedang menunggu apa dan dari siapa.
+
 ### Merajin
 
-Kalau petani atau penambang kehabisan bahan untuk cangkul/beliungnya sendiri,
-mereka memasang **permintaan bantuan** (bukan cuma diam). Companion **Mode
-Merajin** milik pemilik yang sama membaca permintaan itu, menempakan alatnya
+Membaca permintaan **alat** dan **barang** milik pemilik yang sama, menempanya
 dari bahan di **peti perajin sendiri** (bukan peti si peminta), lalu **berjalan
-mengantarnya** ke peti companion yang memintanya. Kalau bahan di peti perajin
-tidak cukup, dia menunggu sampai kamu mengisinya.
+mengantarnya** ke peti companion yang memintanya.
+
+Alat yang ditempanya selalu **tepat satu tingkat di atas** alat yang sedang
+dipegang si peminta — jadi urutan kayu → batu → besi tetap dilalui, tidak ada
+yang tiba-tiba dikirimi beliung besi. Kalau bahannya kurang, perajin sendiri yang
+memasang permintaan bahan ke Mencari Barang.
+
+Meja kerja adalah alat kerja utamanya: kalau di sekitar tidak ada satu pun,
+**dialah yang membuatnya** — asal punya empat papan.
 
 ### Mencari Barang
 
-Menebang pohon (batang ke atas selama masih log, seperti menebang beneran),
-menggali batu permukaan (batu, andesit, diorit, granit, kerikil, tanah), dan
-memungut barang yang tergeletak — semuanya di radius yang jauh lebih kecil
-daripada Mengembara, karena tugasnya menopang markas, bukan menjelajah. Hasilnya
-diantar ke peti **Merajin** kalau ada, atau ke peti **Pembangun** kalau tidak,
-atau ke peti sendiri kalau keduanya tidak ada.
+Membaca permintaan **bahan** dan pergi mencari **yang diminta**, bukan asal
+menebang apa pun yang lewat: kayu dari batang pohon, batu dan tanah dari
+permukaan, besi dan arang dari urat bijih yang terlihat, ditambah barang apa pun
+yang tergeletak di tanah. Setelah cukup, bahannya **diantar langsung ke peti si
+pemesan**.
+
+Kalau tidak ada permintaan sama sekali, dia tetap bekerja: mengumpulkan stok kayu
+dan batu ke petinya sendiri.
 
 ---
 
@@ -352,19 +426,37 @@ jadi ini bukan cuma basa-basi.
 
 ### Ngobrol dengan pemain
 
-Bedrock tidak bisa mendaftarkan command kustom (`/chat ...`) tanpa menyalakan
-*Beta APIs* eksperimental, dan add-on ini sengaja dibuat supaya **tidak perlu
-eksperimen apa pun**. Jalan tengahnya: ketik kalimat biasa di chat — **tanpa
-garis miring** — berformat
+Ada **tiga cara**, semuanya jalan tanpa menyalakan *Beta APIs* eksperimental:
 
 ```
-chat <nama> <pesan>
+/scriptevent vbs:chat <nama> <pesan>      perintah garis miring sungguhan
+chat <nama> <pesan>                       diketik biasa di kotak chat
+!<nama> <pesan>                           singkatnya
 ```
 
-misalnya `chat Kohane lagi ngapain?`. Pesannya tidak tersiar ke chat umum;
-companion bernama itu (harus milikmu) akan membalas lewat gelembung/chat
-seperti biasa. Dia mengerti beberapa kata kunci — sapaan, "ngapain"/"status",
-"makasih", "capek" — dan sisanya dibalas dengan kalimat umum sesuai karakternya.
+Bedrock tidak mengizinkan add-on mendaftarkan perintah `/chat` sendiri tanpa
+eksperimen, tapi `/scriptevent` adalah perintah garis miring **bawaan Minecraft**
+yang memang disediakan untuk keperluan ini. Perintah itu butuh izin operator;
+pemain biasa memakai bentuk `chat <nama> <pesan>` yang tidak butuh izin apa pun.
+
+Nama **`semua`** mengirim pesan ke seluruh companion milikmu sekaligus.
+
+Pesannya tidak tersiar ke chat umum. Companion yang dituju membalas lewat
+gelembung/chat seperti biasa, dan **perintah kerja yang diselipkan di dalam
+kalimat langsung dituruti**:
+
+| Kamu ketik | Yang terjadi |
+|---|---|
+| `chat Kohane lagi ngapain?` | Melaporkan pekerjaan, tenaga, dan kantuknya |
+| `chat Akito bertani dong` | Pindah ke Mode Bertani, lalu menjawab |
+| `chat Toya butuh apa?` | Menyebutkan bahan yang sedang dia tunggu |
+| `chat An ikut aku` | Pindah ke Mode Ikuti Aku |
+| `chat semua istirahat` | Semua companion menjawab soal kondisinya |
+
+Kata kunci lain yang dikenali: sapaan, "makasih", "capek"/"ngantuk", "dadah".
+Arah sebaliknya — companion ke pemain — sudah jalan sejak awal: laporan panen,
+permintaan bahan, tawaran membangun kampung, dan celoteh biasa semuanya sampai ke
+chat pemiliknya.
 
 Tiap karakter punya suaranya sendiri. Akito pendek dan ketus, Kohane ragu-ragu dan
 sopan, An santai, Toya rapi dan menghitung, Flins formal. Semua dialognya ada di
@@ -427,25 +519,87 @@ mana pun bisa dipindah tanpa menyentuh kode.
 
 ---
 
-## Energi dan istirahat
+## Tenaga, lelah, dan kantuk
 
-Companion tidak bisa kerja terus-menerus. Setiap mode kerja (bertani, menambang,
-membangun, mengembara, bertarung, merajin, mencari barang — **bukan** mengikuti
-atau diam di tempat) menguras tenaga sedikit demi sedikit, kira-kira lima menit
-kerja terus sebelum habis.
+Companion tidak bisa kerja terus-menerus. Ada **dua ukuran yang berjalan
+berdampingan**, dan keduanya terlihat sebagai bilah di menu utama:
 
-Begitu tenaganya rendah, dia berhenti dari pekerjaannya dan mencari tempat
-istirahat, urutannya:
+| Ukuran | Naik/turun karena | Pulih dengan |
+|---|---|---|
+| **Tenaga** | terkuras karena **bekerja** | istirahat, atau mengobrol |
+| **Kantuk** | naik karena **waktu berjalan**, jauh lebih cepat di malam hari | tidur |
 
-1. **Rumah desa** milik pemilik yang sama, kalau sudah ada (lihat *Membangun
-   kampung* di atas).
-2. **Stasiunnya sendiri**, kalau belum ada rumah desa.
-3. **Pohon terdekat**, kalau belum punya stasiun juga.
+### Kehabisan tenaga
 
-Sampai di sana dia diam sambil mengantuk (`FACE.sleepy`) sampai tenaganya pulih,
-lalu lanjut ke pekerjaan yang tadi dijeda. **Ngobrol sebentar dengan companion
-lain** juga memulihkan sedikit tenaga — jadi istirahat tidak harus selalu tidur.
-Baris "Sekarang" di menu utama menunjukkan **Tenaga** companion kapan saja.
+Setiap mode kerja (bertani, menambang, membangun, mengembara, bertarung, merajin,
+mencari barang — **bukan** mengikuti atau diam di tempat) menguras tenaga sedikit
+demi sedikit, kira-kira lima menit kerja terus sebelum habis. Begitu habis, dia
+berhenti dan mencari tempat istirahat: **rumah desa** kalau sudah ada,
+**stasiunnya sendiri**, lalu **bawah pohon terdekat**.
+
+**Ngobrol sebentar dengan companion lain juga memulihkan tenaga** — jadi istirahat
+tidak harus selalu berbaring, dan obrolan mereka bukan cuma hiasan.
+
+### Mengantuk
+
+Kantuk naik terus seiring waktu dan memuncak di malam hari. Companion yang sudah
+sangat mengantuk **berhenti bekerja walaupun tenaganya masih penuh**, lalu pergi
+mencari tempat tidur:
+
+1. **Ranjang di rumah desa** yang dibangun Pembangun (lihat *Membangun kampung*),
+   yang paling dekat.
+2. **Ranjang apa pun** dalam 12 blok.
+3. **Bawah pohon**, kalau tidak ada ranjang sama sekali.
+4. **Stasiunnya sendiri**, sebagai pilihan terakhir.
+
+Dia bangun kalau kantuknya sudah reda dan hari sudah tidak malam lagi. Companion
+yang sedang dikepung musuh menunda istirahat dan tidurnya sampai aman — biar tidak
+mati sambil terkantuk-kantuk.
+
+Menu utama menampilkan **Tenaga**, **Kantuk**, dan satu baris **Kondisi** (segar /
+kelelahan / mengantuk / sedang istirahat / sedang tidur). Bisa juga ditanya
+langsung lewat chat: `chat <nama> ngapain?`.
+
+---
+
+## Menyembunyikan nama pemilik
+
+Penanda di atas kepala companion dan papan nama di stasiunnya biasanya menyebut
+siapa pemiliknya. Di server, itu berarti pemain lain tahu companion itu punya
+siapa. Ada **dua saklar** di **Pengaturan**:
+
+| Saklar | Cakupannya |
+|---|---|
+| **Nama pemilik (dia saja)** | Hanya companion yang sedang dibuka menunya |
+| **Nama pemilik (SEMUA milikku)** | Seluruh companion milikmu sekaligus |
+
+Kalau dimatikan, nama pemilik hilang dari **penanda kepala** dan dari **papan
+stasiun** — jadi tidak ada pemain lain di server yang bisa tahu itu punya siapa.
+Setelan menyeluruh disimpan per pemain, jadi companion baru yang kamu jinakkan
+sesudahnya ikut menyembunyikan pemiliknya sejak awal.
+
+---
+
+## Kalau ada yang salah: catatan kejadian
+
+Setiap kejadian dicatat: event dunia, tiap langkah kerja, tiap percabangan
+keputusan, dan setiap kegagalan API Minecraft — lengkap dengan nomor tick, nama
+modul, dan posisi bloknya. Catatannya masuk ke **content log** Minecraft, dan
+karena content log tidak selalu bisa dibaca pemain (apalagi di HP dan di server),
+**500 baris terakhir juga bisa dibaca dari dalam game**:
+
+> Jongkok + klik companion » **Pengaturan & Perlengkapan** » **Catatan Kejadian (Log)**
+
+Di situ ada ringkasan berapa info/peringatan/error yang tercatat, baris-baris
+terakhirnya, dan satu saklar **kirim peringatan & error ke chat** — kalau
+dinyalakan, setiap WARN dan ERROR langsung muncul di chatmu begitu terjadi, jadi
+masalah ketahuan saat kejadian, bukan setelah kamu curiga.
+
+Selain itu **setiap listener event dan setiap denyut dibungkus penangkap error**.
+Ini penting: di Bedrock, satu callback yang melempar tanpa ditangkap membuat
+Minecraft mematikan **seluruh** mesin skrip add-on — semua fitur mati sekaligus,
+diam-diam. Sekarang kesalahan seperti itu tercatat lengkap dengan nama jalurnya
+dan sisanya tetap jalan.
 
 ---
 
@@ -494,7 +648,9 @@ python3 gen_textures.py      # -> semua PNG (tekstur 1024x1024, spawn egg, patok
 python3 gen_packs.py         # -> manifest, entity behavior + resource, render controller, lang
 python3 render_preview.py    # -> docs/preview/*.png
 python3 validate.py          # periksa semua kaitan antar berkas
-python3 build_mcaddon.py     # -> VBS-Companions-v1.3.0-BP.mcaddon dan -RP.mcaddon
+python3 build_mcaddon.py     # -> VBS-Companions-v1.4.0-BP.mcaddon dan -RP.mcaddon
+
+cd sim && ./run.sh           # jalankan otak companion di luar Minecraft
 ```
 
 Butuh Python 3 dan Pillow (`pip install pillow`). Hasil generatornya ikut di-commit,
@@ -510,6 +666,7 @@ jadi orang yang cuma mau memasang add-on ini tidak perlu Python sama sekali.
 | `tools/gen_packs.py` | Entity, entity property, priority goal, render controller, manifest |
 | `tools/render_preview.py` | Renderer ortografis + z-buffer, untuk gambar preview |
 | `tools/validate.py` | 2400+ pemeriksaan kaitan antar berkas |
+| `tools/sim/` | Menjalankan skrip add-on di luar Minecraft dan memeriksa hasil kerjanya |
 
 `validate.py` memeriksa hal-hal yang biasanya baru ketahuan setelah add-on dipasang:
 identifier entity behavior vs resource vs script vs teks, bone yang disebut animasi
@@ -520,6 +677,33 @@ daftar mode dan pose di `config.js` yang melenceng dari `gen_packs.py`, dan —
 yang paling menolong — **priority goal yang kembar**. Priority kembar tidak
 memunculkan galat apa pun; Bedrock diam-diam memilih satu goal dan mengabaikan
 sisanya, dan itulah yang dulu membuat mode bertarung tidak melakukan apa-apa.
+
+### Uji perilaku di luar Minecraft
+
+`validate.py` memeriksa *kaitan antar berkas*, tapi tidak bisa menjawab "apakah
+petaninya benar-benar mengairi ladang sebelum mencangkul". Untuk itu ada
+`tools/sim/`:
+
+```bash
+cd tools/sim && ./run.sh      # butuh Node.js 18+
+```
+
+API Minecraft ditiru (`stub/`) di atas dunia voxel kecil (`world.mjs`), lalu
+**modul asli add-on dijalankan apa adanya** di atasnya. Yang diperiksa:
+
+- **Seluruh modul benar-benar bisa ditautkan.** Ini pemeriksaan terpenting di
+  sini: satu nama ekspor yang salah membuat Minecraft membatalkan seluruh mesin
+  skrip begitu dunia dibuka, tanpa pesan yang terlihat pemain — semua fitur mati
+  sekaligus dan tidak ada petunjuk kenapa. Persis itulah yang terjadi di v1.3.0.
+- Petani meratakan lahan, menggali parit, membuat ember, mengairi, dan
+  **tidak pernah meninggalkan satu pun farmland yang kering**.
+- Penambang menggali lorong **1×3** dan menaiki tingkat alat satu per satu
+  (kayu → batu → besi), walaupun peti penuh besi sejak awal.
+- Pencari barang dan perajin benar-benar melayani permintaan companion lain
+  sampai barangnya masuk ke peti si pemesan.
+- Tenaga terkuras dan kantuk naik sampai companion berhenti bekerja.
+
+Keluar dengan kode 1 kalau ada pemeriksaan yang gagal, jadi bisa dipasang di CI.
 
 ### Script behavior pack
 
@@ -533,21 +717,24 @@ sisanya, dan itulah yang dulu membuat mode bertarung tidak melakukan apa-apa.
 | `nametag.js` | Penanda `[Nama, tugas, Owner]` (atau `[Nama, liar]`) dan gelembung teks |
 | `chat.js` | Gelembung untuk yang dekat, chat untuk yang jauh |
 | `look.js` | Berhenti dan tersenyum saat dilihat |
-| `station.js` | Peti dan papan stasiun |
+| `station.js` | Peti dan papan stasiun — keduanya butuh bahan, dan didaftarkan sebagai stasiun companion |
+| `bag.js` | Kantong pribadi berbentuk peti, dipakai selama peti sungguhan belum mampu dibuat |
+| `items.js` | Resep barang non-alat (ember, peti, papan, meja kerja, obor) dan penghitungan bahannya |
 | `crafting.js` | Membuat alat di meja kerja dari bahan di peti, tier demi tier |
 | `claim.js` | Patok ladang & patok desa, penanda chunk, pancaran merah/hijau |
-| `farming.js` | Mode bertani, termasuk meratakan lahan sebelum mencangkul |
+| `farming.js` | Mode bertani sebagai mesin fase: ratakan, airi, cangkul, tanam, rawat |
 | `decorate.js` | Menghias sawah |
 | `mining.js` | Mode menambang (terowongan 1×3) |
 | `wander.js` | Mode mengembara |
 | `builder.js` | Mode membangun, rancangannya, dan rumah desa |
 | `combat.js` | Mode bertarung, pemilihan senjata, pose |
 | `social.js` | Obrolan antar companion |
-| `crafter.js` | Mode Merajin: menempa dan mengantar alat untuk companion lain |
-| `looter.js` | Mode Mencari Barang: kayu, batu, barang tergeletak |
-| `requests.js` | Papan permintaan bantuan alat antara petani/penambang dan perajin |
-| `energy.js` | Tenaga, kelelahan, dan pencarian tempat istirahat |
-| `usertalk.js` | Chat dua arah: pemain mengetik `chat <nama> <pesan>` |
+| `crafter.js` | Mode Merajin: menempa alat dan barang pesanan, lalu mengantarnya |
+| `looter.js` | Mode Mencari Barang: mencari bahan yang diminta dan mengantarnya |
+| `requests.js` | Papan permintaan: alat, barang jadi, dan bahan mentah |
+| `energy.js` | Tenaga, kantuk, tidur di ranjang rumah desa |
+| `usertalk.js` | Chat dua arah: `/scriptevent vbs:chat`, `chat <nama> <pesan>`, `!<nama>` |
 | `activity.js` | Keterangan "sedang apa" yang tampil di menu |
 | `ui.js` | Semua layar |
+| `logger.js` | Pencatatan verbose, ring buffer, dan `guard()` pembungkus setiap event |
 | `main.js` | Denyut dan penyaluran; tidak berisi logika kerja apa pun |

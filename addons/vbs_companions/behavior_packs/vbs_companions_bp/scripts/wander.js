@@ -14,7 +14,7 @@ import {
   alive, blockAt, dist2, distXZ, face, isAir, isSolid, makeItem, pick, putIn,
   sound, steer,
 } from "./util.js";
-import { entStr, logDebug, logInfo, logWarn, posStr } from "./logger.js";
+import { entStr, logDebug, logInfo, posStr } from "./logger.js";
 
 const TAG = "WANDER";
 const START_RADIUS = 40;

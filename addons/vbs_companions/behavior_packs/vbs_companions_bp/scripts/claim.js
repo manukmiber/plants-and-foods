@@ -9,6 +9,13 @@ import {
 import {
   claimKey, clearClaim, getClaim, readClaims, setClaim,
 } from "./state.js";
+
+// farming.js dan builder.js membaca ketinggian patok lewat getClaim, dan
+// mengambilnya dari sini. Tanpa re-export ini, Minecraft gagal MENAUTKAN
+// modulnya — seluruh mesin skrip add-on mati diam-diam begitu dunia dibuka,
+// jadi semua fitur "tidak jalan" sekaligus. Ini akar dari sebagian besar
+// keluhan itu.
+export { getClaim };
 import {
   blockAt, chunkCenter, chunkOf, dist2, give, isSolid, makeItem, particle, sound,
 } from "./util.js";

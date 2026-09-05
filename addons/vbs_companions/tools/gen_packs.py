@@ -32,7 +32,7 @@ import model
 BP = os.path.join(model.HERE, "..", "behavior_packs", "vbs_companions_bp")
 RP = os.path.join(model.HERE, "..", "resource_packs", "vbs_companions_rp")
 
-VERSION = [1, 3, 0]
+VERSION = [1, 4, 0]
 MIN_ENGINE = [1, 21, 0]
 
 # UUID ini adalah identitas pack di mata Minecraft. JANGAN diubah setelah dirilis:
@@ -272,16 +272,28 @@ def entity_doc(char):
         "minecraft:behavior.random_look_around": {"priority": PRIORITY["random_look_around"]},
     }
 
+    # ATURAN PENTING untuk seluruh mode KERJA (bertani, menambang, mengembara,
+    # membangun, merajin, mencari barang): mereka TIDAK BOLEH punya satu pun
+    # goal gerak bawaan — tidak follow_owner, tidak random_stroll, tidak
+    # move_to_block. Gerak saat bekerja sepenuhnya dipegang script (steer() di
+    # util.js), yang tahu persis petak mana yang sedang dikerjakan.
+    #
+    # Dulu mode kerja tetap memasang follow_owner, dan akibatnya companion
+    # ditarik balik ke pemain tiap kali menjauh sedikit: mereka terus mengekor
+    # dan tidak pernah menyelesaikan pekerjaan. random_stroll dan move_to_block
+    # sama buruknya — keduanya menyeret companion menjauh dari titik yang sudah
+    # dipilih script, jadi companion cuma bergetar di tempat.
+    #
+    # Hanya "Ikuti Aku" (dan "Bertarung", yang memang tugasnya menjaga pemain)
+    # yang boleh mendekat sendiri.
     component_groups = {
         "vbs:mode_follow": {
             "minecraft:behavior.follow_owner": follow_owner(1.15, 4.0, 2.0),
             "minecraft:behavior.random_stroll": stroll(0.7, xz=6, y=4),
         },
-        "vbs:mode_farm": {
-            "minecraft:behavior.move_to_block": move_to_block(CROP_BLOCKS),
-            "minecraft:behavior.follow_owner": follow_owner(1.0, 18.0, 10.0),
-            "minecraft:behavior.random_stroll": stroll(0.6, xz=8, y=3),
-        },
+        # Semua gerak bertani dipegang script: ratakan, gali parit, cangkul,
+        # tanam, panen — masing-masing punya petak tujuannya sendiri.
+        "vbs:mode_farm": {},
         "vbs:mode_attack": {
             # Tiga pemilih sasaran, tiga priority berbeda: dibalas duluan yang
             # menyerang pemiliknya, lalu yang dipukul pemiliknya, baru monster
@@ -305,36 +317,22 @@ def entity_doc(char):
                                  "value": "slime"}, "max_dist": 20},
                 ],
             },
-            "minecraft:behavior.follow_owner": follow_owner(1.2, 10.0, 4.0),
+            # Bertarung boleh mendekat sendiri — itu memang gunanya menjaga —
+            # tapi jaraknya dilonggarkan supaya tidak menyeret companion keluar
+            # dari arena yang sedang dibersihkan script.
+            "minecraft:behavior.follow_owner": follow_owner(1.2, 16.0, 8.0),
             "minecraft:behavior.random_stroll": stroll(0.7, xz=5, y=3),
         },
         # Diam di tempat = tidak ada satu pun goal gerak.
         "vbs:mode_stay": {},
-        "vbs:mode_mine": {
-            "minecraft:behavior.move_to_block": move_to_block(ORE_BLOCKS, 14, 6, 2.5),
-            "minecraft:behavior.follow_owner": follow_owner(1.0, 24.0, 12.0),
-            "minecraft:behavior.random_stroll": stroll(0.7, xz=8, y=6, interval=60),
-        },
-        "vbs:mode_wander": {
-            # Pengembara sengaja tidak punya follow_owner: tugasnya menjauh.
-            # Yang menariknya pulang adalah script, bukan goal.
-            "minecraft:behavior.random_stroll": stroll(1.0, xz=16, y=8, interval=40),
-        },
-        "vbs:mode_build": {
-            "minecraft:behavior.follow_owner": follow_owner(1.0, 16.0, 8.0),
-            "minecraft:behavior.random_stroll": stroll(0.6, xz=6, y=3),
-        },
-        "vbs:mode_crafter": {
-            # Perajin menempa di dekat stasiunnya sendiri; tidak perlu jauh-jauh.
-            "minecraft:behavior.follow_owner": follow_owner(1.0, 16.0, 8.0),
-            "minecraft:behavior.random_stroll": stroll(0.6, xz=6, y=3),
-        },
-        "vbs:mode_looter": {
-            # Sengaja tidak punya follow_owner, sama seperti pengembara — tapi
-            # radius stroll-nya jauh lebih kecil karena tugasnya di sekitar
-            # markas, bukan menjelajah jauh.
-            "minecraft:behavior.random_stroll": stroll(0.8, xz=10, y=5, interval=50),
-        },
+        # Menambang: script yang memilih blok berikutnya dan menyeret companion
+        # ke sana. move_to_block bawaan justru menariknya ke bijih acak di luar
+        # terowongan dan merusak bentuk lorongnya.
+        "vbs:mode_mine": {},
+        "vbs:mode_wander": {},
+        "vbs:mode_build": {},
+        "vbs:mode_crafter": {},
+        "vbs:mode_looter": {},
         # --- senjata: dipilih script dari isi tangan companion ---------------
         "vbs:weapon_melee": {
             "minecraft:behavior.melee_attack": {

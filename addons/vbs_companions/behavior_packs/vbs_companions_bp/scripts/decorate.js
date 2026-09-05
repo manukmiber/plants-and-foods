@@ -8,7 +8,7 @@ import {
   alive, blockAt, countIn, dist2, face, isAir, isSolid, particle, sound, steer,
   takeFrom,
 } from "./util.js";
-import { entStr, logDebug, logInfo, logWarn, posStr } from "./logger.js";
+import { entStr, logDebug, logInfo, logWarn } from "./logger.js";
 
 const TAG = "DECORATE";
 const FENCES = [

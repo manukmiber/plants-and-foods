@@ -6,6 +6,127 @@ reconstructed afterwards, which is why the builder refuses to save without one.
 
 ## Unreleased
 
+### VBS Companions v1.4.0
+
+Pemeriksaan ulang seluruh pekerjaan v1.3.0 — banyak fitur yang seharusnya ada di
+sana ternyata tidak pernah berjalan sama sekali. Rilis ini memperbaiki akarnya,
+menambahkan uji otomatis yang menjalankan otak companion di luar Minecraft, dan
+menuntaskan permintaan yang tersisa.
+
+**Akar masalah "semuanya tidak jalan":**
+
+- **`farming.js` meng-import `getClaim` dari `claim.js`, tapi `claim.js` tidak
+  pernah meng-ekspornya.** Di Bedrock ini kegagalan *penautan modul*: Minecraft
+  membatalkan seluruh mesin skrip add-on begitu dunia dibuka, tanpa pesan yang
+  terlihat pemain. Jadi bukan cuma bertani yang mati — SEMUA fitur ikut mati,
+  termasuk yang v1.3.0 klaim sudah diperbaiki. Sekarang di-re-export, dan ada
+  uji otomatis yang menautkan semua modul supaya kesalahan sejenis ketahuan
+  sebelum dipasang.
+- **`getGear()` selalu mengembalikan tangan kosong.** Entity memakai
+  `minecraft:equippable` dengan daftar slot kosong, jadi `getEquipment()` selalu
+  `undefined` walaupun alatnya benar-benar terpasang lewat `replaceitem`. Versi
+  lama tidak pernah melirik catatan di dynamic property, akibatnya `toolRank()`
+  selalu 0: companion mengira dirinya belum punya alat dan menempa ulang alat
+  tingkat terendah tanpa henti.
+- **Semua mode kerja masih memasang `minecraft:behavior.follow_owner`.** Inilah
+  sebabnya companion terus mengekor pemain alih-alih bekerja, walaupun leash
+  script sudah dibatasi ke mode Ikuti Aku. `follow_owner`, `random_stroll` dan
+  `move_to_block` dicabut dari seluruh component group mode kerja; gerak saat
+  bekerja sepenuhnya dipegang script.
+
+**Bertani (keluhan 1, 2, 5):**
+
+- Ladang dikerjakan sebagai **mesin fase berurutan**: ratakan seluruh petak ke
+  satu ketinggian, gali parit sepanjang kolomnya, buat/isi ember di sungai,
+  tuang air, baru mencangkul, lalu menanam, lalu merawat. Versi lama mencampur
+  semuanya dalam satu sapuan sehingga tanah dicangkul lebih dulu dan paritnya
+  belakangan — itulah petak yang "rusak karena tidak dapat supply air".
+- **Tidak ada satu petak pun dicangkul sebelum benar-benar ada air yang
+  menjangkaunya** (dicek persis seperti aturan Minecraft: air dalam 4 blok
+  mendatar, setinggi atau satu di atas farmland).
+- **Paritnya benar-benar digali utuh**, bukan cuma dilubangi di titik sumbernya.
+  Tanpa itu air terkurung di satu lubang dan baris di antaranya tetap kering.
+- **Embernya benar-benar dibuat** dari tiga batang besi di meja kerja, lalu
+  dibawa ke sungai untuk diisi dan dituang ke parit. Kalau besinya tidak ada,
+  petani memasang permintaan ke perajin dan pencari barang.
+- **Tanah galian disimpan, tidak dibuang.** Gundukan yang dipangkas jadi bahan
+  menimbun cekungan di petak sebelah, jadi ladang bisa rata tanpa kiriman tanah.
+- Hasil panen tetap masuk **peti companion sendiri**, tidak pernah ke kantong
+  pemain — dan peti itu sekarang benar-benar miliknya (lihat di bawah).
+
+**Menambang (keluhan 3, 4):**
+
+- Terowongan **1×3 sungguhan**. Versi lama membatalkan SELURUH kolom galian
+  kalau satu sel saja berisi blok di luar daftar putih `DIGGABLE` — satu blok
+  basalt setinggi kepala sudah cukup membuat lorongnya menyempit dan berkelok.
+  Sekarang tiap sel diurus sendiri-sendiri dan yang boleh ditolak hanya blok
+  terlindungi dan lava.
+- **Naik tingkat alat satu per satu, tanpa terkecuali.** Beliung berikutnya
+  selalu TEPAT satu tingkat di atas yang dipegang; kalau bahannya belum ada,
+  companion meminta bahan itu alih-alih melompat ke besi yang kebetulan ada di
+  peti. Alat tingkat tinggi yang nyasar ke peti sengaja dilewati.
+
+**Peran baru dan rantai bantuan (keluhan 7, 8, 10):**
+
+- Papan permintaan digeneralkan jadi tiga jenis: `tool` (alat), `item` (ember,
+  peti, papan nama, meja kerja, obor) dan `material` (kayu, batu, besi, tanah,
+  arang, bibit). Perajin melayani dua yang pertama, **pencari barang** melayani
+  yang ketiga dan mengantar hasilnya langsung ke peti pemesan.
+- **Peti, papan nama, meja kerja dan ember tidak lagi muncul dari udara.**
+  Semuanya butuh bahannya dulu — peti delapan papan, papan nama enam papan dan
+  satu stik, meja kerja empat papan, ember tiga besi. Selama petinya belum
+  mampu dibuat, companion bekerja memakai **kantong pribadi** yang bentuknya
+  sama persis dengan peti (`bag.js`), dan isinya dipindahkan begitu peti berdiri.
+- Companion tidak lagi menyerobot peti pemain yang kebetulan ada di dekat situ.
+  Yang boleh dipakai bersama hanya peti yang terdaftar sebagai stasiun companion
+  milik pemilik yang sama.
+
+**Hidup dan suara (keluhan 9, 12, 15):**
+
+- **Tenaga dan kantuk berjalan terpisah.** Tenaga terkuras karena bekerja dan
+  pulih dengan beristirahat (di stasiun, di bawah pohon, atau sambil mengobrol);
+  kantuk naik karena waktu berjalan dan memuncak di malam hari, dan hanya reda
+  dengan tidur di ranjang rumah desa, di bawah pohon, atau di stasiun.
+- **Jauh lebih banyak obrolan**: puluhan baris baru per karakter, sepuluh topik
+  obrolan baru, sapaan pagi dan malam, dan jeda celoteh dipangkas dari 1400 ke
+  420 tick.
+- **Ngobrol dua arah.** Pemain bisa memakai perintah garis miring sungguhan
+  `/scriptevent vbs:chat <nama> <pesan>`, atau mengetik biasa `chat <nama>
+  <pesan>` / `!<nama> <pesan>` kalau tidak punya izin operator. Nama `semua`
+  mengirim ke seluruh companion. Perintah kerja yang diselipkan di kalimat
+  ("ikut", "bertani", "istirahat") langsung dituruti.
+
+**Kampung dan pengaturan (keluhan 11, 14):**
+
+- **Pembangun mengajukan kampung sendiri** ke pemiliknya: dia menyapa lewat chat
+  lalu menaruh Patok Desa di kantong pemain, dan sesudah rumahnya berdiri dia
+  mengumumkan letak ranjangnya supaya companion lain tidur di sana.
+- **Saklar nama pemilik** punya dua tingkat: khusus satu companion, dan
+  menyeluruh untuk semua companion milik pemain itu. Kalau dimatikan, nama
+  pemilik hilang dari penanda kepala DAN dari papan stasiun, jadi tidak ada
+  pemain lain di server yang bisa tahu itu punya siapa.
+
+**Ketahanan dan pencatatan (keluhan 16):**
+
+- Setiap listener event dan setiap denyut interval dibungkus `guard()`. Satu
+  callback yang melempar tanpa ditangkap membuat Minecraft mematikan seluruh
+  mesin skrip; sekarang error-nya tercatat lengkap dengan nama jalurnya dan
+  sisanya tetap jalan.
+- Log disimpan di ring buffer dan bisa dibaca **dari dalam game** (Pengaturan »
+  Catatan Kejadian), lengkap dengan saklar untuk mengirim setiap WARN/ERROR ke
+  chat — content log Minecraft tidak selalu bisa dibaca pemain di HP dan server.
+- **Companion tidak bisa lagi terkubur atau mentok selamanya.** Ada pengangkat
+  otomatis kalau kakinya tertimbun, deteksi kemacetan kalau langkahnya tidak
+  maju, dan air dangkal sekarang boleh diarungi — tanpa itu petani terkurung di
+  balik parit irigasi yang baru saja dia gali sendiri.
+- Sapuan pencarian pencari barang dipotong per denyut (dari >10.000 pembacaan
+  blok tiap setengah detik jadi 700) supaya dunia tidak tersendat.
+
+**Uji otomatis baru:** `addons/vbs_companions/tools/sim/run.sh` menjalankan
+seluruh modul add-on di atas API Minecraft tiruan dan dunia voxel kecil, lalu
+memeriksa hasil kerjanya — 22 pemeriksaan, termasuk "tidak ada farmland yang
+kering", "lorong benar-benar 1×3", dan "beliung pertama harus kayu".
+
 ### VBS Companions v1.3.0
 
 Rombakan besar berdasarkan 16 keluhan/permintaan pemain: bug bertani dan

@@ -4,8 +4,8 @@
 
 Menghasilkan DUA berkas, bukan satu gabungan:
 
-    VBS-Companions-v1.3.0-BP.mcaddon    behavior pack
-    VBS-Companions-v1.3.0-RP.mcaddon    resource pack
+    VBS-Companions-v1.4.0-BP.mcaddon    behavior pack
+    VBS-Companions-v1.4.0-RP.mcaddon    resource pack
 
 Dipisah supaya tiap pack bisa diurus sendiri — di server, behavior pack dan
 resource pack memang masuk ke folder yang berbeda dan didaftarkan di berkas yang
@@ -26,7 +26,7 @@ import zipfile
 import model
 
 ROOT = os.path.abspath(os.path.join(model.HERE, ".."))
-VERSION = "1.3.0"
+VERSION = "1.4.0"
 
 PACKS = [
     ("BP", os.path.join(ROOT, "behavior_packs", "vbs_companions_bp")),

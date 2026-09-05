@@ -16,7 +16,7 @@ teksturnya (1024×1024) digambar dari nol untuk add-on ini.
 
 ### Di HP / PC (client)
 
-Buka **`VBS-Companions-v1.0.0.mcaddon`** yang ada di folder ini. Minecraft memasang
+Buka **`VBS-Companions-v1.1.0.mcaddon`** yang ada di folder ini. Minecraft memasang
 kedua pack sekaligus. Lalu di pengaturan dunia, aktifkan **VBS Companions [Behavior]**
 dan **[Resource]**.
 
@@ -26,7 +26,7 @@ API versi stabil.
 ### Di dedicated server (BDS)
 
 ```bash
-unzip VBS-Companions-v1.0.0.mcaddon -d /tmp/vbs
+unzip VBS-Companions-v1.1.0.mcaddon -d /tmp/vbs
 cp -r /tmp/vbs/vbs_companions_bp  <server>/behavior_packs/
 cp -r /tmp/vbs/vbs_companions_rp  <server>/resource_packs/
 ```
@@ -106,6 +106,39 @@ Companion **tidak bisa dilukai pemain**, jadi pukulan nyasar tidak akan membunuh
 
 </details>
 
+### Kohane punya model yang lebih detail
+
+Kohane memakai bentuk badan **"detailed"**: rambut berlapis dengan poni yang
+benar-benar dipotong tembus supaya wajah kelihatan di baliknya, jurai samping,
+ekor rambut dua ruas yang ujungnya tertinggal sepersekian detik dari kepala, rok
+empat panel yang berayun sendiri-sendiri, sepatu tinggi, dan **delapan ekspresi
+wajah**.
+
+![Ekspresi Kohane](docs/preview/kohane-faces.png)
+
+Wajahnya dipilih tiap frame dari apa yang sedang terjadi padanya:
+
+| Kapan | Wajah |
+|---|---|
+| baru kena pukul | hurt |
+| sedang bertarung, atau sedang di udara | surprised |
+| kira-kira tiap 4,6 detik, sekejap | blink |
+| berlari | sing |
+| berjalan | happy |
+| diam lama | sleepy |
+| diam, sesekali | smile |
+| selebihnya | neutral |
+
+Delapan wajah itu adalah delapan bidang bertumpuk di tempat yang sama; satu baris
+Molang di `scripts.pre_animation` memilih indeksnya dan `part_visibility` di render
+controller menyembunyikan sisanya. **Semuanya jalan di klien** — tidak ada satu pun
+tick server yang dipakai untuk ini, dan tidak ada apa pun yang jalan saat tidak ada
+yang melihat.
+
+Keempat karakter lain memakai bentuk **"classic"** yang lama, tidak berubah
+sedikit pun. Bentuk badan dipilih lewat `style.build` di `characters.json`, jadi
+karakter mana pun bisa dipindah ke bentuk detail tanpa menyentuh kode.
+
 ---
 
 ## Yang perlu diketahui
@@ -137,7 +170,7 @@ python3 gen_textures.py      # -> semua PNG (tekstur 1024x1024, spawn egg, pack 
 python3 gen_packs.py         # -> manifest, entity behavior + resource, lang
 python3 render_preview.py    # -> docs/preview/*.png
 python3 validate.py          # periksa semua kaitan antar berkas
-python3 build_mcaddon.py     # -> VBS-Companions-v1.0.0.mcaddon
+python3 build_mcaddon.py     # -> VBS-Companions-v1.1.0.mcaddon
 ```
 
 Butuh Python 3 dan Pillow (`pip install pillow`). Hasil generatornya ikut di-commit,
@@ -146,10 +179,12 @@ jadi orang yang cuma mau memasang add-on ini tidak perlu Python sama sekali.
 | Berkas | Isinya |
 |---|---|
 | `tools/characters.json` | Satu-satunya sumber kebenaran: palet, gaya, statistik |
-| `tools/uvmap.py` | Peta UV 1024×1024, 8 texel per satuan model |
-| `tools/model.py` | Bentuk tiap karakter: bone dan kubusnya |
+| `tools/uvmap.py` | Peta UV 1024×1024, 8 texel per satuan model — dua tabel: classic dan detailed |
+| `tools/model.py` | Bentuk tiap karakter: bone dan kubusnya, kedua build |
+| `tools/paint.py` | Kuas dasar: satu Face = satu sisi kubus, koordinat pecahan |
+| `tools/detailed.py` | Penggambar build detailed, termasuk delapan wajah |
 | `tools/render_preview.py` | Renderer ortografis + z-buffer, untuk gambar preview |
-| `tools/validate.py` | 1000+ pemeriksaan kaitan antar berkas |
+| `tools/validate.py` | 1200+ pemeriksaan kaitan antar berkas |
 | `behavior_packs/.../scripts/` | UI, mode, mode bertani, tali penarik |
 
 `validate.py` memeriksa hal-hal yang biasanya baru ketahuan setelah add-on dipasang:

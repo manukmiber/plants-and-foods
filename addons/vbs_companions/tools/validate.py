@@ -89,6 +89,8 @@ def main():
 
     # 4. animasi menyebut bone yang benar-benar ada
     anims = load(os.path.join(RP, "animations", "vbs_companion.animation.json"))["animations"]
+    controllers = load(os.path.join(
+        RP, "render_controllers", "vbs_companion.render_controllers.json"))["render_controllers"]
     for anim_name, anim in anims.items():
         for bone in anim.get("bones", {}):
             for ident, bones in bones_per_geom.items():
@@ -130,6 +132,30 @@ def main():
         for entry in rp["scripts"]["animate"]:
             key = entry if isinstance(entry, str) else next(iter(entry))
             check(key in rp["animations"], f"{cid}: animate menyebut '{key}' yang tidak terdaftar")
+
+        # wajah: tiap bone ekspresi harus punya barisnya sendiri di
+        # part_visibility, dan variabel yang dipakainya harus benar-benar
+        # dihitung di pre_animation — kalau tidak, semua wajah tergambar
+        # sekaligus dan yang menang ditentukan z-buffer
+        faces = [b for b in bones_per_geom[rp["geometry"]["default"]]
+                 if b.startswith("face_")]
+        if faces:
+            ctrl_name = rp["render_controllers"][0]
+            ctrl = controllers.get(ctrl_name)
+            check(ctrl is not None, f"{cid}: render controller {ctrl_name} tidak ada")
+            if ctrl:
+                shown = {k for entry in ctrl.get("part_visibility", []) for k in entry
+                         if k != "*"}
+                check(shown == set(faces),
+                      f"{cid}: part_visibility tidak menyebut persis semua bone wajah")
+                pre = " ".join(rp["scripts"].get("pre_animation", []))
+                for entry in ctrl.get("part_visibility", []):
+                    for key, expr in entry.items():
+                        if key == "*":
+                            continue
+                        var = str(expr).split(" ")[0]
+                        check(var in pre,
+                              f"{cid}: {key} memakai {var} yang tidak dihitung pre_animation")
 
         egg = rp["spawn_egg"]["texture"]
         egg_png = os.path.join(RP, "textures", "items", f"{egg}.png")

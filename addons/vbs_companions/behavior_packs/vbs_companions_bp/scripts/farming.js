@@ -3,24 +3,63 @@
  */
 
 import { system } from "@minecraft/server";
+
 import {
-  BAND_WIDTH, CROPS, POSE, PROTECTED, SEEDS, TILLABLE, WATER,
+  BAND_WIDTH,
+  CROPS,
+  POSE,
+  PROTECTED,
+  SEEDS,
+  TILLABLE,
+  WATER,
 } from "./config.js";
+
 import { report, sayFrom } from "./chat.js";
 import { craftStep, labelOf } from "./crafting.js";
 import { decorateStep } from "./decorate.js";
 import { hold } from "./hold.js";
 import { isGreeting } from "./look.js";
-import { claimAt, chunkBounds, claimsNear, getClaim, markWorked } from "./state.js";
+
+import {
+  claimAt,
+  chunkBounds,
+  claimsNear,
+  getClaim,
+  markWorked,
+} from "./claim.js";
+
 import { maybeRequestHelp } from "./requests.js";
 import { patchState, writeState } from "./state.js";
 import { ensureStation, refreshSign } from "./station.js";
-import {
-  alive, blockAt, countIn, dist2, face, getGear, getOwnerId, info, isAir,
-  isSolid, makeItem, particle, putIn, randomBetween, sound, steer, takeFrom,
-} from "./util.js";
-import { entStr, logDebug, logError, logInfo, logWarn, posStr } from "./logger.js";
 
+import {
+  alive,
+  blockAt,
+  countIn,
+  dist2,
+  face,
+  getGear,
+  getOwnerId,
+  info,
+  isAir,
+  isSolid,
+  makeItem,
+  particle,
+  putIn,
+  randomBetween,
+  sound,
+  steer,
+  takeFrom,
+} from "./util.js";
+
+import {
+  entStr,
+  logDebug,
+  logError,
+  logInfo,
+  logWarn,
+  posStr,
+} from "./logger.js";
 const TAG = "FARMING";
 const BUCKETS = ["minecraft:bucket", "minecraft:water_bucket"];
 const IRON = "minecraft:iron_ingot";

@@ -256,7 +256,9 @@ async function openFarm(player, entity) {
     .title("§l§6Ladang & Patok")
     .body([
       "§7Patok menentukan sampai mana companion boleh menggarap.",
-      "§7Klik tanah pakai §fPatok Ladang§7 untuk memilih chunk.",
+      "§7Klik tanah pakai §fPatok Ladang§7 untuk memilih chunk — atau buka",
+      "§fBuku Panduan » Peta Patok§7 dan tunjuk petaknya langsung dari peta,",
+      "§7tanpa perlu memegang itemnya dan tanpa perlu berjalan ke sana.",
       "§8Merah = dipatok tapi belum digarap. Hijau = sudah jadi ladang.",
       "",
       ...lines,

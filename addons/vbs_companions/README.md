@@ -312,6 +312,46 @@ Sebuah **penanda muncul di tengah chunk** dengan pancaran warna ke langit:
 Klik lagi di chunk yang sama untuk mencabut patoknya. Patok disimpan di tingkat
 dunia, jadi tetap ada walau companion yang menggarapnya diistirahatkan.
 
+#### Peta Patok — tanpa item, tanpa berjalan ke sana
+
+Membawa-bawa item patok itu merepotkan: bentuknya cuma sebatang stik, gampang
+terselip di antara isi kantong, dan chunk yang mau dipatok sering ada di
+seberang lembah. Karena itu ada jalan kedua yang tidak butuh item sama sekali:
+**Buku Panduan » Peta Patok**.
+
+Halaman itu menggambar **8×8 chunk di sekitarmu** (128×128 blok) sekaligus:
+
+```
+x -4 .. 3
+z   -4  -- -- -- -- -- -- -- --
+z   -3  -- -- -- -- -- -- -- --
+z   -2  -- -- -- -- -- ## -- --
+z   -1  -- -- -- -- -- -- -- --
+z    0  -- -- -- -- XX -- -- --
+z    1  -- -- -- -- -- -- -- --
+```
+
+| Petak | Artinya |
+|---|---|
+| `--` abu-abu | Kosong, belum dipatok |
+| `##` merah | Dipatok, belum digarap |
+| `##` hijau | Sudah jadi ladang |
+| `##` hijau tua | Lahan desa |
+| `##` abu-abu | Dipatok pemain lain |
+| `XX` kuning | Petak tempat kamu berdiri sekarang |
+
+Pilih satu baris, lalu tunjuk petaknya — patok terpasang atau tercabut di
+tempat, dari mana pun kamu berdiri. Tombol di bawah peta bisa mematok chunk
+tempat kamu berdiri dengan satu ketukan, dan berganti antara **Patok Ladang**
+dan **Patok Desa** tanpa menukar item.
+
+Halaman itu juga menjawab "patokku yang kemarin di mana": di bawah peta ada
+**arah dan jarak ke patok terdekatmu** (misalnya *"36 blok ke timur laut,
+chunk (1, -2)"*). Penanda chunk yang hilang karena dunia sempat ditutup juga
+**dipasang ulang sendiri** begitu kamu berdiri cukup dekat.
+
+Patok pemain lain tidak bisa dicabut, baik lewat peta maupun lewat item.
+
 **Tanpa patok**, companion hanya menggarap radius kecil di sekitar stasiun dan
 tidak pernah mencangkul tanah baru — jadi dia tidak akan pernah membongkar
 kebunmu sendiri tanpa diminta.
@@ -507,8 +547,61 @@ dipegang si peminta — jadi urutan kayu → batu → besi tetap dilalui, tidak 
 yang tiba-tiba dikirimi beliung besi. Kalau bahannya kurang, perajin sendiri yang
 memasang permintaan bahan ke Mencari Barang.
 
-Meja kerja adalah alat kerja utamanya: kalau di sekitar tidak ada satu pun,
-**dialah yang membuatnya** — asal punya empat papan.
+#### Satu bengkel, dipakai bersama
+
+Meja kerja dan tungku adalah alat kerja utamanya. Kalau di sekitar tidak ada
+satu pun, **dialah yang membuatnya** — dan begitu berdiri, **tempatnya
+didaftarkan ke tingkat dunia** persis seperti peti stasiun.
+
+Artinya companion berikutnya tidak membuat meja kerja kedua: yang sudah ada
+milikmu dalam **radius 32 blok** akan dipakai bersama, dan kayunya lebih baik
+jadi alat untuk companion lain. Meja kerja **buatanmu sendiri** juga ikut
+terpakai — begitu ketemu sekali lewat sapuan blok, tempatnya ikut didaftarkan
+supaya tidak ada yang menyapu dua kali. Yang bekerja di seberang bukit tetap
+punya bengkelnya sendiri; berbagi itu punya jarak, bukan berarti satu meja
+untuk seluruh dunia.
+
+#### Tungku, dan alat besi yang akhirnya bisa dicapai
+
+Sebelum ini tidak ada satu pun companion yang pernah memegang alat besi, berapa
+pun banyak bijih yang digali. Sebabnya sepele dan tersembunyi: penambang
+menggali `iron_ore`, yang jatuh adalah **`raw_iron`**, dan tingkat alat besi
+cuma menerima **`iron_ingot`**. Bijihnya menumpuk di peti sampai dunia ditutup.
+
+Tungku itu mata rantai yang hilang. Perajin yang mejanya sudah berdiri
+**memasang tungku sendiri** dari delapan batu bulat tanpa perlu diminta, lalu
+membakar apa pun yang menumpuk di petinya:
+
+| Dari | Jadi |
+|---|---|
+| `raw_iron` / `iron_ore` | `iron_ingot` — **inilah yang membuka tingkat alat besi** |
+| `raw_gold`, `raw_copper` | `gold_ingot`, `copper_ingot` |
+| Daging dan ikan mentah | Masakannya — pakai untuk memulihkan tenaga companion |
+| Batang pohon | **Arang**, kalau memang tidak ada batu bara sama sekali |
+
+Bahan bakarnya dipilih dari yang paling boleh dibakar: arang dan batu bara
+dulu, kayu paling akhir dan hanya kalau stoknya berlebih — kayu untuk alat
+tidak boleh habis terbakar. Kentang dan wortel sengaja **tidak** ikut dibakar
+walaupun bisa: petani memakainya sebagai bibit, dan tungku yang memanggang
+persediaan bibit membuat ladang berhenti tanpa ada yang tahu sebabnya.
+
+Companion yang bekerja sendirian (tanpa perajin maupun pencari barang) juga
+memakai tungku dengan cara yang sama: kalau yang dia tunggu adalah besi dan di
+petinya sudah ada bijih mentah, dia membakarnya — bukan berkeliling mencari
+bijih baru yang ujungnya sama-sama tidak terpakai.
+
+#### Menempa untuk yang lain tanpa diminta
+
+Papan permintaan tetap jalan seperti biasa, tapi ada celahnya: permintaan alat
+baru dipasang kalau petani/penambang kebetulan sedang memeriksa alatnya, punya
+jeda sepuluh detik, dan hangus sesudah dua puluh menit. Akibatnya perajin
+sering berdiri menganggur di samping meja kerjanya sementara petani di seberang
+halaman masih menggaruk tanah dengan tangan.
+
+Sekarang perajin yang papan pesanannya kosong **memeriksa sendiri** companion
+lain milikmu: siapa yang alatnya masih bisa naik satu tingkat, dibuatkan dan
+diantar. Urutan kayu → batu → besi tetap berlaku, dan alat yang sudah menunggu
+di peti tidak ditempa dua kali.
 
 ### Mencari Barang
 
@@ -1005,9 +1098,11 @@ Keluar dengan kode 1 kalau ada pemeriksaan yang gagal, jadi bisa dipasang di CI.
 | `look.js` | Berhenti dan tersenyum saat dilihat |
 | `station.js` | Peti dan papan stasiun — keduanya butuh bahan, dan didaftarkan sebagai stasiun companion |
 | `bag.js` | Kantong pribadi berbentuk peti, dipakai selama peti sungguhan belum mampu dibuat |
-| `items.js` | Resep barang non-alat (ember, peti, papan, meja kerja, obor) dan penghitungan bahannya |
+| `items.js` | Resep barang non-alat (ember, peti, papan, meja kerja, tungku, obor) dan penghitungan bahannya |
 | `crafting.js` | Membuat alat di meja kerja dari bahan di peti, tier demi tier |
-| `claim.js` | Patok ladang & patok desa, penanda chunk, pancaran merah/hijau |
+| `workshop.js` | Daftar meja kerja & tungku milik bersama — siapa pun memakai yang sudah ada |
+| `smelting.js` | Tungku: bijih mentah jadi batangan, kayu jadi arang, daging jadi masakan |
+| `claim.js` | Patok ladang & patok desa, peta chunk 8×8, penanda dan pancaran merah/hijau |
 | `farming.js` | Mode bertani sebagai mesin fase: ratakan, airi, cangkul, tanam, rawat |
 | `decorate.js` | Menghias sawah |
 | `mining.js` | Mode menambang (terowongan 1×3) |

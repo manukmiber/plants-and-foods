@@ -20,6 +20,7 @@
 import { FAMILY, MATERIAL_REQUESTS } from "./config.js";
 import { findMaterial, harvestBlock, roam } from "./gather.js";
 import { requestMaterial } from "./requests.js";
+import { smeltableFor, smeltStep } from "./smelting.js";
 import {
   alive, allCompanions, getMode, getOwnerId, makeItem, putIn,
 } from "./util.js";
@@ -67,7 +68,29 @@ export function gatherOwn(entity, state, ownerId, kind, container, { search = fa
     return undefined;
   }
 
-  const target = findMaterial(entity, kind);
+  // Besi mentah tidak berubah jadi batangan dengan cara digali lebih banyak,
+  // dan kayu tidak berubah jadi arang dengan cara ditebang lebih banyak: dua-
+  // duanya harus lewat TUNGKU. Kalau bahannya sudah ada di peti, membakarnya
+  // jauh lebih dekat daripada berkeliling mencari bijih baru yang ujungnya
+  // sama-sama tidak terpakai.
+  let want = kind;
+  const oven = smeltableFor(container, kind);
+  if (oven) {
+    const burn = smeltStep(entity, state, container, state.station);
+    if (burn.status === "walking") return `menuju tungku untuk melebur ${oven.label}`;
+    if (burn.status === "smelting") return `melebur ${oven.label} di tungku`;
+    if (burn.status === "done") return `${oven.label} selesai dilebur`;
+    // Tungkunya belum ada, atau tidak ada bahan bakarnya: yang dicari berubah
+    // jadi bahan untuk menutup kekurangan itu, bukan bijih yang sudah menumpuk.
+    if (burn.status === "no-furnace") want = burn.missing ?? "stone";
+    else if (burn.status === "no-fuel") want = "coal";
+    if (want !== kind) {
+      logInfo(TAG, `${entStr(entity)} butuh ${want} dulu supaya tungkunya bisa melebur ${oven.label}.`);
+      requestMaterial(entity, state, ownerId, want, state.station);
+    }
+  }
+
+  const target = findMaterial(entity, want);
   if (!target) {
     // Tidak ada sasarannya di sekitar. BERKELILING mencarinya cuma boleh kalau
     // pemanggil bilang pekerjaannya memang mentok tanpa bahan itu (`search`).
@@ -78,15 +101,15 @@ export function gatherOwn(entity, state, ownerId, kind, container, { search = fa
     // detik sambil "mencari arang" — terowongannya tidak pernah jadi.
     if (!search) return undefined;
     roam(entity);
-    return `mencari ${labelOf(kind)} sendiri (belum ada perajin/pencari barang)`;
+    return `mencari ${labelOf(want)} sendiri (belum ada perajin/pencari barang)`;
   }
 
   const result = harvestBlock(entity, target, (id, amount) => {
     putIn(container, makeItem(id, amount), entity.dimension, entity.location);
   });
-  if (result.walking) return `menuju ${labelOf(kind)} untuk diambil sendiri`;
-  logInfo(TAG, `${entStr(entity)} mengambil ${labelOf(kind)} sendiri di ${target.id}.`);
-  return `mengambil ${labelOf(kind)} sendiri (belum ada perajin/pencari barang)`;
+  if (result.walking) return `menuju ${labelOf(want)} untuk diambil sendiri`;
+  logInfo(TAG, `${entStr(entity)} mengambil ${labelOf(want)} sendiri di ${target.id}.`);
+  return `mengambil ${labelOf(want)} sendiri (belum ada perajin/pencari barang)`;
 }
 
 /**

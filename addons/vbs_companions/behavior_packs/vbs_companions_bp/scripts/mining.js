@@ -3,12 +3,16 @@
  */
 
 import { system } from "@minecraft/server";
-import { DIGGABLE, DIGGABLE_EXTRA, ORES, POSE, PROTECTED } from "./config.js";
+import {
+  DIGGABLE, DIGGABLE_EXTRA, MINE_KEY_OF, MINE_TARGETS, ORES, POSE, PROTECTED,
+} from "./config.js";
+import { askOwner } from "./ask.js";
 import { report, sayFrom } from "./chat.js";
 import { craftItemStep, craftStep } from "./crafting.js";
 import { hold } from "./hold.js";
 import { isGreeting } from "./look.js";
 import { requestMaterial, requestTool } from "./requests.js";
+import { ensureMaterial } from "./selfhelp.js";
 import { writeState } from "./state.js";
 import { ensureStation } from "./station.js";
 import {
@@ -31,10 +35,31 @@ const DIG_PER_TICK = 2;
 const TUNNEL_HEIGHT = 3;
 const LAVA = new Set(["minecraft:lava", "minecraft:flowing_lava"]);
 
-function targetDepth(dimensionId) {
+/**
+ * Sampai berapa dalam terowongan diturunkan.
+ *
+ * Dulu selalu -54, kedalaman intan, apa pun yang sebenarnya dicari. Sekarang
+ * jawaban pemilik ikut dihitung: kalau yang diminta cuma batu bara dan besi,
+ * tidak ada gunanya menggali sampai dasar dunia — companion berhenti di
+ * kedalaman yang memang tempat bijih itu berada, dan mulai bercabang di situ.
+ */
+function targetDepth(dimensionId, wants) {
   if (dimensionId === "minecraft:nether") return 14;
   if (dimensionId === "minecraft:the_end") return 20;
-  return -54;
+  const keys = Array.isArray(wants) && wants.length ? wants : undefined;
+  if (!keys) return -54;
+  const depths = keys
+    .map((key) => MINE_TARGETS[key]?.depth)
+    .filter((d) => typeof d === "number");
+  return depths.length ? Math.min(...depths) : -54;
+}
+
+/** Bijih ini termasuk yang diminta pemilik? null/kosong berarti "apa saja". */
+function wanted(state, itemId) {
+  const wants = state.mineWants;
+  if (!Array.isArray(wants) || !wants.length) return true;
+  const key = MINE_KEY_OF[itemId];
+  return key ? wants.includes(key) : true;
 }
 
 function bagCount(bag) {
@@ -144,11 +169,18 @@ function dig(entity, state, block) {
   }
   const ore = ORES[id];
   if (ore) {
+    // Bijih yang kebetulan berdiri di jalur terowongan tetap dipungut walau
+    // tidak diminta — meninggalkannya berarti membuangnya, karena bloknya
+    // sudah terlanjur harus dibongkar supaya lorongnya bisa lewat. Yang benar
+    // -benar disaring jawaban pemilik adalah bijih di DINDING (lihat tunnel()):
+    // ke situ companion harus menyimpang, dan menyimpang untuk sesuatu yang
+    // tidak diminta itulah yang membuang waktu.
     logInfo(TAG, `BIJIH DITEMUKAN: ${id} -> Menghasilkan ${ore}`);
     addToBag(state, ore, 1);
     particle(entity.dimension, "minecraft:villager_happy", { x: block.x + 0.5, y: block.y + 0.6, z: block.z + 0.5 });
     sound(entity.dimension, "random.orb", block.location, { volume: 0.4 });
-  } else if ((state.bag["minecraft:cobblestone"] ?? 0) < 32 &&
+  } else if (wanted(state, "minecraft:cobblestone") &&
+             (state.bag["minecraft:cobblestone"] ?? 0) < 32 &&
              (id === "minecraft:stone" || id === "minecraft:cobblestone")) {
     addToBag(state, "minecraft:cobblestone", 1);
   }
@@ -183,6 +215,29 @@ function freshPlan(entity) {
   return plan;
 }
 
+/**
+ * "Apa saja yang harus aku tambang?"
+ *
+ * Ditanyakan sekali per companion. Jawabannya dicentang pemain di Buku Panduan
+ * (banyak pilihan sekaligus) dan tersimpan di state.mineWants; selama belum
+ * dijawab, mineWants tetap null dan artinya "apa saja" — jadi penambang yang
+ * pertanyaannya diabaikan tetap bekerja seperti sebelum ada fitur ini.
+ */
+function askMineTargets(entity, state, ownerId) {
+  if (!ownerId) return;
+  // Larik kosong BUKAN "belum dijawab": itu jawaban "apa saja boleh", dan
+  // menanyakannya lagi tiap lima menit adalah cara tercepat membuat fitur ini
+  // menyebalkan.
+  if (Array.isArray(state.mineWants)) return;
+  askOwner(entity, ownerId, {
+    id: "mine",
+    field: "mineWants",
+    multi: true,
+    text: "Apa saja yang harus aku mine? Centang di Buku Panduan, nanti kedalaman galiannya kusesuaikan.",
+    options: Object.entries(MINE_TARGETS).map(([key, meta]) => ({ key, label: meta.label })),
+  });
+}
+
 export function tickMine(entity, state, owner) {
   logDebug(TAG, `tickMine dimulai untuk ${entStr(entity)}`);
   if (!alive(entity)) return "hilang";
@@ -198,8 +253,18 @@ export function tickMine(entity, state, owner) {
     return "tidak ada tempat menyimpan apa pun";
   }
   if (station.missing) {
-    requestMaterial(entity, state, ownerId, station.missing, station.chest ?? state.station);
+    const own = ensureMaterial(entity, state, ownerId, station.missing,
+                               station.chest ?? state.station, container);
+    if (own) {
+      writeState(entity, state);
+      return own;
+    }
   }
+
+  // Sekali saja: apa yang sebenarnya dicari pemilik di bawah sana? Selama
+  // belum dijawab penambang tetap bekerja seperti biasa (memungut apa saja),
+  // jadi pertanyaan yang tidak dijawab tidak pernah menghentikan pekerjaan.
+  askMineTargets(entity, state, ownerId);
 
   // Beliung dulu, dan HARUS berurutan: kayu, batu, besi, emas, intan. Kalau
   // bahan tingkat berikutnya belum ada, dia meminta bahannya — bukan melompat
@@ -208,13 +273,17 @@ export function tickMine(entity, state, owner) {
   const craft = craftStep(entity, state, "pickaxe", container, held);
   if (craft === "no-material") {
     requestTool(entity, state, ownerId, "pickaxe", held, station.chest ?? state.station);
-    requestMaterial(entity, state, ownerId, "wood", station.chest ?? state.station);
-    logInfo(TAG, `${entStr(entity)} belum punya beliung apa pun; menunggu bahan kayu.`);
-    return "belum punya beliung kayu: minta kayu ke perajin & pencari barang";
+    logInfo(TAG, `${entStr(entity)} belum punya beliung apa pun; mencari bahan kayu.`);
+    const own = ensureMaterial(entity, state, ownerId, "wood",
+                               station.chest ?? state.station, container, { search: true });
+    writeState(entity, state);
+    return own ?? "belum punya beliung kayu: minta kayu ke perajin & pencari barang";
   }
   if (craft === "no-table") {
-    requestMaterial(entity, state, ownerId, "wood", station.chest ?? state.station);
-    return "butuh meja kerja (dan kayu untuk membuatnya)";
+    const own = ensureMaterial(entity, state, ownerId, "wood",
+                               station.chest ?? state.station, container, { search: true });
+    writeState(entity, state);
+    return own ?? "butuh meja kerja (dan kayu untuk membuatnya)";
   }
   if (craft === "walking" || craft === "crafting") {
     writeState(entity, state);
@@ -241,6 +310,9 @@ export function tickMine(entity, state, owner) {
         return "membuat obor";
       }
     } else {
+      // Obor cuma pelengkap: penambang tetap bisa menggali tanpa obor, jadi
+      // yang dilakukan cukup memasang permintaan. Mencarikan arangnya sendiri
+      // di sini berarti meninggalkan galian yang sedang dikerjakan.
       requestMaterial(entity, state, ownerId, "coal", station.chest ?? state.station);
     }
   }
@@ -301,7 +373,7 @@ function swing(entity, target) {
 function descend(entity, state, plan) {
   const dimension = entity.dimension;
   const [dx, dz] = DIRS[plan.dir];
-  const floor = targetDepth(dimension.id);
+  const floor = targetDepth(dimension.id, state.mineWants);
 
   if (plan.y <= floor) {
     plan.phase = "tunnel";
@@ -387,7 +459,8 @@ function tunnel(entity, state, plan) {
     }
     for (const [ox, oy, oz] of oreOffsets) {
       const near = blockAt(dimension, nx + ox, plan.y + oy, nz + oz);
-      if (near && ORES[near.typeId]) dig(entity, state, near);
+      const ore = near && ORES[near.typeId];
+      if (ore && wanted(state, ore)) dig(entity, state, near);
     }
 
     plan.x = nx;
@@ -420,7 +493,7 @@ function haul(entity, state, station) {
     // Petinya belum berdiri: hasil tambang tetap di kantong pribadi, dan
     // begitu peti jadi (ensureStation) isinya otomatis dipindahkan.
     logDebug(TAG, `${entStr(entity)} belum punya peti; hasil tambang disimpan di kantong.`);
-    plan.phase = plan.y <= targetDepth(entity.dimension.id) ? "tunnel" : "descend";
+    plan.phase = plan.y <= targetDepth(entity.dimension.id, state.mineWants) ? "tunnel" : "descend";
     return "kantong penuh, menunggu peti berdiri";
   }
   const chest = station.chest;
@@ -448,7 +521,7 @@ function haul(entity, state, station) {
   }
   face(entity, target);
   sound(entity.dimension, "random.chestopen", target);
-  plan.phase = plan.y <= targetDepth(entity.dimension.id) ? "tunnel" : "descend";
+  plan.phase = plan.y <= targetDepth(entity.dimension.id, state.mineWants) ? "tunnel" : "descend";
   logInfo(TAG, `Menyetor ${moved} barang ke peti stasiun. Kembali ke fase: ${plan.phase}`);
   if (moved) report(entity, `${moved} barang kusetor ke peti.`);
   return "menyetor hasil tambang";

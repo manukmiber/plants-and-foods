@@ -427,6 +427,45 @@ def main():
         check(doc["result"]["item"] == gen_packs.GUIDE_ITEM,
               f"resep {name} tidak menghasilkan {gen_packs.GUIDE_ITEM}")
 
+    # 15. menjinakkan: entity, gen_packs.py dan config.js harus sepakat
+    #
+    # Ini bukan pemeriksaan hiasan. Sepanjang v1.5.0 tame_items ditulis kosong
+    # dan seluruh taming diserahkan ke script, dan akibatnya companion tidak
+    # pernah benar-benar jinak. Daftar yang melenceng di salah satu dari tiga
+    # tempat ini menghidupkan lagi persis kegagalan itu, tanpa satu pun pesan
+    # error yang terlihat pemain.
+    for cid in ids:
+        bp_path = os.path.join(BP, "entities", f"{cid}.json")
+        if not os.path.exists(bp_path):
+            continue
+        doc = load(bp_path)["minecraft:entity"]
+        tameable = doc["components"].get("minecraft:tameable", {})
+        items = tameable.get("tame_items")
+        check(items == gen_packs.TAME_ITEMS,
+              f"{cid}: tame_items tidak sama dengan TAME_ITEMS di gen_packs.py — "
+              "jalankan gen_packs.py")
+        check(tameable.get("tame_event", {}).get("event") == "vbs:on_tamed",
+              f"{cid}: tame_event harus menyalakan vbs:on_tamed")
+        groups = doc.get("component_groups", {})
+        check("minecraft:is_tamed" in groups.get("vbs:tamed", {}),
+              f"{cid}: grup vbs:tamed harus memasang minecraft:is_tamed — tanpa itu "
+              "script tidak punya cara tahu taming bawaan sudah terjadi")
+        added = doc["events"]["vbs:on_tamed"].get("add", {}).get("component_groups", [])
+        check("vbs:tamed" in added,
+              f"{cid}: vbs:on_tamed harus memasang grup vbs:tamed")
+
+    tame_block = re.search(r"export const TAME_ITEMS = new Set\(\[(.*?)\]\);", script, re.S)
+    check(tame_block is not None, "TAME_ITEMS tidak ditemukan di config.js")
+    if tame_block:
+        script_tame = set(re.findall(r'"minecraft:(\w+)"', tame_block.group(1)))
+        check(script_tame == set(gen_packs.TAME_ITEMS),
+              "TAME_ITEMS di config.js tidak sama dengan gen_packs.py: "
+              f"{sorted(script_tame ^ set(gen_packs.TAME_ITEMS))}")
+        missing = script_tame - script_flowers
+        check(not missing,
+              f"bunga penjinak {sorted(missing)} tidak ada di FLOWERS config.js — "
+              "script tidak akan mengenalinya sebagai bunga")
+
     book_src = open(os.path.join(BP, "scripts", "book.js"), encoding="utf-8").read()
     check(f'GUIDE_ID = "{gen_packs.GUIDE_ITEM}"' in book_src,
           "GUIDE_ID di book.js tidak sama dengan identifier item di gen_packs.py")

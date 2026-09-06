@@ -15,7 +15,7 @@ import { wireBook } from "./book.js";
 import { openBook } from "./bookui.js";
 import { sayFrom } from "./chat.js";
 import { forget as forgetCombat, syncWeapon, tickCombat } from "./combat.js";
-import { DEFAULT_MODE, FAMILY, FLOWERS, LOOK, MODES, TICKS } from "./config.js";
+import { DEFAULT_MODE, FAMILY, LOOK, MODES, TICKS } from "./config.js";
 import { tickBuild } from "./builder.js";
 import { tickBeams, wireStake } from "./claim.js";
 import { tickCrafter } from "./crafter.js";
@@ -28,12 +28,15 @@ import { tickMine } from "./mining.js";
 import { forget as forgetBubble, refreshName, tickBubbles } from "./nametag.js";
 import { forget as forgetSocial, tickSocial } from "./social.js";
 import { readSettings, readState, writeState } from "./state.js";
+import {
+  forget as forgetTaming, offerFlower, tickTaming,
+} from "./taming.js";
 import { openMenu } from "./ui.js";
 import { deliver, orderMode, wireUserTalk } from "./usertalk.js";
 import { tickWander } from "./wander.js";
 import {
   alive, allCompanions, applyMode, dist2, getMode, getOwnerId, info, isCompanion,
-  particle, resolveOwner, setMode, setOwner, stopWalking, tickSteer,
+  resolveOwner, setMode, stopWalking, tickSteer,
 } from "./util.js";
 import {
   entStr, guard, logDebug, logError, logEvent, logInfo, logWarn,
@@ -58,100 +61,34 @@ let lastDaypartAt = 0;
 
 /* ------------------------------------------------------------------ *
  * Menjinakkan: companion LIAR sampai diberi satu bunga
+ *
+ * Yang mengerjakan taming sekarang mesin gim (minecraft:tameable dengan
+ * tame_items berisi bunga); berkas ini cuma menyambungnya ke isi add-on —
+ * mencatat pemilik, memasang mode awal, dan menyapa. Rinciannya di taming.js.
  * ------------------------------------------------------------------ */
 
-function tryTame(entity, player) {
-  logDebug(TAG, `Mencoba men-tame ${entStr(entity)} ke pemain ${player.name}...`);
-  for (const id of ["minecraft:tameable", "minecraft:tamable"]) {
-    try {
-      const comp = entity.getComponent(id);
-      if (comp && typeof comp.tame === "function") {
-        const res = comp.tame(player) !== false;
-        logInfo(TAG, `Hasil tame (${id}) untuk ${entStr(entity)}: ${res}`);
-        return res;
-      }
-    } catch (e) {
-      logWarn(TAG, `Gagal memanggil tame pada komponen ${id}`, e);
-    }
-  }
-  logWarn(TAG, `Tidak ada komponen tameable pada ${entStr(entity)}; pemilik tetap dicatat lewat dynamic property.`);
-  return false;
+/** Dipanggil taming.js begitu companion benar-benar jinak. */
+function onTamed(entity, player) {
+  logInfo(TAG, `${entStr(entity)} dijinakkan oleh ${player.name}.`);
+  bootstrap(entity);
+  player.sendMessage(
+    `§a${info(entity).name} jinak dan sekarang mengikutimu. ` +
+    "§7Jongkok lalu klik kanan untuk membuka menunya, atau ketik " +
+    `§f chat ${info(entity).name} halo§7 untuk mengajaknya bicara.`);
+  sayFrom(entity, "greet", { toOwnerAlways: true });
 }
 
-function bootstrap(entity, claimant) {
-  logInfo(TAG, `Bootstrap untuk ${entStr(entity)} (claimant: ${claimant?.name ?? "tidak ada"})`);
+function bootstrap(entity) {
+  logInfo(TAG, `Bootstrap untuk ${entStr(entity)}`);
   if (!alive(entity) || !isCompanion(entity)) {
     logWarn(TAG, "Bootstrap batal: entity bukan companion atau sudah mati.");
     return;
-  }
-  // Secara default companion LIAR begitu muncul. Satu-satunya jalan menjadi
-  // pemiliknya adalah memberinya satu bunga (tryFeedFlower di bawah) — tidak
-  // ada lagi pengambilan pemilik otomatis dari pemain terdekat.
-  if (claimant && !getOwnerId(entity)) {
-    setOwner(entity, claimant);
-    tryTame(entity, claimant);
-    claimant.sendMessage(
-      `§a${info(entity).name} jinak dan sekarang mengikutimu. ` +
-      "§7Jongkok lalu klik kanan untuk membuka menunya, atau ketik " +
-      `§f chat ${info(entity).name} halo§7 untuk mengajaknya bicara.`);
   }
   const mode = getMode(entity) ?? DEFAULT_MODE;
   logInfo(TAG, `Bootstrap: mode awal "${mode}" untuk ${entStr(entity)}`);
   setMode(entity, mode);
   syncWeapon(entity);
   refreshName(entity);
-}
-
-function heldFlower(player) {
-  try {
-    const inv = player.getComponent("minecraft:inventory")?.container;
-    if (!inv) return undefined;
-    const stack = inv.getItem(player.selectedSlotIndex);
-    return stack && FLOWERS.has(stack.typeId) ? stack : undefined;
-  } catch (e) {
-    logWarn(TAG, `Gagal membaca item di tangan ${player?.name}`, e);
-    return undefined;
-  }
-}
-
-function consumeOne(player, stack) {
-  try {
-    const inv = player.getComponent("minecraft:inventory")?.container;
-    if (!inv) return;
-    const slot = player.selectedSlotIndex;
-    const current = inv.getItem(slot);
-    if (!current) return;
-    
-    if (current.amount > 1) {
-      current.amount -= 1;
-      inv.setItem(slot, current);
-    } else {
-      inv.setItem(slot, undefined);
-    }
-  } catch (e) {
-    logWarn(TAG, `Gagal mengurangi bunga dari tangan ${player?.name}`, e);
-  }
-}
-
-function tryFeedFlower(entity, player) {
-  const stack = heldFlower(player);
-  if (!stack) return false;
-  logInfo(TAG, `${player.name} memberi bunga (${stack.typeId}) ke ${entStr(entity)}.`);
-  try {
-    consumeOne(player, stack);
-  } catch (e) {
-    logWarn(TAG, `Gagal mengambil bunga dari tangan ${player.name}`, e);
-    return false;
-  }
-  bootstrap(entity, player);
-  particle(entity.dimension, "minecraft:heart_particle", {
-    x: entity.location.x, y: entity.location.y + 2.1, z: entity.location.z,
-  });
-  try {
-    player.playSound("random.eat", { location: player.location });
-  } catch { /* suara opsional */ }
-  sayFrom(entity, "greet", { toOwnerAlways: true });
-  return true;
 }
 
 function forgetAll(id) {
@@ -163,6 +100,7 @@ function forgetAll(id) {
   forgetLook(id);
   forgetLooter(id);
   forgetSocial(id);
+  forgetTaming(id);
   stopWalking(id);
   chatterAt.delete(id);
 }
@@ -221,7 +159,9 @@ subscribe(world.afterEvents.playerInteractWithEntity, "playerInteractWithEntity"
   logDebug(TAG, `${player.name} berinteraksi dengan ${entStr(target)} (jongkok: ${player.isSneaking})`);
 
   if (!getOwnerId(target)) {
-    if (!player.isSneaking && tryFeedFlower(target, player)) return;
+    // Bunganya boleh diberikan sambil jongkok atau tidak — menuntut pemain
+    // berdiri tegak cuma membuat "kok tidak jinak-jinak" bertambah satu sebab.
+    if (offerFlower(target, player, ev.itemStack)) return;
     const last = hintCooldown.get(player.id) ?? 0;
     if (readSettings(player.id).hints && system.currentTick - last > 60) {
       hintCooldown.set(player.id, system.currentTick);
@@ -272,6 +212,7 @@ system.runInterval(guard(TAG, "denyut cepat", () => {
   const byId = new Map(companions.map((c) => [c.id, c]));
   tickHolds(byId);
   tickBubbles(byId);
+  tickTaming(byId, world.getAllPlayers(), onTamed);
   if (LOOK.enabled) tickLook(companions);
   for (const entity of companions) {
     if (isHeld(entity)) continue;

@@ -31,6 +31,10 @@ const EMPTY = {
   delivering: null,
   askAt: {},
   needs: {},
+  // Jawaban pemilik atas pertanyaan companion (ask.js). null = belum ditanya
+  // atau belum dijawab, dan selama itu companion memakai perilaku bawaannya.
+  seedSelf: null,      // "ya" = cari bibit sendiri, "tidak" = pemilik yang carikan
+  mineWants: null,     // larik kunci MINE_TARGETS; null = tambang apa saja
   villageOfferAt: 0,
   nick: null,
 };

@@ -19,8 +19,8 @@ Add-on ini dibungkus jadi **dua berkas terpisah**, satu per pack:
 
 | Berkas | Isinya |
 |---|---|
-| `VBS-Companions-v1.5.0-BP.mcaddon` | Behavior pack — entity, mode, dan seluruh script |
-| `VBS-Companions-v1.5.0-RP.mcaddon` | Resource pack — model, tekstur, animasi, teks |
+| `VBS-Companions-v1.6.0-BP.mcaddon` | Behavior pack — entity, mode, dan seluruh script |
+| `VBS-Companions-v1.6.0-RP.mcaddon` | Resource pack — model, tekstur, animasi, teks |
 
 **Keduanya harus dipasang.** Manifest keduanya saling menyebut sebagai dependensi,
 jadi memasang salah satu saja akan membuat Minecraft mengeluh pasangannya tidak ada.
@@ -37,8 +37,8 @@ API versi stabil.
 ### Di dedicated server (BDS)
 
 ```bash
-unzip VBS-Companions-v1.5.0-BP.mcaddon -d /tmp/vbs
-unzip VBS-Companions-v1.5.0-RP.mcaddon -d /tmp/vbs
+unzip VBS-Companions-v1.6.0-BP.mcaddon -d /tmp/vbs
+unzip VBS-Companions-v1.6.0-RP.mcaddon -d /tmp/vbs
 cp -r /tmp/vbs/vbs_companions_bp  <server>/behavior_packs/
 cp -r /tmp/vbs/vbs_companions_rp  <server>/resource_packs/
 ```
@@ -47,7 +47,7 @@ Lalu daftarkan ke dunianya. `<server>/worlds/<nama dunia>/world_behavior_packs.j
 
 ```json
 [
-  { "pack_id": "e980994d-a9a6-469e-af1b-a31c3e9f7838", "version": [1, 5, 0] }
+  { "pack_id": "e980994d-a9a6-469e-af1b-a31c3e9f7838", "version": [1, 6, 0] }
 ]
 ```
 
@@ -55,7 +55,7 @@ Lalu daftarkan ke dunianya. `<server>/worlds/<nama dunia>/world_behavior_packs.j
 
 ```json
 [
-  { "pack_id": "b5872873-2873-40c9-8d5b-424bc5592785", "version": [1, 5, 0] }
+  { "pack_id": "b5872873-2873-40c9-8d5b-424bc5592785", "version": [1, 6, 0] }
 ]
 ```
 
@@ -72,8 +72,14 @@ Minecraft Bedrock **1.21.0 ke atas**.
 1. **Panggil karakternya** dengan spawn egg (ada di tab Item / creative, satu untuk
    tiap karakter), atau `/summon vbs:akito`.
 2. Begitu muncul, dia **liar (untamed)** — belum mengikuti siapa pun. Beri dia
-   **satu bunga, bunga apa saja** (poppy, dandelion, tulip, dst.) sambil berdiri
-   dan tidak jongkok. Bunganya habis dipakai, dan dia langsung jadi milikmu.
+   **satu bunga, bunga apa saja** (poppy, dandelion, tulip, dst.) — jongkok atau
+   tidak, dua-duanya boleh. Bunganya habis dipakai, dan dia langsung jadi milikmu.
+
+   Yang menjinakkan adalah **mesin gim sendiri**, lewat `minecraft:tameable`
+   dengan daftar bunga di `tame_items` — persis cara serigala dijinakkan dengan
+   tulang. Script cuma mencatat siapa pemiliknya sesudah itu. Bunga di luar
+   daftar (mis. *pink petals*) tetap bisa dipakai lewat jalur script sebagai
+   cadangan.
 3. **Jongkok, lalu klik kanan** karakternya (di layar sentuh: jongkok, lalu tekan
    tombol **Buka Menu** yang muncul). UI-nya terbuka. Selama masih liar, jongkok
    dan klik hanya menampilkan pesan "beri dia bunga dulu" — menunya belum bisa
@@ -109,7 +115,7 @@ companion itu milik siapa hanya dengan melihat penandanya.
 | **Mode Bertani** | Meratakan lahan, membuka ladang, membuat alatnya sendiri, menanam berpola, memanen, mengairi, dan menghias. Lihat bagian tersendiri di bawah. |
 | **Mode Bertarung** | Menyerang monster dalam radius 20 blok, membalas yang menyerangmu, dan ikut menyerang yang kamu pukul. Pakai pedang atau **busur** — tergantung apa yang kamu pasangkan di tangannya. |
 | **Diam di Tempat** | Berjaga di titik itu. Tidak mengikuti, tidak ditarik pulang. |
-| **Mode Menambang** | Menggali tangga turun sampai kedalaman intan, membuat terowongan bercabang selebar 1 dan setinggi 3 blok berobor, mengumpulkan bijih, dan menyetorkannya ke peti. |
+| **Mode Menambang** | Menggali tangga turun sampai kedalaman bijih yang kamu minta, membuat terowongan bercabang selebar 1 dan setinggi 3 blok berobor, mengumpulkan bijih, dan menyetorkannya ke peti. |
 | **Mode Mengembara** | Menjelajah spiral melebar dari base, mencatat temuan beserta koordinatnya, memungut barang di jalan, dan pulang menyetor. |
 | **Mode Membangun** | Membangun rumah desa (kalau ada chunk yang dipatok) lalu rancangan pilihanmu, dari bahan yang ada di peti stasiun. |
 | **Mode Merajin** | Menempakan alat DAN barang (ember, peti, papan nama, meja kerja, obor) pesanan companion lain, lalu mengantarnya ke peti si pemesan. |
@@ -132,14 +138,29 @@ Ditempa di meja kerja dari **satu buku + satu bunga** (bunga apa saja dari dafta
 resep — bunga yang sama yang dipakai menjinakkan companion). Pakai bukunya
 (klik kanan, atau tahan di layar sentuh) untuk membukanya.
 
-Isinya tiga hal:
+Isinya:
 
 | Halaman | Isinya |
 |---|---|
-| **Cara Pakai** | Enam bab: menjinakkan, sembilan perintah, bertani, membangun & rancangan, mengajak bicara, tenaga & bantuan |
-| **Kendalikan Companion** | Daftar companion milikmu beserta tugas dan jaraknya. Pilih satu untuk membuka menunya seperti biasa — tanpa berjalan ke tempatnya — atau beri **satu perintah untuk semuanya sekaligus** |
+| **Cara Pakai** | Delapan bab: menjinakkan, sembilan perintah, bertani, membangun & rancangan, mengajak bicara, pertanyaan companion, buku sebagai alat, tenaga & bantuan |
+| **Kendalikan Companion** | Daftar companion milikmu beserta tugas dan **apa yang sedang dikerjakan**. Pilih satu untuk membuka halamannya (di bawah), atau beri **satu perintah untuk semuanya sekaligus** |
+| **Pertanyaan Companion** | Companion yang sedang menunggu keputusanmu, dan jawabannya |
 | **Pengaturan Mod** | Tujuh saklar milik **kamu**, bukan milik satu companion |
 | **Isi Tambahan & Status** | Rancangan dan dialog yang datang dari berkas JSON, dan status Beta API |
+
+### Halaman satu companion
+
+Memilih satu companion di **Kendalikan Companion** membuka halamannya sendiri.
+Semuanya bekerja dari jarak berapa pun, lintas dimensi:
+
+| Tombol | Isinya |
+|---|---|
+| **Sedang Apa** | Pekerjaan yang sedang dikerjakan detik ini, tugas, tenaga, kantuk, dan bahan yang sedang ditunggu — sama persis dengan jawaban `chat <nama> lagi ngapain?` |
+| **Isi Peti & Kantong** | Isi peti stasiunnya **dan** kantong pribadinya. Keduanya, karena selama peti belum berdiri semua hasil kerjanya hidup di kantong — peti kosong bukan berarti dia tidak bekerja |
+| **Ngobrol** | Kotak teks: ketik pesannya, jawabannya masuk ke chatmu. Perintah kerja yang diselipkan di dalam kalimat tetap dituruti |
+| **Jawab Pertanyaannya** | Muncul kalau dia sedang menunggu jawaban |
+| **Apa yang Ditambang** | Khusus penambang: centang bijih yang kamu cari |
+| **Menu Lengkap** | Menu companion yang biasa — perintah, perlengkapan, ladang, rancangan |
 
 ### Tidak bisa hilang
 
@@ -500,6 +521,64 @@ pemesan**.
 Kalau tidak ada permintaan sama sekali, dia tetap bekerja: mengumpulkan stok kayu
 dan batu ke petinya sendiri.
 
+### Kalau belum ada satu pun penolong
+
+Rantai di atas punya satu titik patah yang besar: pemain yang baru punya satu
+companion, atau yang belum menyuruh satu pun ke mode Merajin / Mencari Barang.
+Permintaan yang dipasang tidak ada yang membacanya, dan companion berdiri diam
+mengulang "menunggu bahan kayu" selamanya.
+
+Sekarang companion memeriksa dulu: **adakah companion lain milikmu yang bermode
+Merajin atau Mencari Barang?** Kalau tidak ada, dia **mengerjakannya sendiri** —
+menebang pohon dengan **tangan kosong**, menggali batu, membabat rumput — lalu
+merakit **meja kerja, peti, papan nama, dan alat** yang dia butuhkan dari situ.
+Persis seperti pemain di menit pertama dunia baru.
+
+Begitu ada perajin atau pencari barang milikmu di dunia, rantai permintaan
+dipakai lagi dan mereka berhenti mencari sendiri: pembagian kerja menang atas
+kerja sendirian.
+
+Satu batasan yang disengaja: berkeliling mencari bahan cuma dilakukan kalau
+pekerjaannya memang **mentok** tanpa bahan itu (belum punya alat sama sekali,
+atau belum ada meja kerja). Penambang yang kehabisan obor tetap menggali —
+versi pertama yang selalu berkeliling membuatnya berjalan ke arah acak tiap
+setengah detik sambil "mencari arang", dan terowongannya tidak pernah jadi.
+
+---
+
+## Mereka bertanya, kamu menjawab
+
+Dua keputusan tidak ditebak sendiri oleh kode, karena keduanya memang milik
+pemain:
+
+| Yang bertanya | Pertanyaannya | Jawabannya |
+|---|---|---|
+| **Petani** yang petinya kehabisan bibit | "Apakah aku mencari bibit sendiri, atau kamu yang mencarikan?" | **ya** — dia membabat rumput mencari bibit sendiri. **tidak** — dia menunggu kirimanmu |
+| **Penambang** yang baru mulai | "Apa saja yang harus aku mine?" | Centang bijih yang kamu mau di buku — boleh lebih dari satu |
+
+Dua cara menjawab:
+
+* **Ketik `ya` atau `tidak`** di chat untuk pertanyaan ya-tidak. Kata itu cuma
+  ditangkap add-on kalau memang ada pertanyaan yang menggantung untukmu — kalau
+  tidak, "ya" tetap kalimat biasa yang lewat ke chat seperti seharusnya.
+* **Buku Panduan » Pertanyaan Companion** untuk semuanya, termasuk yang berupa
+  daftar centang.
+
+Jawaban **tersimpan** dan dituruti seterusnya, dan bisa diubah lagi kapan saja
+lewat halaman yang sama.
+
+Pilihan bijih penambang bukan sekadar penyaring: **kedalaman galiannya ikut
+menyesuaikan**. Kalau yang kamu minta cuma batu bara dan besi, terowongannya
+berhenti di y 40 alih-alih menggali sampai y −54. Bijih yang tidak dicentang
+tidak dikejar ke dinding terowongan; yang kebetulan berdiri tepat di jalur
+galian tetap dipungut, karena bloknya memang harus dibongkar supaya lorongnya
+bisa lewat — meninggalkannya sama saja dengan membuangnya.
+
+Pertanyaan yang **tidak dijawab tidak pernah menghentikan pekerjaan**: penambang
+yang diabaikan tetap menambang apa saja, dan petani tetap memasang permintaan
+bibit seperti dulu. Pertanyaan yang sama tidak diulang lebih cepat dari lima
+menit sekali.
+
 ---
 
 ## Companion yang bicara
@@ -828,7 +907,7 @@ python3 gen_blueprints.py     # blueprints/*.json   -> scripts/blueprints.data.j
 python3 gen_dialogue.py       # dialogue/*.json     -> scripts/dialogue.data.js
 python3 render_preview.py     # -> docs/preview/*.png
 python3 validate.py           # periksa semua kaitan antar berkas
-python3 build_mcaddon.py      # -> VBS-Companions-v1.5.0-BP.mcaddon dan -RP.mcaddon
+python3 build_mcaddon.py      # -> VBS-Companions-v1.6.0-BP.mcaddon dan -RP.mcaddon
 
 cd sim && ./run.sh            # jalankan otak companion di luar Minecraft, dua kali
 ```
@@ -902,6 +981,13 @@ API Minecraft ditiru (`stub/`) di atas dunia voxel kecil (`world.mjs`), lalu
 - Pencari barang dan perajin benar-benar melayani permintaan companion lain
   sampai barangnya masuk ke peti si pemesan.
 - Tenaga terkuras dan kantuk naik sampai companion berhenti bekerja.
+- Menjinakkan: bunga yang ditangani mesin gim tidak ikut diambil script, bunga di
+  luar daftar dihabiskan script, dan script mengambil alih kalau taming bawaan
+  tidak juga terjadi.
+- Companion sendirian benar-benar menebang pohon dan menempa beliungnya sendiri,
+  lalu berhenti melakukannya begitu ada perajin milik pemilik yang sama.
+- Companion bertanya, jawaban `ya` di chat tertulis ke state-nya, dan pilihan
+  bijih penambang benar-benar mengubah kedalaman galiannya.
 
 Keluar dengan kode 1 kalau ada pemeriksaan yang gagal, jadi bisa dipasang di CI.
 
@@ -937,4 +1023,10 @@ Keluar dengan kode 1 kalau ada pemeriksaan yang gagal, jadi bisa dipasang di CI.
 | `activity.js` | Keterangan "sedang apa" yang tampil di menu |
 | `ui.js` | Semua layar |
 | `logger.js` | Pencatatan verbose, ring buffer, dan `guard()` pembungkus setiap event |
+| `taming.js` | Menjinakkan dengan bunga: menunggu mesin gim, mencatat pemilik, jalur cadangan |
+| `gather.js` | Mencari dan membongkar blok dengan tangan kosong — dipakai pencari barang dan siapa pun yang bekerja sendirian |
+| `selfhelp.js` | Bekerja sendiri kalau belum ada perajin/pencari barang milikmu |
+| `ask.js` | Companion bertanya, pemain menjawab (chat `ya`/`tidak` atau lewat buku) |
+| `bookui.js` | Isi Buku Panduan, termasuk halaman per companion |
+| `book.js` | Buku yang tidak bisa hilang: pemberian, penyelamatan, pembukaan |
 | `main.js` | Denyut dan penyaluran; tidak berisi logika kerja apa pun |

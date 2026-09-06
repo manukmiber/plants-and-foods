@@ -89,19 +89,43 @@ export function makeWorld({ groundY = 64, jagged = false } = {}) {
     return chests.get(k);
   }
 
+  // Entity yang "ada" di dunia ini. Dulu getEntities() selalu mengembalikan
+  // daftar kosong, jadi seluruh kode yang mencari companion LAIN
+  // (allCompanions -> hasHelper, ask.js mencari si penanya) tidak pernah
+  // teruji sama sekali — dan justru di situ fitur barunya bekerja.
+  const entities = [];
+
   const dimension = {
     id: "minecraft:overworld",
+    __entities: entities,
     getBlock(pos) {
       if (pos.y < -64 || pos.y > 320) return undefined;
       return block(Math.floor(pos.x), Math.floor(pos.y), Math.floor(pos.z));
     },
-    getEntities() { return []; },
+    getEntities(options = {}) {
+      return entities.filter((e) => {
+        if (e.isValid === false) return false;
+        if (options.type && e.typeId !== options.type) return false;
+        if (options.families &&
+            !options.families.some((f) => (e.__families ?? []).includes(f))) return false;
+        if (options.location && options.maxDistance !== undefined) {
+          const dx = e.location.x - options.location.x;
+          const dy = e.location.y - options.location.y;
+          const dz = e.location.z - options.location.z;
+          if (Math.hypot(dx, dy, dz) > options.maxDistance) return false;
+        }
+        return true;
+      });
+    },
     spawnItem() {},
     spawnParticle() {},
     playSound() {},
   };
 
-  return { dimension, blocks, chests, surfaceFor, put: (x, y, z, id) => blocks.set(key(x, y, z), id) };
+  return {
+    dimension, blocks, chests, surfaceFor, entities,
+    put: (x, y, z, id) => blocks.set(key(x, y, z), id),
+  };
 }
 
 export function makeContainer(size = 27) {
@@ -138,6 +162,11 @@ export function makeCompanion(dimension, typeId, at) {
   const entity = {
     id: `test-${typeId}`,
     typeId,
+    __families: ["vbs_companion", "mob"],
+    // Ditinjau minecraft:tameable bawaan: false sampai vbs:on_tamed menyala
+    // (atau sampai uji menyalakannya sendiri, meniru mesin gim yang menerima
+    // bunga dari tangan pemain).
+    __tamed: false,
     isValid: true,
     dimension,
     location: { ...at },
@@ -148,9 +177,13 @@ export function makeCompanion(dimension, typeId, at) {
     setProperty: () => {},
     getComponent(id) {
       if (id === "minecraft:health") return { currentValue: 20, effectiveMax: 20 };
+      if (id === "minecraft:is_tamed") return entity.__tamed ? {} : undefined;
+      if (id === "minecraft:tameable") return { isTamed: entity.__tamed };
       return undefined;
     },
-    triggerEvent() {},
+    triggerEvent(event) {
+      if (event === "vbs:on_tamed") entity.__tamed = true;
+    },
     runCommand(cmd) {
       const m = /replaceitem entity @s slot\.weapon\.mainhand 0 (\S+)/.exec(cmd);
       if (m) entity.__hand = m[1];
@@ -162,6 +195,7 @@ export function makeCompanion(dimension, typeId, at) {
     getViewDirection() { return { x: 1, y: 0, z: 0 }; },
     remove() { entity.isValid = false; },
   };
+  if (Array.isArray(dimension?.__entities)) dimension.__entities.push(entity);
   return entity;
 }
 
@@ -180,6 +214,7 @@ export function makePlayer(dimension, { id = "P1", name = "Pemain", at = { x: 0,
     dimension,
     location: { ...at },
     isSneaking: false,
+    selectedSlotIndex: 0,
     messages,
     container,
     getComponent(cid) {

@@ -1,5 +1,5 @@
 // Simulasi otak companion di luar Minecraft.
-import { system, world, __harness, __setPlayers } from "@minecraft/server";
+import { system, world, __harness, __setPlayers, __setDimension } from "@minecraft/server";
 import { makeWorld, makeContainer, makeCompanion, makePlayer } from "./world.mjs";
 import { LOG_CONFIG, LogLevel, logStats } from "./scripts/logger.js";
 import { readState, writeState, patchState } from "./scripts/state.js";
@@ -19,6 +19,13 @@ import { ensureBook, hasBook, isBook, makeBook } from "./scripts/book.js";
 import { betaSummary, hasBeta, betaLines, setBetaHandlers } from "./scripts/beta.js";
 import { orderMode } from "./scripts/usertalk.js";
 import { writeSettings } from "./scripts/state.js";
+import { offerFlower, tickTaming, isTamed, heldFlower } from "./scripts/taming.js";
+import { hasHelper, gatherOwn } from "./scripts/selfhelp.js";
+import { askOwner, pendingAsks, answerAsk, answerLatestYesNo } from "./scripts/ask.js";
+import { openBook } from "./scripts/bookui.js";
+import { getActivity, setActivity } from "./scripts/activity.js";
+import { summarize, setGear, makeItem } from "./scripts/util.js";
+import { bagCount } from "./scripts/bag.js";
 
 LOG_CONFIG.minLevel = LogLevel.WARN;   // simulasi: cuma tampilkan yang penting
 
@@ -492,6 +499,313 @@ console.log(`\n== Uji Beta API (${__harness().beta ? "dunia BETA" : "dunia biasa
     check(lines.some((l) => l.includes("tidak aktif")),
           "status di buku menyebut Beta API tidak aktif");
   }
+}
+
+
+/* -------- Uji 9: menjinakkan dengan bunga -------------------------------- */
+console.log("\n== Uji menjinakkan: bunga, mesin gim, dan jalur cadangan ==");
+{
+  const W = makeWorld({ groundY: 64 });
+  __setDimension(W.dimension);
+  const claimed = [];
+  const claim = (entity, player) => claimed.push(`${entity.typeId}<-${player.name}`);
+
+  // 1. Bunga yang ADA di tame_items: mesin gim yang menjinakkan. Script tidak
+  //    boleh menghabiskan bunganya sendiri — kalau ikut mengambil, pemain
+  //    kehilangan dua bunga untuk satu companion.
+  const wolfish = makeCompanion(W.dimension, "vbs:kohane", { x: 0, y: 65, z: 0 });
+  const player = makePlayer(W.dimension, { id: "T1", name: "Penjinak" });
+  player.container.setItem(0, { typeId: "minecraft:poppy", amount: 3 });
+  __setPlayers([player]);
+
+  const offered = offerFlower(wolfish, player, { typeId: "minecraft:poppy", amount: 3 });
+  check(offered, "bunga di tangan benar-benar terbaca dari event interaksi");
+  check(player.container.getItem(0)?.amount === 3,
+        "bunga TIDAK diambil script untuk bunga yang ditangani mesin gim",
+        `sisa ${player.container.getItem(0)?.amount}`);
+
+  // Mesin gim menyelesaikan taming-nya: vbs:on_tamed menyala.
+  wolfish.triggerEvent("vbs:on_tamed");
+  check(isTamed(wolfish), "penanda minecraft:is_tamed terbaca script");
+  tickTaming(new Map([[wolfish.id, wolfish]]), [player], claim);
+  check(wolfish.getDynamicProperty("vbs:owner") === "T1",
+        "pemilik tercatat begitu mesin gim menyatakan jinak");
+  check(claimed.length === 1, "bootstrap dipanggil sekali", claimed.join(", "));
+
+  // 2. Bunga DI LUAR tame_items: script yang mengambil alih, dan bunganya
+  //    memang harus habis — mesin gim tidak akan menyentuhnya.
+  const other = makeCompanion(W.dimension, "vbs:an", { x: 4, y: 65, z: 4 });
+  const p2 = makePlayer(W.dimension, { id: "T2", name: "Pemetik" });
+  p2.container.setItem(0, { typeId: "minecraft:pink_petals", amount: 2 });
+  __setPlayers([player, p2]);
+  offerFlower(other, p2, { typeId: "minecraft:pink_petals", amount: 2 });
+  check(p2.container.getItem(0)?.amount === 1,
+        "bunga di luar tame_items dihabiskan script",
+        `sisa ${p2.container.getItem(0)?.amount ?? 0}`);
+  check(other.__tamed, "vbs:on_tamed dipicu script untuk bunga di luar daftar");
+  tickTaming(new Map([[other.id, other]]), [player, p2], claim);
+  check(other.getDynamicProperty("vbs:owner") === "T2", "pemilik jalur cadangan tercatat");
+
+  // 3. Bunga di tangan dibaca walau event-nya tidak membawa itemStack —
+  //    inilah bug lama: satu-satunya sumber dulu selectedSlotIndex.
+  const p3 = makePlayer(W.dimension, { id: "T3", name: "Tanpa Event" });
+  p3.container.setItem(0, { typeId: "minecraft:dandelion", amount: 1 });
+  check(heldFlower(p3, undefined)?.typeId === "minecraft:dandelion",
+        "bunga tetap ketemu lewat slot terpilih kalau event tidak membawanya");
+
+  // 4. Mesin gim TIDAK menjinakkan (dunia lama, entity belum diperbarui):
+  //    sesudah menunggu, script mengambil alih dan bunganya baru dihabiskan.
+  const stale = makeCompanion(W.dimension, "vbs:toya", { x: 8, y: 65, z: 8 });
+  const p4 = makePlayer(W.dimension, { id: "T4", name: "Dunia Lama" });
+  p4.container.setItem(0, { typeId: "minecraft:poppy", amount: 1 });
+  __setPlayers([p4]);
+  offerFlower(stale, p4, { typeId: "minecraft:poppy", amount: 1 });
+  check(p4.container.getItem(0)?.amount === 1, "bunga belum diambil selagi menunggu mesin gim");
+  advance(30);
+  tickTaming(new Map([[stale.id, stale]]), [p4], claim);
+  check(stale.getDynamicProperty("vbs:owner") === "T4",
+        "script mengambil alih kalau taming bawaan tidak juga terjadi");
+  check(!p4.container.getItem(0), "bunganya baru dihabiskan saat script mengambil alih");
+
+  // 5. Mesin gim menjinakkan TANPA event interaksi sampai ke script. Tidak ada
+  //    janji bahwa playerInteractWithEntity ikut menyala untuk interaksi yang
+  //    dipakai gim untuk menjinakkan — kalau tidak ada jaring pengaman,
+  //    companion berdiri jinak tanpa pemilik dan tidak mau bekerja selamanya.
+  const silent = makeCompanion(W.dimension, "vbs:flins", { x: 12, y: 65, z: 12 });
+  const p5 = makePlayer(W.dimension, { id: "T5", name: "Tanpa Event Sama Sekali",
+                                       at: { x: 13, y: 65, z: 12 } });
+  __setPlayers([p5]);
+  silent.triggerEvent("vbs:on_tamed");
+  tickTaming(new Map([[silent.id, silent]]), [p5], claim);
+  check(silent.getDynamicProperty("vbs:owner") === "T5",
+        "companion yang jinak tanpa event tetap mendapat pemilik dari pemain terdekat");
+
+  // Tapi jangan sampai companion orang lain di ujung dunia ikut diklaim.
+  const faraway = makeCompanion(W.dimension, "vbs:kohane", { x: 400, y: 65, z: 400 });
+  faraway.id = "test-jauh";
+  faraway.triggerEvent("vbs:on_tamed");
+  tickTaming(new Map([[faraway.id, faraway]]), [p5], claim);
+  check(faraway.getDynamicProperty("vbs:owner") === undefined,
+        "pemain yang jauh tidak ikut mengklaim companion yang kebetulan jinak");
+  __setPlayers([]);
+}
+
+/* -------- Uji 10: bekerja sendiri kalau belum ada perajin/pencari -------- */
+console.log("\n== Uji kerja sendiri: menebang pohon pakai tangan ==");
+{
+  const W = makeWorld({ groundY: 64 });
+  __setDimension(W.dimension);
+  // Hutan rapat persis di sebelah penambang.
+  for (let x = 4; x < 12; x++) {
+    for (let z = -4; z < 4; z++) {
+      if ((x + z) % 2) continue;
+      for (let dy = 1; dy <= 5; dy++) W.put(x, 64 + dy, z, "minecraft:oak_log");
+    }
+  }
+
+  const lone = makeCompanion(W.dimension, "vbs:akito", { x: 0, y: 65, z: 0 });
+  lone.setDynamicProperty("vbs:owner", "S1");
+  lone.setDynamicProperty("vbs:mode", "mine");
+  check(!hasHelper("S1", lone),
+        "tidak ada perajin maupun pencari barang -> companion kerja sendiri");
+
+  let hand;
+  for (let i = 0; i < 4000; i++) {
+    const st = readState(lone);
+    tickMine(lone, st, undefined);
+    writeState(lone, st);
+    hand = getGear(lone).mainhand;
+    if (hand) break;
+    advance(10);
+  }
+  check(Boolean(hand && hand.includes("pickaxe")),
+        "companion sendirian menempa beliungnya sendiri dari kayu yang ditebangnya",
+        String(hand));
+
+  let logsLeft = 0;
+  for (let x = 4; x < 12; x++) {
+    for (let z = -4; z < 4; z++) {
+      for (let dy = 1; dy <= 5; dy++) {
+        if (W.dimension.getBlock({ x, y: 64 + dy, z }).typeId === "minecraft:oak_log") logsLeft++;
+      }
+    }
+  }
+  check(logsLeft < 160, "pohonnya benar-benar ditebang, bukan cuma diminta",
+        `${logsLeft} log tersisa dari 160`);
+
+  // Begitu ada perajin milik pemilik yang sama, rantai lama dipakai lagi dan
+  // companion tidak lagi menebang sendiri.
+  const helper = makeCompanion(W.dimension, "vbs:flins", { x: 2, y: 65, z: 2 });
+  helper.setDynamicProperty("vbs:owner", "S1");
+  helper.setDynamicProperty("vbs:mode", "crafter");
+  check(hasHelper("S1", lone), "ada perajin -> permintaan bantuan dipakai lagi");
+  check(!hasHelper("S1", helper),
+        "perajin tidak menghitung dirinya sendiri sebagai penolongnya sendiri");
+
+  // Bibit dari rumput: jalur yang dipakai petani kalau pemilik menjawab "ya".
+  const farmer = makeCompanion(W.dimension, "vbs:kohane", { x: 40, y: 65, z: 40 });
+  farmer.setDynamicProperty("vbs:owner", "S2");
+  for (let x = 38; x < 44; x++) {
+    for (let z = 38; z < 44; z++) W.put(x, 65, z, "minecraft:short_grass");
+  }
+  const box = makeContainer();
+  const fs = readState(farmer);
+  let seeds = 0;
+  for (let i = 0; i < 400 && !seeds; i++) {
+    gatherOwn(farmer, fs, "S2", "seed", box);
+    seeds = summarize(box)["minecraft:wheat_seeds"] ?? 0;
+    advance(10);
+  }
+  check(seeds > 0, "membabat rumput benar-benar menghasilkan bibit", `${seeds} bibit`);
+}
+
+/* -------- Uji 11: companion bertanya, pemain menjawab ------------------- */
+console.log("\n== Uji pertanyaan: petani soal bibit, penambang soal bijih ==");
+{
+  const W = makeWorld({ groundY: 64 });
+  __setDimension(W.dimension);
+  const owner = makePlayer(W.dimension, { id: "Q1", name: "Pemilik" });
+  __setPlayers([owner]);
+
+  const farmer = makeCompanion(W.dimension, "vbs:kohane", { x: 0, y: 65, z: 0 });
+  farmer.setDynamicProperty("vbs:owner", "Q1");
+  const asked = askOwner(farmer, "Q1", {
+    id: "seed", field: "seedSelf",
+    text: "Apakah aku mencari bibit sendiri, atau kamu yang mencarikan?",
+    options: [{ key: "ya", label: "Aku sendiri" }, { key: "tidak", label: "Kamu yang carikan" }],
+  });
+  check(asked, "pertanyaan petani benar-benar terpasang");
+  check(pendingAsks("Q1").length === 1, "pertanyaannya tersimpan di papan pemilik");
+  check(owner.messages.some((m) => m.includes("ya")),
+        "pemain diberi tahu cara menjawabnya");
+  check(!askOwner(farmer, "Q1", {
+    id: "seed", field: "seedSelf", text: "sama", options: [{ key: "ya", label: "a" }],
+  }), "pertanyaan yang sama tidak diulang-ulang");
+
+  answerLatestYesNo("Q1", "ya");
+  check(readState(farmer).seedSelf === "ya", "jawaban 'ya' di chat tertulis ke state petani",
+        String(readState(farmer).seedSelf));
+  check(pendingAsks("Q1").length === 0, "pertanyaan hilang dari papan sesudah dijawab");
+
+  // Penambang: pertanyaannya diajukan sendiri oleh tickMine.
+  const miner = makeCompanion(W.dimension, "vbs:akito", { x: 20, y: 65, z: 20 });
+  miner.setDynamicProperty("vbs:owner", "Q1");
+  miner.setDynamicProperty("vbs:mode", "mine");
+  W.put(22, 65, 22, "minecraft:chest");
+  patchState(miner, { station: { x: 22, y: 65, z: 22 } });
+  const mc = W.dimension.getBlock({ x: 22, y: 65, z: 22 }).getComponent("minecraft:inventory").container;
+  mc.fill("minecraft:oak_planks", 64);
+  mc.fill("minecraft:stick", 64);
+  for (let i = 0; i < 5; i++) {
+    const st = readState(miner);
+    tickMine(miner, st, undefined);
+    writeState(miner, st);
+    advance(10);
+  }
+  const mineAsk = pendingAsks("Q1").find((q) => q.field === "mineWants");
+  check(Boolean(mineAsk), "penambang bertanya apa saja yang harus ditambang");
+  check(Boolean(mineAsk?.multi), "pertanyaannya boleh dijawab lebih dari satu pilihan");
+  check((mineAsk?.options.length ?? 0) >= 10, "semua bijih ada di daftar pilihan",
+        `${mineAsk?.options.length} pilihan`);
+
+  answerAsk("Q1", mineAsk.id, ["coal"]);
+  check(JSON.stringify(readState(miner).mineWants) === '["coal"]',
+        "pilihan pemain tersimpan di state penambang",
+        JSON.stringify(readState(miner).mineWants));
+
+  // Jawaban itu benar-benar mengubah perilaku: batu bara ada di y 40, jadi
+  // tidak ada gunanya menggali sampai -54. Galiannya dimulai persis di atas
+  // batas supaya uji ini memeriksa keputusannya, bukan menunggu dua puluh
+  // menit galian yang kecepatannya bergantung arah acak.
+  patchState(miner, { plan: { mine: { phase: "descend", x: 20, y: 44, z: 20, dir: 0, step: 0, branch: 0, branchSide: 1, branchStep: 0 } } });
+  miner.location = { x: 20, y: 44, z: 20 };
+  // Sudah pegang beliung: yang diuji di sini keputusan KEDALAMAN, bukan urutan
+  // menempa alat (itu sudah punya ujinya sendiri di atas).
+  setGear(miner, "mainhand", makeItem("minecraft:iron_pickaxe", 1));
+  // Langkah kakinya sendiri diurus tickSteer() di main.js, yang tidak ikut
+  // dijalankan di sini — jadi companion "diantar" ke titik galiannya tiap
+  // denyut. Yang diuji keputusan sampai berapa dalam dia menggali, bukan
+  // seberapa cepat dia berjalan ke sana.
+  let deepest = 999;
+  let reachedTunnel = false;
+  for (let i = 0; i < 400; i++) {
+    const st = readState(miner);
+    tickMine(miner, st, undefined);
+    writeState(miner, st);
+    const plan = readState(miner).plan?.mine;
+    if (plan) {
+      deepest = Math.min(deepest, plan.y);
+      miner.location = { x: plan.x + 0.5, y: plan.y, z: plan.z + 0.5 };
+      if (plan.phase === "tunnel") { reachedTunnel = true; break; }
+    }
+    advance(10);
+  }
+  check(reachedTunnel, "penambang berhenti menurun dan mulai terowongan",
+        `y terdalam ${deepest}`);
+  check(deepest >= 40,
+        "tidak pernah lebih dalam dari bijih yang diminta (batu bara: y 40)",
+        `y terdalam ${deepest}`);
+
+  // Pertanyaan tidak dijawab TIDAK boleh menghentikan pekerjaan.
+  const stubborn = makeCompanion(W.dimension, "vbs:toya", { x: 60, y: 65, z: 60 });
+  stubborn.setDynamicProperty("vbs:owner", "Q2");
+  stubborn.setDynamicProperty("vbs:mode", "mine");
+  W.put(62, 65, 62, "minecraft:chest");
+  patchState(stubborn, { station: { x: 62, y: 65, z: 62 } });
+  const sc = W.dimension.getBlock({ x: 62, y: 65, z: 62 }).getComponent("minecraft:inventory").container;
+  sc.fill("minecraft:oak_planks", 64);
+  sc.fill("minecraft:stick", 64);
+  let status = "";
+  for (let i = 0; i < 200; i++) {
+    const st = readState(stubborn);
+    status = tickMine(stubborn, st, undefined);
+    writeState(stubborn, st);
+    advance(10);
+  }
+  check(readState(stubborn).mineWants === null,
+        "pertanyaan yang belum dijawab tetap null (artinya: tambang apa saja)");
+  check(Boolean(getGear(stubborn).mainhand),
+        "penambang tetap bekerja walau pertanyaannya belum dijawab", status);
+  __setPlayers([]);
+}
+
+/* -------- Uji 12: buku sebagai alat ------------------------------------- */
+console.log("\n== Uji buku: isi peti, aktivitas, dan halaman companion ==");
+{
+  const W = makeWorld({ groundY: 64 });
+  __setDimension(W.dimension);
+  const player = makePlayer(W.dimension, { id: "B1", name: "Pembaca" });
+  __setPlayers([player]);
+
+  const worker = makeCompanion(W.dimension, "vbs:an", { x: 3, y: 65, z: 3 });
+  worker.setDynamicProperty("vbs:owner", "B1");
+  worker.setDynamicProperty("vbs:mode", "farm");
+  W.put(5, 65, 5, "minecraft:chest");
+  patchState(worker, { station: { x: 5, y: 65, z: 5 }, bag: { "minecraft:wheat": 7 } });
+  const chest = W.dimension.getBlock({ x: 5, y: 65, z: 5 }).getComponent("minecraft:inventory").container;
+  chest.fill("minecraft:carrot", 12);
+
+  setActivity(worker, "memanen gandum di petak 3,4");
+  check(getActivity(worker) === "memanen gandum di petak 3,4",
+        "aktivitas companion terbaca untuk halaman 'Sedang Apa'");
+  const isi = summarize(chest);
+  check(isi["minecraft:carrot"] === 12, "isi peti stasiun terbaca untuk halaman isi",
+        JSON.stringify(isi));
+  check(bagCount(readState(worker)) === 7, "isi kantong pribadi ikut terhitung",
+        String(bagCount(readState(worker))));
+
+  // Halaman bukunya sendiri: form tiruan selalu dibatalkan, jadi yang diuji
+  // adalah bahwa seluruh jalurnya tertaut dan tidak melempar — persis kelas
+  // kesalahan yang mematikan mesin skrip Bedrock diam-diam.
+  let threw;
+  try {
+    await openBook(player);
+  } catch (err) {
+    threw = err;
+  }
+  check(!threw, "buku panduan terbuka tanpa melempar", threw ? String(threw) : "");
+  __setPlayers([]);
+  __setDimension(undefined);
 }
 
 console.log(`\nlog: ${JSON.stringify(logStats())}`);

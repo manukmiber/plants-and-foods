@@ -116,6 +116,7 @@ export const FACE = {
 
 export const PROP = {
   owner: "vbs:owner",
+  asks: "vbs:asks",
   ownerName: "vbs:owner_name",
   mode: "vbs:mode",
   gear: "vbs:gear",
@@ -221,6 +222,40 @@ export const ORES = {
   "minecraft:quartz_ore": "minecraft:quartz",
   "minecraft:ancient_debris": "minecraft:ancient_debris",
 };
+
+// Apa saja yang boleh diminta pemain untuk ditambang, lengkap dengan
+// kedalaman yang masuk akal untuk mencarinya. Penambang bertanya sekali lewat
+// chat ("Apa saja yang harus aku mine?"), pemain menjawab dengan mencentang
+// baris-baris ini di Buku Panduan, dan jawabannya disimpan di state.mineWants.
+//
+// `depth` dipakai memilih sampai berapa dalam terowongan diturunkan: kalau yang
+// diminta cuma batu bara dan besi, tidak ada gunanya menggali sampai -54.
+export const MINE_TARGETS = {
+  coal: { label: "Batu bara", item: "minecraft:coal", depth: 40, icon: "textures/items/coal" },
+  copper: { label: "Tembaga", item: "minecraft:raw_copper", depth: 40, icon: "textures/items/copper_ingot" },
+  iron: { label: "Besi", item: "minecraft:raw_iron", depth: 12, icon: "textures/items/iron_ingot" },
+  gold: { label: "Emas", item: "minecraft:raw_gold", depth: -16, icon: "textures/items/gold_ingot" },
+  redstone: { label: "Redstone", item: "minecraft:redstone", depth: -54, icon: "textures/items/redstone_dust" },
+  lapis: { label: "Lapis", item: "minecraft:lapis_lazuli", depth: 0, icon: "textures/items/dye_powder_blue_new" },
+  diamond: { label: "Intan", item: "minecraft:diamond", depth: -54, icon: "textures/items/diamond" },
+  emerald: { label: "Zamrud", item: "minecraft:emerald", depth: 40, icon: "textures/items/emerald" },
+  quartz: { label: "Kuarsa", item: "minecraft:quartz", depth: 14, icon: "textures/items/quartz" },
+  debris: { label: "Puing Purba", item: "minecraft:ancient_debris", depth: 14, icon: "textures/items/netherite_ingot" },
+  stone: { label: "Batu biasa", item: "minecraft:cobblestone", depth: 40, icon: "textures/items/stick" },
+};
+
+// Kebalikan MINE_TARGETS: dari barang hasil tambang ke kunci pilihannya.
+export const MINE_KEY_OF = Object.fromEntries(
+  Object.entries(MINE_TARGETS).map(([key, meta]) => [meta.item, key]));
+
+// Rumput yang kalau dibabat tangan kosong bisa menjatuhkan bibit gandum —
+// jalan companion mencari bibit sendiri kalau pemiliknya menjawab "ya" waktu
+// ditanya. Nama lama dan nama baru sama-sama ditulis: dunia 1.20 memakai
+// "tallgrass", 1.21 memakai "short_grass", dan keduanya masih dijumpai.
+export const SEED_SOURCES = [
+  "minecraft:tallgrass", "minecraft:short_grass", "minecraft:tall_grass",
+  "minecraft:fern", "minecraft:large_fern", "minecraft:double_plant",
+];
 
 export const DIGGABLE = new Set([
   "minecraft:stone", "minecraft:cobblestone", "minecraft:andesite",
@@ -353,6 +388,25 @@ export const FLOWERS = new Set([
   "minecraft:rose_bush", "minecraft:peony", "minecraft:torchflower",
   "minecraft:wildflowers", "minecraft:pink_petals", "minecraft:closed_eyeblossom",
   "minecraft:open_eyeblossom",
+]);
+
+// Bunga yang disebut komponen minecraft:tameable di berkas entity. Untuk yang
+// ada di daftar ini, MESIN GIM yang menjinakkan: bunganya dihabiskan gim,
+// vbs:on_tamed menyala, dan script tinggal mencatat pemiliknya (taming.js).
+// Bunga di FLOWERS yang TIDAK ada di sini tetap bisa menjinakkan, tapi lewat
+// jalur script — bunga diambil sendiri dari tangan pemain.
+//
+// Isinya harus sama persis dengan TAME_ITEMS di tools/gen_packs.py; validate.py
+// menolak kalau keduanya melenceng, karena daftar yang diam-diam berbeda
+// artinya bunga yang katanya bisa dipakai ternyata tidak menjinakkan apa pun.
+export const TAME_ITEMS = new Set([
+  "minecraft:red_flower", "minecraft:poppy", "minecraft:dandelion",
+  "minecraft:blue_orchid", "minecraft:allium", "minecraft:azure_bluet",
+  "minecraft:red_tulip", "minecraft:orange_tulip", "minecraft:white_tulip",
+  "minecraft:pink_tulip", "minecraft:oxeye_daisy", "minecraft:cornflower",
+  "minecraft:lily_of_the_valley", "minecraft:wither_rose", "minecraft:sunflower",
+  "minecraft:lilac", "minecraft:rose_bush", "minecraft:peony",
+  "minecraft:torchflower",
 ]);
 
 // Energi terkuras selama mode kerja (bukan follow/stay/greet) dan pulih lagi

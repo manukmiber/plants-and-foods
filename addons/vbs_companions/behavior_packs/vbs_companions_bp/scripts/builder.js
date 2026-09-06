@@ -11,7 +11,7 @@ import { workArea } from "./farming.js";
 import { hold } from "./hold.js";
 import { isGreeting } from "./look.js";
 import { takeOrMake } from "./items.js";
-import { requestMaterial } from "./requests.js";
+import { ensureMaterial } from "./selfhelp.js";
 import { addVillageHome, writeState } from "./state.js";
 import { ensureStation } from "./station.js";
 import {
@@ -486,9 +486,8 @@ function villageStep(entity, state, dimension, container, claim, ownerId) {
   writeState(entity, state);
   if (result.waiting) return `menuju rumah desa (${result.index + 1}/${result.total})`;
   if (!result.placed && result.missing) {
-    const ask = result.missing === "peti (butuh papan)" ? "wood" : "wood";
-    requestMaterial(entity, state, ownerId, ask, state.station);
-    return `peti kehabisan bahan rumah desa untuk ${result.missing} (sudah minta bahan)`;
+    const own = ensureMaterial(entity, state, ownerId, "wood", state.station, container);
+    return own ?? `peti kehabisan bahan rumah desa untuk ${result.missing} (sudah minta bahan)`;
   }
   return `membangun rumah desa: ${result.index}/${result.total}`;
 }
@@ -547,7 +546,12 @@ export function tickBuild(entity, state, owner) {
 
   const ownerId = getOwnerId(entity);
   if (station.missing) {
-    requestMaterial(entity, state, ownerId, station.missing, station.chest ?? state.station);
+    const own = ensureMaterial(entity, state, ownerId, station.missing,
+                               station.chest ?? state.station, container);
+    if (own) {
+      writeState(entity, state);
+      return own;
+    }
   }
 
   const villages = ownerId
@@ -599,8 +603,9 @@ export function tickBuild(entity, state, owner) {
     logWarn(TAG, `Pembangun kekurangan bahan: "${result.missing}".`);
     const ask = result.missing === "wall" || result.missing === "floor" ||
       result.missing === "roof" || result.missing === "post" ? "wood" : "stone";
-    requestMaterial(entity, state, ownerId, ask, station.chest ?? state.station);
-    return `peti kehabisan bahan untuk ${result.missing} (sudah minta ke pencari barang)`;
+    const own = ensureMaterial(entity, state, ownerId, ask,
+                               station.chest ?? state.station, container);
+    return own ?? `peti kehabisan bahan untuk ${result.missing} (sudah minta ke pencari barang)`;
   }
   const statusStr = `${blueprint.label}: ${result.index}/${result.total}`;
   logDebug(TAG, `tickBuild progress: ${statusStr}`);

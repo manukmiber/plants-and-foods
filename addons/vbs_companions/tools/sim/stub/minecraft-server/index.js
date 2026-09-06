@@ -61,6 +61,13 @@ let players = [];
 /** Dipakai sim.mjs: daftar pemain yang "online" di dunia tiruan. */
 export function __setPlayers(list) { players = list; }
 
+// Dimensi tiruan yang dipakai uji yang sedang berjalan. Tanpa ini,
+// world.getDimension() selalu memberi dimensi kosong, jadi allCompanions()
+// tidak pernah menemukan satu companion pun — dan semua kode yang mencari
+// companion LAIN (selfhelp.hasHelper, ask.js) tidak akan pernah teruji.
+let bound;
+export function __setDimension(dimension) { bound = dimension; }
+
 export const world = {
   afterEvents: {
     entitySpawn: evt(), entityLoad: evt(), entityRemove: evt(), entityDie: evt(),
@@ -70,7 +77,10 @@ export const world = {
   },
   beforeEvents: { chatSend: evt() },
   getAllPlayers() { return players; },
-  getDimension(id) { return makeDimension(id); },
+  getDimension(id) {
+    if (bound && id === "minecraft:overworld") return bound;
+    return makeDimension(id);
+  },
   getDynamicProperty(k) { return props.get(k); },
   setDynamicProperty(k, v) { props.set(k, v); },
   getTimeOfDay() { return 1000; },

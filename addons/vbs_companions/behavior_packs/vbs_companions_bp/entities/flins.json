@@ -37,6 +37,9 @@
       }
     },
     "component_groups": {
+      "vbs:tamed": {
+        "minecraft:is_tamed": {}
+      },
       "vbs:mode_follow": {
         "minecraft:behavior.follow_owner": {
           "priority": 7,
@@ -207,7 +210,27 @@
       },
       "minecraft:tameable": {
         "probability": 1.0,
-        "tame_items": [],
+        "tame_items": [
+          "red_flower",
+          "poppy",
+          "dandelion",
+          "blue_orchid",
+          "allium",
+          "azure_bluet",
+          "red_tulip",
+          "orange_tulip",
+          "white_tulip",
+          "pink_tulip",
+          "oxeye_daisy",
+          "cornflower",
+          "lily_of_the_valley",
+          "wither_rose",
+          "sunflower",
+          "lilac",
+          "rose_bush",
+          "peony",
+          "torchflower"
+        ],
         "tame_event": {
           "event": "vbs:on_tamed",
           "target": "self"
@@ -287,6 +310,7 @@
       "vbs:on_tamed": {
         "add": {
           "component_groups": [
+            "vbs:tamed",
             "vbs:mode_follow"
           ]
         }

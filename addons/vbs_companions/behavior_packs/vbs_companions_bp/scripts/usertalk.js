@@ -25,6 +25,7 @@ import { system, world } from "@minecraft/server";
 import { FAMILY, MODES } from "./config.js";
 import { report, say, sayFrom } from "./chat.js";
 import { getActivity } from "./activity.js";
+import { answerLatestYesNo, pendingAsks } from "./ask.js";
 import { energyOf, isResting, isSleeping, needsLabel, sleepOf } from "./energy.js";
 import { displayName } from "./nametag.js";
 import { readState } from "./state.js";
@@ -34,6 +35,11 @@ import { entStr, guard, logDebug, logInfo, logWarn } from "./logger.js";
 const TAG = "USERTALK";
 const CHAT_FORM = /^(?:chat|bicara)\s+(\S+)\s+([\s\S]+)$/i;
 const BANG_FORM = /^!(\S+)\s+([\s\S]+)$/;
+// Jawaban singkat untuk pertanyaan companion (ask.js). Cuma ditangkap kalau
+// memang ADA pertanyaan yang menggantung — kalau tidak, "ya" tetap kalimat
+// biasa yang lewat ke chat seperti seharusnya.
+const YES_FORM = /^\s*(ya|iya|yoi|yes|y|boleh|silakan)\s*$/i;
+const NO_FORM = /^\s*(tidak|nggak|gak|ngga|no|n|jangan)\s*$/i;
 
 function ownedCompanions(playerId) {
   return allCompanions(FAMILY).filter((c) => alive(c) && getOwnerId(c) === playerId);
@@ -184,6 +190,18 @@ export function orderMode(player, name, mode) {
     : { ok: false, message: "Tidak ada companion yang bisa diperintah sekarang." };
 }
 
+/**
+ * "ya" / "tidak" yang diketik polos di chat, tapi HANYA kalau pemain itu
+ * memang sedang ditanya sesuatu. Tanpa syarat itu, add-on akan menelan kata
+ * "ya" milik percakapan antar pemain di server.
+ */
+function shortAnswer(raw, sender) {
+  if (!sender || !pendingAsks(sender.id).some((q) => !q.multi)) return undefined;
+  if (YES_FORM.test(raw)) return "ya";
+  if (NO_FORM.test(raw)) return "tidak";
+  return undefined;
+}
+
 let wired = false;
 
 export function wireUserTalk() {
@@ -218,6 +236,18 @@ export function wireUserTalk() {
   try {
     world.beforeEvents.chatSend.subscribe(guard(TAG, "chatSend", (ev) => {
       const raw = ev.message ?? "";
+      const answer = shortAnswer(raw, ev.sender);
+      if (answer) {
+        const player = ev.sender;
+        ev.cancel = true;
+        system.run(guard(TAG, "chatSend/answer", () => {
+          const question = answerLatestYesNo(player.id, answer);
+          if (!question) {
+            player.sendMessage("§7Tidak ada pertanyaan yang menunggu jawaban.");
+          }
+        }));
+        return;
+      }
       const match = CHAT_FORM.exec(raw) ?? BANG_FORM.exec(raw);
       if (!match) return;
       const [, name, message] = match;

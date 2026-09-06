@@ -6,6 +6,109 @@ reconstructed afterwards, which is why the builder refuses to save without one.
 
 ## Unreleased
 
+### VBS Companions v1.6.0
+
+Tiga hal: **menjinakkan yang benar-benar bekerja**, companion yang **tidak lagi
+mentok menunggu bantuan yang tidak akan datang**, dan **buku yang berubah dari
+bacaan menjadi alat**.
+
+**Menjinakkan dikembalikan ke mesin gim:**
+
+- Akar masalahnya: `tame_items` di berkas entity ditulis **kosong**, dan seluruh
+  taming diserahkan ke script lewat `EntityTameableComponent.tame()`. Nama itu
+  tidak selalu ada di modul `@minecraft/server` versi stabil, jadi companion
+  tidak pernah benar-benar jinak di mata mesin gim — dan `behavior.follow_owner`
+  tidak punya tuan.
+- Sekarang `tame_items` berisi **19 bunga** (`red_flower` — nama lawas yang
+  terbukti bekerja — plus 18 nama bunga versi baru, sama persis dengan bahan
+  resep buku panduan). Gim sendiri yang menghabiskan bunganya dan menyalakan
+  `vbs:on_tamed`, persis cara serigala dijinakkan dengan tulang.
+- `vbs:on_tamed` sekarang memasang grup baru **`vbs:tamed`** yang isinya
+  `minecraft:is_tamed`. Itu penandanya: mesin gim tidak memasangnya sendiri, dan
+  tanpa penanda itu script tidak punya cara mengetahui taming sudah terjadi,
+  jadi pemilik tidak akan pernah tercatat.
+- Bunga di tangan dibaca dari **tiga sumber** (item di dalam event interaksi,
+  komponen equippable, lalu slot terpilih), bukan cuma `selectedSlotIndex`.
+  Satu-satunya sumber lama itulah sebab pesan "companion ini masih liar" muncul
+  padahal bunganya jelas dipegang.
+- Bunga **di luar** `tame_items` (mis. *pink petals*) tetap bisa dipakai: script
+  yang mengambil alih, menghabiskan bunganya, dan memicu `vbs:on_tamed` sendiri.
+  Jalur yang sama juga menyelamatkan dunia lama yang entity-nya belum diperbarui
+  — sesudah menunggu satu detik tanpa taming bawaan, script mengambil alih.
+- Bunganya boleh diberikan sambil jongkok atau tidak. Menuntut pemain berdiri
+  tegak cuma menambah satu sebab lagi untuk "kok tidak jinak-jinak".
+- `validate.py` menolak kalau tiga tempat ini melenceng: `tame_items` di entity,
+  `TAME_ITEMS` di `gen_packs.py`, dan `TAME_ITEMS` di `config.js` — plus setiap
+  bunga penjinak wajib ada di `FLOWERS`.
+
+**Bekerja sendiri kalau belum ada perajin/pencari barang:**
+
+- Rantai bantuan v1.4.0 punya titik patah yang besar: petani, penambang dan
+  pembangun **tidak pernah mencari bahannya sendiri**. Mereka memasang permintaan
+  lalu menunggu — dan kalau pemain baru punya satu companion, atau belum
+  menyuruh satu pun ke mode Merajin/Mencari Barang, permintaan itu tidak ada yang
+  membacanya. Companion berdiri diam selamanya.
+- Sekarang companion memeriksa dulu apakah ada companion **lain** milik pemilik
+  yang sama yang bermode Merajin atau Mencari Barang. Kalau tidak ada, dia
+  mengerjakannya sendiri: **menebang pohon dengan tangan kosong**, menggali batu,
+  membabat rumput — lalu merakit meja kerja, peti, papan nama dan alatnya dari
+  situ. Begitu ada penolong, rantai permintaan dipakai lagi.
+- Kemampuan mencari dan membongkar blok dipindah dari `looter.js` ke modul baru
+  `gather.js` dan dipakai bersama, bukan disalin — pencari barang tetap bekerja
+  persis seperti sebelumnya.
+- Berkeliling mencari bahan cuma dilakukan kalau pekerjaannya memang **mentok**
+  tanpa bahan itu. Versi pertama yang selalu berkeliling membuat penambang yang
+  kehabisan obor berjalan ke arah acak tiap setengah detik sambil "mencari
+  arang", dan terowongannya tidak pernah jadi.
+- Permintaan bahan `seed` akhirnya punya sasaran: `HUNT.seed` dulu daftar kosong,
+  jadi pencari barang tidak pernah bisa memenuhi satu pun pesanan bibit.
+
+**Companion bertanya, pemain menjawab (`ask.js`):**
+
+- **Petani** yang petinya kehabisan bibit bertanya: *"Apakah aku mencari bibit
+  sendiri, atau kamu yang mencarikan?"* — dijawab **ya** (membabat rumput sendiri)
+  atau **tidak** (menunggu kiriman).
+- **Penambang** bertanya *"Apa saja yang harus aku mine?"*, dijawab dengan
+  mencentang bijih di buku. Jawabannya bukan sekadar penyaring: **kedalaman
+  galian ikut menyesuaikan** — batu bara dan besi saja berarti berhenti di y 40,
+  bukan menggali sampai y −54.
+- Bijih yang tidak dicentang tidak dikejar ke dinding terowongan. Yang kebetulan
+  berdiri di jalur galian tetap dipungut — bloknya memang harus dibongkar supaya
+  lorongnya lewat, dan meninggalkannya sama saja dengan membuangnya.
+- Dua cara menjawab: ketik **`ya`/`tidak`** di chat, atau lewat **Buku Panduan »
+  Pertanyaan Companion**. Kata "ya" cuma ditangkap add-on kalau memang ada
+  pertanyaan yang menggantung untuk pemain itu — kalau tidak, kalimatnya lewat ke
+  chat seperti seharusnya.
+- Pertanyaan yang belum dijawab **tidak pernah menghentikan pekerjaan**, dan yang
+  sama tidak diulang lebih cepat dari lima menit sekali. Jawabannya disimpan per
+  pemilik di dynamic property dunia, jadi selamat dari dunia ditutup.
+
+**Buku Panduan jadi alat, bukan bacaan:**
+
+- Memilih satu companion di **Kendalikan Companion** sekarang membuka halamannya
+  sendiri, bukan langsung menu biasa. Isinya: **Sedang Apa** (pekerjaan detik ini,
+  tenaga, kantuk, bahan yang ditunggu), **Isi Peti & Kantong**, **Ngobrol** (kotak
+  teks — jawabannya masuk chat), **Jawab Pertanyaannya**, **Apa yang Ditambang**
+  (khusus penambang), dan **Menu Lengkap** yang lama.
+- Isi **kantong pribadi** ikut ditampilkan bersama isi peti. Selama peti belum
+  berdiri semua hasil kerja companion hidup di kantong, dan pemain yang cuma
+  melihat peti kosong akan mengira companion tidak bekerja.
+- Daftar companion di buku sekarang menyebut **apa yang sedang dikerjakan**, bukan
+  cuma jaraknya, dan menandai siapa yang sedang bertanya.
+- Dua bab baru di Cara Pakai: *Mereka bertanya padamu* dan *Buku ini sebagai alat*.
+
+**Uji:**
+
+- `tools/sim/` bertambah empat kelompok pemeriksaan: menjinakkan (empat jalur,
+  termasuk bahwa bunga TIDAK ikut diambil script untuk bunga yang ditangani mesin
+  gim), companion sendirian yang benar-benar menebang pohon dan menempa
+  beliungnya, pertanyaan yang dijawab lewat chat dan lewat buku, dan halaman buku
+  yang terbuka tanpa melempar.
+- Dunia tiruan akhirnya punya **daftar entity**: `getEntities()` dulu selalu
+  kosong, jadi seluruh kode yang mencari companion LAIN tidak pernah teruji sama
+  sekali — dan justru di situ fitur "kerja sendiri" bekerja.
+
+
 ### VBS Companions v1.5.0
 
 Empat tambahan yang intinya sama: **isi mod bisa ditambah tanpa menyentuh kode**,

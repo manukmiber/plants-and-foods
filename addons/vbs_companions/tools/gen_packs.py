@@ -33,7 +33,7 @@ import model
 BP = os.path.join(model.HERE, "..", "behavior_packs", "vbs_companions_bp")
 RP = os.path.join(model.HERE, "..", "resource_packs", "vbs_companions_rp")
 
-VERSION = [1, 5, 0]
+VERSION = [1, 6, 0]
 MIN_ENGINE = [1, 21, 0]
 
 # UUID ini adalah identitas pack di mata Minecraft. JANGAN diubah setelah dirilis:
@@ -71,6 +71,20 @@ GUIDE_FLOWERS = [
     "lily_of_the_valley", "wither_rose", "sunflower", "lilac", "rose_bush",
     "peony", "torchflower",
 ]
+
+# Bunga yang benar-benar disebut komponen minecraft:tameable. Daftar ini yang
+# membuat taming BAWAAN MESIN GIM jalan: pemain memegang bunga, mengklik
+# companion, gim sendiri yang menghabiskan bunganya dan menyalakan
+# vbs:on_tamed. Versi lama menulis "tame_items": [] dan menyerahkan seluruh
+# taming ke script — dan di situlah semuanya patah, karena satu-satunya jalur
+# yang tersisa (EntityTameableComponent.tame()) tidak selalu ada di modul
+# stabil, jadi companion tidak pernah benar-benar jinak.
+#
+# "red_flower" adalah nama lawas yang masih dikenal gim dan satu-satunya nilai
+# yang sudah terbukti bekerja di dunia sungguhan; sisanya nama bunga versi
+# baru, yang sama persis dengan bahan resep buku panduan — jadi bunga yang bisa
+# menempa buku juga bisa menjinakkan companion.
+TAME_ITEMS = ["red_flower", *GUIDE_FLOWERS]
 
 CROP_BLOCKS = ["minecraft:wheat", "minecraft:carrots", "minecraft:potatoes",
                "minecraft:beetroot", "minecraft:nether_wart"]
@@ -251,14 +265,14 @@ def entity_doc(char):
             ],
         },
         # Kepemilikan sisi mesin gim: yang membuat behavior.follow_owner punya
-        # tuan. tame_items sengaja kosong — companion liar (untamed) begitu
-        # muncul, dan taming SEPENUHNYA dikendalikan script lewat pemberian
-        # satu bunga (lihat main.js: tryFeedFlower -> tameable.tame(player)),
-        # supaya kita yang menentukan siapa pemiliknya, bukan mesin taming
-        # bawaan yang mengambil pemain terdekat secara acak.
+        # tuan. Companion tetap LIAR begitu muncul — yang berubah cuma siapa
+        # yang mengerjakan taming-nya: sekarang mesin gim, lewat tame_items di
+        # bawah. Pemain memegang bunga, mengklik companion, bunganya habis dan
+        # vbs:on_tamed menyala; script tinggal mencatat siapa pemiliknya
+        # (taming.js) begitu grup vbs:tamed terpasang.
         "minecraft:tameable": {
             "probability": 1.0,
-            "tame_items": [],
+            "tame_items": TAME_ITEMS,
             "tame_event": {"event": "vbs:on_tamed", "target": "self"},
         },
         # Memunculkan tombol interact di layar sentuh; UI-nya sendiri dari script.
@@ -311,6 +325,11 @@ def entity_doc(char):
     # Hanya "Ikuti Aku" (dan "Bertarung", yang memang tugasnya menjaga pemain)
     # yang boleh mendekat sendiri.
     component_groups = {
+        # Penanda "sudah jinak" yang bisa DIBACA SCRIPT. Mesin gim tidak
+        # memasang minecraft:is_tamed sendiri — pack-lah yang memasangnya lewat
+        # tame_event — dan tanpa penanda ini script tidak punya cara mengetahui
+        # taming bawaan sudah terjadi, jadi pemilik tidak akan pernah tercatat.
+        "vbs:tamed": {"minecraft:is_tamed": {}},
         "vbs:mode_follow": {
             "minecraft:behavior.follow_owner": follow_owner(1.15, 4.0, 2.0),
             "minecraft:behavior.random_stroll": stroll(0.7, xz=6, y=4),
@@ -387,7 +406,7 @@ def entity_doc(char):
     events = {
         "minecraft:entity_spawned": {
             "add": {"component_groups": ["vbs:mode_follow", "vbs:weapon_melee"]}},
-        "vbs:on_tamed": {"add": {"component_groups": ["vbs:mode_follow"]}},
+        "vbs:on_tamed": {"add": {"component_groups": ["vbs:tamed", "vbs:mode_follow"]}},
         "vbs:menu_opened": {},          # dipakai tombol interact layar sentuh
         "vbs:use_melee": {"remove": {"component_groups": WEAPON_GROUPS},
                           "add": {"component_groups": ["vbs:weapon_melee"]}},

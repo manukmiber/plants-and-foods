@@ -19,6 +19,12 @@
 #   * rancangan JSON di blueprints/ benar-benar dibaca dan dibangun
 #   * kalimat dan topik JSON di dialogue/ ikut terucap tanpa menghapus bawaan
 #   * buku panduan diberikan, dikembalikan sesudah mati, dan bisa dimatikan
+#   * menjinakkan dengan bunga: jalur mesin gim, jalur script, dan pencatatan
+#     pemilik sesudah keduanya
+#   * companion sendirian menebang pohon dan menempa alatnya sendiri, lalu
+#     berhenti begitu ada perajin milik pemilik yang sama
+#   * companion bertanya dan pemain menjawab; pilihan bijih penambang benar-benar
+#     mengubah kedalaman galiannya
 #   * Beta API: sim dijalankan DUA KALI, dengan dan tanpa modul beta
 #
 # Butuh Node.js 18+. Keluar dengan kode 1 kalau ada pemeriksaan yang gagal.

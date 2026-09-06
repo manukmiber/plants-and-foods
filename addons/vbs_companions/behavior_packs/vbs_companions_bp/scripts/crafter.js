@@ -22,9 +22,8 @@ import {
 } from "./crafting.js";
 import { hold } from "./hold.js";
 import { isGreeting } from "./look.js";
-import {
-  clearRequest, craftRequests, requestMaterial,
-} from "./requests.js";
+import { clearRequest, craftRequests } from "./requests.js";
+import { ensureMaterial } from "./selfhelp.js";
 import { writeState } from "./state.js";
 import { ensureStation } from "./station.js";
 import {
@@ -76,9 +75,10 @@ function serveTool(entity, state, container, req, ownerId, station) {
   const tier = bestTier(container, req.kind, req.neededRank - 1);
   if (!tier) {
     const ask = askForTier(wanted);
-    requestMaterial(entity, state, ownerId, ask, station.chest ?? state.station);
+    const own = ensureMaterial(entity, state, ownerId, ask,
+                               station.chest ?? state.station, container, { search: true });
     logDebug(TAG, `Bahan ${wanted.key} untuk ${req.kind} belum ada; minta "${ask}" ke pencari barang.`);
-    return `menunggu bahan ${tierName(wanted.key)} untuk ${labelOf(req.kind)} milik ${req.fromName}`;
+    return own ?? `menunggu bahan ${tierName(wanted.key)} untuk ${labelOf(req.kind)} milik ${req.fromName}`;
   }
 
   const result = craftDeliverStep(entity, state, req.kind, container, tier);
@@ -88,8 +88,9 @@ function serveTool(entity, state, container, req, ownerId, station) {
     return "bahan habis di tengah menempa, pesanan dibatalkan";
   }
   if (result.status === "no-table") {
-    requestMaterial(entity, state, ownerId, "wood", station.chest ?? state.station);
-    return "butuh meja kerja untuk menempa";
+    const own = ensureMaterial(entity, state, ownerId, "wood",
+                               station.chest ?? state.station, container);
+    return own ?? "butuh meja kerja untuk menempa";
   }
   if (result.status === "walking" || result.status === "crafting") {
     writeState(entity, state);
@@ -135,14 +136,16 @@ function serveItem(entity, state, container, req, ownerId, station) {
     return `merakit ${recipe.label} untuk ${req.fromName}`;
   }
   if (made.status === "no-table") {
-    requestMaterial(entity, state, ownerId, "wood", station.chest ?? state.station);
-    return "butuh meja kerja untuk merakit pesanan";
+    const own = ensureMaterial(entity, state, ownerId, "wood",
+                               station.chest ?? state.station, container);
+    return own ?? "butuh meja kerja untuk merakit pesanan";
   }
   if (made.status !== "done") {
     const ask = made.missing ?? recipe.ask;
-    requestMaterial(entity, state, ownerId, ask, station.chest ?? state.station);
+    const own = ensureMaterial(entity, state, ownerId, ask,
+                               station.chest ?? state.station, container);
     logDebug(TAG, `Bahan ${recipe.label} kurang (${ask}); permintaan bahan dipasang.`);
-    return `menunggu bahan ${ask} untuk ${recipe.label} milik ${req.fromName}`;
+    return own ?? `menunggu bahan ${ask} untuk ${recipe.label} milik ${req.fromName}`;
   }
 
   takeFrom(container, recipe.id, 1);
@@ -167,7 +170,12 @@ export function tickCrafter(entity, state, owner) {
   const container = station.container;
   if (!container) return "tidak ada peti maupun kantong";
   if (station.missing) {
-    requestMaterial(entity, state, ownerId, station.missing, station.chest ?? state.station);
+    const own = ensureMaterial(entity, state, ownerId, station.missing,
+                               station.chest ?? state.station, container);
+    if (own) {
+      writeState(entity, state);
+      return own;
+    }
   }
 
   if (state.delivering) {
@@ -182,9 +190,12 @@ export function tickCrafter(entity, state, owner) {
   // satu pun, dialah yang membuatnya — asal punya kayunya.
   const table = ensureTable(entity, container, state.station ?? entity.location);
   if (!table.at) {
-    requestMaterial(entity, state, ownerId, table.missing ?? "wood", station.chest ?? state.station);
+    const need = table.missing ?? "wood";
+    const own = ensureMaterial(entity, state, ownerId, need,
+                               station.chest ?? state.station, container, { search: true });
     logInfo(TAG, `${entStr(entity)} belum bisa menyiapkan meja kerja (${table.why}).`);
-    return "belum ada meja kerja: minta kayu ke pencari barang";
+    writeState(entity, state);
+    return own ?? "belum ada meja kerja: minta kayu ke pencari barang";
   }
 
   const pending = craftRequests(ownerId);

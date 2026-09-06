@@ -29,6 +29,8 @@ import { hold } from "./hold.js";
 import { isGreeting } from "./look.js";
 import { claimAt, chunkBounds, claimsNear, getClaim, markWorked } from "./claim.js";
 import { requestItem, requestMaterial, requestTool } from "./requests.js";
+import { askOwner } from "./ask.js";
+import { ensureMaterial, gatherOwn } from "./selfhelp.js";
 import { patchState, writeState } from "./state.js";
 import { ensureStation, refreshSign } from "./station.js";
 import {
@@ -361,8 +363,17 @@ export function tickFarm(entity, state, owner) {
     return "tidak ada tempat menyimpan apa pun";
   }
   if (station.missing) {
-    requestMaterial(entity, state, ownerId, station.missing, station.chest ?? state.station);
+    // Kayu untuk peti dan papan namanya diambil sendiri kalau memang ada pohon
+    // di dekat sini — inilah "companion membangun tempat kerjanya sendiri".
+    // Kalau tidak ada, dia tidak berkeliling mencarinya: bekerja pakai kantong
+    // sambil menunggu kiriman jauh lebih berguna daripada berjalan-jalan.
+    const own = ensureMaterial(entity, state, ownerId, station.missing,
+                               station.chest ?? state.station, container);
     logDebug(TAG, `Peti stasiun belum bisa dibuat, butuh ${station.missing}. Sementara pakai kantong.`);
+    if (own) {
+      writeState(entity, state);
+      return own;
+    }
   }
 
   // 1. Alat dulu — tidak ada mencangkul dengan tangan kosong.
@@ -370,12 +381,16 @@ export function tickFarm(entity, state, owner) {
   const craft = craftStep(entity, state, "hoe", container, held);
   if (craft === "no-material") {
     requestTool(entity, state, ownerId, "hoe", held, station.chest ?? state.station);
-    requestMaterial(entity, state, ownerId, "wood", station.chest ?? state.station);
-    return "belum ada cangkul: minta bahan ke perajin & pencari barang";
+    const own = ensureMaterial(entity, state, ownerId, "wood",
+                               station.chest ?? state.station, container, { search: true });
+    writeState(entity, state);
+    return own ?? "belum ada cangkul: minta bahan ke perajin & pencari barang";
   }
   if (craft === "no-table") {
-    requestMaterial(entity, state, ownerId, "wood", station.chest ?? state.station);
-    return "butuh meja kerja (dan kayu untuk membuatnya)";
+    const own = ensureMaterial(entity, state, ownerId, "wood",
+                               station.chest ?? state.station, container, { search: true });
+    writeState(entity, state);
+    return own ?? "butuh meja kerja (dan kayu untuk membuatnya)";
   }
   if (craft === "walking" || craft === "crafting") {
     writeState(entity, state);
@@ -506,8 +521,9 @@ function phaseLevel(entity, state, area, container, farm, ownerId, station) {
     return `meratakan lahan (${leveled} blok)`;
   }
   if (needFill) {
-    requestMaterial(entity, state, ownerId, "dirt", station.chest ?? state.station);
-    return "butuh tanah timbun di peti untuk meratakan petak yang cekung";
+    const own = ensureMaterial(entity, state, ownerId, "dirt",
+                               station.chest ?? state.station, container);
+    return own ?? "butuh tanah timbun di peti untuk meratakan petak yang cekung";
   }
   if (farm.swept >= total) {
     toPhase(entity, farm, "water", "seluruh petak sudah rata");
@@ -650,12 +666,14 @@ function phaseWater(entity, state, area, container, farm, ownerId, station) {
       }
       if (made.status === "walking" || made.status === "crafting") return "membuat ember di meja kerja";
       if (made.status === "no-table") {
-        requestMaterial(entity, state, ownerId, "wood", station.chest ?? state.station);
-        return "butuh meja kerja untuk membuat ember";
+        const own = ensureMaterial(entity, state, ownerId, "wood",
+                                   station.chest ?? state.station, container);
+        return own ?? "butuh meja kerja untuk membuat ember";
       }
       requestItem(entity, state, ownerId, "bucket", station.chest ?? state.station);
-      requestMaterial(entity, state, ownerId, "iron", station.chest ?? state.station);
-      return "belum ada ember: minta 3 besi ke perajin/pencari barang";
+      const own = ensureMaterial(entity, state, ownerId, "iron",
+                                 station.chest ?? state.station, container);
+      return own ?? "belum ada ember: minta 3 besi ke perajin/pencari barang";
     }
   }
 
@@ -779,15 +797,52 @@ function phaseTill(entity, state, area, container, farm, ownerId, station) {
 
 /* --- fase 4: menanam --- */
 
+/**
+ * Petinya kehabisan bibit. Siapa yang mencarinya?
+ *
+ * Ini keputusan yang tidak enak ditebak sendiri oleh kode: mencari bibit
+ * berarti companion meninggalkan ladangnya dan membabati rumput di sekitar,
+ * dan sebagian pemain justru lebih suka menyetok bibit sendiri di peti. Jadi
+ * petani BERTANYA sekali, lalu menuruti jawabannya selamanya (sampai diubah
+ * lagi lewat Buku Panduan).
+ */
+function seedHunt(entity, state, ownerId, container, station) {
+  const answer = state.seedSelf;
+
+  if (answer === "ya") {
+    const own = gatherOwn(entity, state, ownerId, "seed", container, { search: true });
+    return own ?? "mencari bibit sendiri di rerumputan";
+  }
+
+  if (answer === "tidak") {
+    requestMaterial(entity, state, ownerId, "seed", station.chest ?? state.station);
+    return "peti kehabisan bibit, menunggu kiriman pemilik";
+  }
+
+  // Belum pernah dijawab: tanyakan, dan sementara itu tetap pasang permintaan
+  // supaya pencari barang yang kebetulan ada tidak menganggur menunggu jawaban.
+  askOwner(entity, ownerId, {
+    id: "seed",
+    field: "seedSelf",
+    text: "Petinya kehabisan bibit. Apakah aku mencari bibit sendiri, atau kamu yang mencarikan?",
+    options: [
+      { key: "ya", label: "Aku yang mencari bibit sendiri" },
+      { key: "tidak", label: "Pemilik yang mencarikan bibit" },
+    ],
+  });
+  requestMaterial(entity, state, ownerId, "seed", station.chest ?? state.station);
+  return "menunggu jawaban pemilik soal bibit";
+}
+
 function phasePlant(entity, state, area, container, farm, ownerId, station) {
   const dimension = entity.dimension;
   const total = areaSize(area);
   const seeds = seedsIn(container);
   if (!seeds.length) {
-    requestMaterial(entity, state, ownerId, "seed", station.chest ?? state.station);
+    const status = seedHunt(entity, state, ownerId, container, station);
     if (farm.swept >= total) toPhase(entity, farm, "tend", "tidak ada bibit, lanjut merawat");
     farm.swept++;
-    return "peti kehabisan bibit, sudah minta dicarikan";
+    return status;
   }
 
   if (stillWalking(entity, farm)) return "menuju petak yang mau ditanami";

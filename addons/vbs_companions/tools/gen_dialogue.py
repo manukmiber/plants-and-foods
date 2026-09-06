@@ -36,11 +36,12 @@ KEYS = [
     "greet", "idle", "farm", "mine", "wander", "build", "crafter", "looter",
     "attack", "hurt", "tired", "rest", "village", "reply", "done", "sleepy",
     "wake", "bucket", "ask", "thanks", "morning", "night", "alone",
+    "swim", "burn", "eat", "hail", "trader", "fisher", "rancher",
 ]
 
 # Harus sama persis dengan MODES di scripts/config.js.
 MODES = ["follow", "farm", "attack", "stay", "mine", "wander", "build",
-         "crafter", "looter"]
+         "crafter", "looter", "trader", "fisher", "rancher"]
 
 ID_RE = re.compile(r"^[a-z][a-z0-9_]{1,30}$")
 MAX_TURNS = 8

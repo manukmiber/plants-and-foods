@@ -167,6 +167,30 @@
           "*": true
         },
         {
+          "face_neutral": "variable.vbs_face == 0"
+        },
+        {
+          "face_blink": "variable.vbs_face == 1"
+        },
+        {
+          "face_smile": "variable.vbs_face == 2"
+        },
+        {
+          "face_happy": "variable.vbs_face == 3"
+        },
+        {
+          "face_surprised": "variable.vbs_face == 4"
+        },
+        {
+          "face_hurt": "variable.vbs_face == 5"
+        },
+        {
+          "face_sleepy": "variable.vbs_face == 6"
+        },
+        {
+          "face_sing": "variable.vbs_face == 7"
+        },
+        {
           "gear_hat": "query.property('vbs:hat') == 1"
         },
         {

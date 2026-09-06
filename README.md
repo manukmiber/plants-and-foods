@@ -106,7 +106,7 @@ builder never reads or writes them.
 
 | Add-on | What it is |
 |---|---|
-| [`addons/vbs_companions/`](addons/vbs_companions/) | Five companion characters that follow you, farm, fight, mine, wander and build — tamed with a flower, then commanded from a UI that opens when you sneak and tap them, or from a guide book that cannot be lost. The book is the remote control: what each one is doing right now, what is in its chest, a box to talk to it, and the questions it is waiting on you to answer. With no crafter or gatherer of yours around, they chop trees by hand and make their own tools rather than waiting. New buildings and new dialogue go in as JSON files rather than code. Bedrock only. |
+| [`addons/vbs_companions/`](addons/vbs_companions/) | Five companion characters that follow you, farm, fight, mine, wander and build — tamed with a flower, then commanded from a UI that opens when you sneak and tap them, or from a guide book that cannot be lost. The book is the remote control: what each one is doing right now, what is in its chest, a box to talk to it, and the questions it is waiting on you to answer. With no crafter or gatherer of yours around, they chop trees by hand and make their own tools rather than waiting. They keep out of deep water, swim back to shore when they fall in, run for water when they catch fire, and eat when they are hurt — asking the crafter for bread when the chest is empty. The book is also where you stake a chunk as field or village land, and where you point one of them at the bed you want it to sleep in. New buildings and new dialogue go in as JSON files rather than code. Bedrock only. |
 
 ## Connecting the builder to this repo
 

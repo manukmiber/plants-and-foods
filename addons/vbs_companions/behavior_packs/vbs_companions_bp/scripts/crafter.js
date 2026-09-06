@@ -16,7 +16,7 @@
 
 import { system } from "@minecraft/server";
 
-import { FAMILY, ITEM_RECIPES, TOOL_TIERS } from "./config.js";
+import { FAMILY, FOOD_HEAL, ITEM_RECIPES, KITCHEN, TOOL_TIERS } from "./config.js";
 import { report, sayFrom } from "./chat.js";
 import {
   askForTier, bestTier, craftDeliverStep, craftItemStep, ensureFurnace,
@@ -26,6 +26,9 @@ import { hold } from "./hold.js";
 import { isGreeting } from "./look.js";
 import { displayName } from "./nametag.js";
 import { canMake } from "./items.js";
+import {
+  cookStep, hungriest, mealsReady, nextMeal, nextRoast, offerToOwner, roastStep,
+} from "./kitchen.js";
 import { clearRequest, craftRequests } from "./requests.js";
 import { ensureMaterial } from "./selfhelp.js";
 import { pickSmelt, smeltStep } from "./smelting.js";
@@ -33,7 +36,7 @@ import { readState, writeState } from "./state.js";
 import { ensureStation, stationTravel } from "./station.js";
 import {
   alive, allCompanions, containerAt, countIn, dist2, face, getGear, getMode,
-  getOwnerId, makeItem, putIn, sound, steer, takeFrom,
+  getOwnerId, healthOf, makeItem, prettyItem, putIn, sound, steer, takeFrom,
 } from "./util.js";
 import { entStr, logDebug, logInfo, logWarn, posStr } from "./logger.js";
 
@@ -124,13 +127,42 @@ function serveTool(entity, state, container, req, ownerId, station) {
   return `${labelOf(req.kind)} selesai, mengantar ke ${req.fromName}`;
 }
 
-/** Pesanan barang jadi (ember, peti, papan nama, meja kerja, obor). */
+/**
+ * Pesanan makanan boleh dipenuhi makanan APA PUN yang ada di peti.
+ *
+ * Yang memesan roti (survival.js) sebenarnya sedang meminta "sesuatu untuk
+ * dimakan" — companion yang baru hampir tenggelam tidak sedang memilih menu.
+ * Kalau di peti sudah ada daging matang atau apel, mengantar itu jauh lebih
+ * cepat daripada menunggu tiga gandum dari ladang yang belum panen.
+ */
+function readyFood(container) {
+  if (!container) return undefined;
+  return Object.keys(FOOD_HEAL).find((id) => countIn(container, id) > 0);
+}
+
+/** Pesanan barang jadi (ember, peti, papan nama, meja kerja, obor, roti). */
 function serveItem(entity, state, container, req, ownerId, station) {
   const recipe = ITEM_RECIPES[req.kind];
   if (!recipe) {
     logWarn(TAG, `Pesanan barang "${req.kind}" tidak dikenal; dibuang dari papan.`);
     clearRequest(ownerId, req.id);
     return "pesanan tidak dikenal, dibuang";
+  }
+
+  if (req.kind === "bread") {
+    const food = readyFood(container);
+    if (food && food !== recipe.id && takeFrom(container, food, 1) === 1) {
+      state.delivering = {
+        item: { id: food, amount: 1 },
+        to: req.stationPos, forName: req.fromName, kind: req.kind,
+        label: prettyItem(food),
+      };
+      clearRequest(ownerId, req.id);
+      writeState(entity, state);
+      logInfo(TAG, `Pesanan makanan ${req.fromName} dipenuhi ${food} yang sudah ada di peti.`);
+      report(entity, `${prettyItem(food)} untuk ${req.fromName} sudah kuambil dari peti.`);
+      return `mengantar ${prettyItem(food)} ke ${req.fromName}`;
+    }
   }
 
   // Kalau barangnya sudah ada di peti perajin, tidak perlu menempa lagi.
@@ -248,11 +280,18 @@ function idleWork(entity, state, container, ownerId, station) {
     }
   }
 
-  // 2. Menempa alat untuk companion lain, tanpa menunggu diminta.
+  // 2. DAPUR. Perajin yang menganggur memasak, bukan berdiri di samping
+  //    petinya. Ini mata rantai terakhir yang selama ini hilang: petani
+  //    memanen gandum, pemancing membawa ikan, peternak membawa daging — dan
+  //    semuanya berhenti sebagai bahan mentah sampai ada yang memasaknya.
+  const cooked = cookForEveryone(entity, state, container, ownerId, near);
+  if (cooked) return cooked;
+
+  // 3. Menempa alat untuk companion lain, tanpa menunggu diminta.
   const order = nextToolOrder(entity, ownerId);
   if (order) return serveTool(entity, state, container, order, ownerId, station);
 
-  // 3. Benar-benar tidak ada pekerjaan: siapkan tungku untuk nanti.
+  // 4. Benar-benar tidak ada pekerjaan: siapkan tungku untuk nanti.
   const now = system.currentTick;
   if (now - (state.furnaceTry ?? -FURNACE_RETRY) < FURNACE_RETRY) return undefined;
   state.furnaceTry = now;
@@ -267,6 +306,70 @@ function idleWork(entity, state, container, ownerId, station) {
   }
   logDebug(TAG, `Tungku belum bisa dipasang (${furnace.why}); dicoba lagi nanti.`);
   return undefined;
+}
+
+/**
+ * Memasak, mengantar ke yang lapar, dan menyisihkan bekal untuk pemain.
+ *
+ * Berhenti sendiri di ambang stok: perajin yang memasak tanpa batas akan
+ * mengubah seluruh gandum ladang jadi roti yang tidak ada yang makan, dan peti
+ * yang penuh roti tidak muat lagi menampung hasil panen berikutnya.
+ */
+function cookForEveryone(entity, state, container, ownerId, near) {
+  // 2a. Ada companion yang nyawanya tipis dan makanannya sudah ada? Antar.
+  if (mealsReady(container) > 0 && !state.delivering) {
+    const hungry = hungriest(allCompanions(FAMILY), ownerId, healthOf, KITCHEN.feedBelow);
+    if (hungry && hungry.id !== entity.id) {
+      const to = readState(hungry).station;
+      if (to) {
+        const food = Object.keys(FOOD_HEAL).find((id) => countIn(container, id) > 0);
+        if (food && takeFrom(container, food, 1) === 1) {
+          state.delivering = {
+            item: { id: food, amount: 1 }, to,
+            forName: displayName(hungry), kind: "bread", label: prettyItem(food),
+          };
+          writeState(entity, state);
+          logInfo(TAG, `${entStr(entity)} mengantar ${food} ke ${displayName(hungry)} yang terluka.`);
+          report(entity, `${displayName(hungry)} terluka. Kubawakan makanan.`);
+          return `mengantar ${prettyItem(food)} ke ${displayName(hungry)}`;
+        }
+      }
+    }
+  }
+
+  // 2b. Stok dapur belum penuh: masak.
+  if (mealsReady(container) < KITCHEN.stock) {
+    if (nextRoast(container)) {
+      const roast = roastStep(entity, state, container);
+      if (roast.status === "walking") return `menuju tungku untuk membakar ${roast.label}`;
+      if (roast.status === "roasting") return `membakar ${roast.label} di tungku`;
+      if (roast.status === "done") {
+        report(entity, `${roast.label} sudah matang.`);
+        return `${roast.label} selesai dibakar`;
+      }
+      if (roast.status === "no-furnace") {
+        const own = ensureMaterial(entity, state, ownerId, roast.missing ?? "stone",
+                                   state.station, container, { search: true });
+        if (own) return own;
+      }
+    }
+    if (nextMeal(container)) {
+      const table = ensureTable(entity, container, {
+        x: Math.floor(near.x), y: Math.floor(near.y), z: Math.floor(near.z),
+      });
+      const meal = cookStep(entity, state, container, table?.at);
+      if (meal.status === "walking") return `menuju meja kerja untuk memasak ${meal.label}`;
+      if (meal.status === "cooking") return `memasak ${meal.label}`;
+      if (meal.status === "done") {
+        sayFrom(entity, "done");
+        report(entity, `${meal.made}x ${meal.label} sudah jadi.`);
+        return `${meal.label} selesai dimasak`;
+      }
+    }
+  }
+
+  // 2c. Sudah banyak: beri tahu pemiliknya sekali, jangan tiap denyut.
+  return offerToOwner(entity, state, container);
 }
 
 // Giliran satu pesanan sebelum diserahkan ke pesanan berikutnya. Sama seperti

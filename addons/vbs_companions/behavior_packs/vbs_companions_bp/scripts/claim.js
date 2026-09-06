@@ -1,11 +1,17 @@
 /**
- * Patok ladang: pemain menandai chunk mana yang boleh digarap companion.
+ * Patok ladang dan patok desa: pemain menandai chunk mana yang boleh digarap
+ * atau dibangun companion.
+ *
+ * Patoknya BUKAN item. Dulu berupa stik bernama yang harus dibawa dan
+ * diklikkan ke tanah chunk yang dituju, dan itu gagal dua arah: stik bernama
+ * tenggelam di antara stik biasa yang memang berkarung-karung dibuat perajin,
+ * dan chunk di seberang lembah tetap harus didatangi dulu. Satu-satunya jalan
+ * sekarang adalah Peta Patok di Buku Panduan, yang memanggil toggleClaimAt di
+ * bawah dengan koordinat chunk-nya langsung.
  */
 
 import { system, world } from "@minecraft/server";
-import {
-  MARKER, STAKE_ITEM, STAKE_NAME, VILLAGE_STAKE_ITEM, VILLAGE_STAKE_NAME,
-} from "./config.js";
+import { MARKER } from "./config.js";
 import {
   claimKey, clearClaim, getClaim, readClaims, setClaim,
 } from "./state.js";
@@ -17,9 +23,9 @@ import {
 // keluhan itu.
 export { getClaim };
 import {
-  blockAt, chunkCenter, chunkOf, dist2, give, isFooting, makeItem, particle, sound,
+  blockAt, chunkCenter, chunkOf, dist2, isFooting, particle, sound,
 } from "./util.js";
-import { entStr, logDebug, logError, logInfo, logWarn, posStr } from "./logger.js";
+import { entStr, logDebug, logInfo, logWarn, posStr } from "./logger.js";
 
 const TAG = "CLAIM";
 const BEAM_HEIGHT = 18;
@@ -28,104 +34,6 @@ const BEAM = {
   free: "minecraft:basic_flame_particle",
   claimed: "minecraft:villager_happy",
 };
-
-export function makeStake() {
-  logDebug(TAG, "Membuat ItemStack Patok Ladang...");
-  const item = makeItem(STAKE_ITEM, 1);
-  if (!item) {
-    logError(TAG, `Gagal membuat item patok dengan ID: ${STAKE_ITEM}`);
-    return undefined;
-  }
-  item.nameTag = STAKE_NAME;
-  try {
-    item.setLore([
-      "§7Klik tanah untuk mematok chunk itu",
-      "§7sebagai ladang. Klik lagi untuk mencabut.",
-      "§8Merah = belum digarap, hijau = sudah.",
-    ]);
-  } catch (e) {
-    logWarn(TAG, "setLore tidak didukung pada versi ini, nama item tetap terpasang.", e);
-  }
-  logDebug(TAG, "Patok ladang berhasil dibuat.");
-  return item;
-}
-
-export function isStake(itemStack) {
-  const result = Boolean(itemStack) && itemStack.typeId === STAKE_ITEM &&
-    itemStack.nameTag === STAKE_NAME;
-  logDebug(TAG, `isStake dicek: ${itemStack?.typeId} ("${itemStack?.nameTag}") -> ${result}`);
-  return result;
-}
-
-export function ensureStake(player) {
-  logDebug(TAG, `ensureStake dipanggil untuk pemain: ${player?.name}`);
-  const container = player.getComponent("minecraft:inventory")?.container;
-  if (!container) {
-    logWarn(TAG, `ensureStake gagal: Pemain ${player?.name} tidak memiliki inventory container.`);
-    return false;
-  }
-  for (let i = 0; i < container.size; i++) {
-    if (isStake(container.getItem(i))) {
-      logDebug(TAG, `Pemain ${player.name} sudah memiliki patok di slot ${i}.`);
-      return false;
-    }
-  }
-  give(player, makeStake());
-  player.sendMessage(
-    "§eKamu diberi §fPatok Ladang§e. §7Klik tanah untuk memilih chunk yang boleh " +
-    "digarap. Penanda merah berarti belum digarap, hijau berarti sudah.");
-  logInfo(TAG, `Patok ladang diberikan ke pemain ${player.name}.`);
-  return true;
-}
-
-export function makeVillageStake() {
-  logDebug(TAG, "Membuat ItemStack Patok Desa...");
-  const item = makeItem(VILLAGE_STAKE_ITEM, 1);
-  if (!item) {
-    logError(TAG, `Gagal membuat item patok desa dengan ID: ${VILLAGE_STAKE_ITEM}`);
-    return undefined;
-  }
-  item.nameTag = VILLAGE_STAKE_NAME;
-  try {
-    item.setLore([
-      "§7Klik tanah untuk mematok chunk itu",
-      "§7sebagai lahan desa. Klik lagi untuk mencabut.",
-      "§8Bisa lebih dari satu chunk — Pembangun akan",
-      "§8membuatkan satu rumah berisi ranjang di tiap chunk.",
-    ]);
-  } catch (e) {
-    logWarn(TAG, "setLore tidak didukung pada versi ini, nama item tetap terpasang.", e);
-  }
-  return item;
-}
-
-export function isVillageStake(itemStack) {
-  const result = Boolean(itemStack) && itemStack.typeId === VILLAGE_STAKE_ITEM &&
-    itemStack.nameTag === VILLAGE_STAKE_NAME;
-  logDebug(TAG, `isVillageStake dicek: ${itemStack?.typeId} ("${itemStack?.nameTag}") -> ${result}`);
-  return result;
-}
-
-export function ensureVillageStake(player) {
-  logDebug(TAG, `ensureVillageStake dipanggil untuk pemain: ${player?.name}`);
-  const container = player.getComponent("minecraft:inventory")?.container;
-  if (!container) {
-    logWarn(TAG, `ensureVillageStake gagal: Pemain ${player?.name} tidak memiliki inventory container.`);
-    return false;
-  }
-  for (let i = 0; i < container.size; i++) {
-    if (isVillageStake(container.getItem(i))) {
-      logDebug(TAG, `Pemain ${player.name} sudah memiliki patok desa di slot ${i}.`);
-      return false;
-    }
-  }
-  give(player, makeVillageStake());
-  player.sendMessage(
-    "§eKamu diberi §fPatok Desa§e. §7Klik tanah untuk memilih chunk yang boleh dibangun " +
-    "rumah. Bisa lebih dari satu chunk — suruh Pembangun ke Mode Membangun sesudahnya.");
-  logInfo(TAG, `Patok desa diberikan ke pemain ${player.name}.`);
-  return true;
-}
 
 function markersIn(dimension) {
   try {
@@ -151,6 +59,11 @@ function findMarker(dimension, cx, cz) {
   return undefined;
 }
 
+/**
+ * Ketinggian tempat BERDIRI di satu kolom: blok udara pertama yang punya
+ * lantai padat di bawahnya. Dipakai untuk menaruh penanda patok, yang memang
+ * berdiri DI ATAS tanah.
+ */
 function groundAt(dimension, x, z, from) {
   logDebug(TAG, `groundAt: mencari permukaan di (${x}, ${z}) mulai Y=${from}`);
   for (let y = Math.min(from + 12, 318); y > from - 40; y--) {
@@ -167,6 +80,106 @@ function groundAt(dimension, x, z, from) {
   }
   logDebug(TAG, `groundAt: fallback ke Y=${from}`);
   return from;
+}
+
+/**
+ * Ketinggian TANAHNYA sendiri — blok padat paling atas, satu di bawah tempat
+ * berdiri. `undefined` kalau kolomnya tidak terbaca (chunk belum dimuat).
+ *
+ * Bedanya dengan groundAt cuma satu blok, dan satu blok itulah yang selama ini
+ * membuat ladang tidak pernah jalan. `entry.y` dibaca farming.js sebagai
+ * `flattenY`, yaitu tinggi PERMUKAAN yang dicangkul jadi farmland — bukan
+ * tinggi kaki yang berdiri di atasnya. Versi lama menyimpan
+ * `floor(player.y) + 1`, dan karena kaki pemain sudah satu angka di atas
+ * rumput, hasilnya DUA blok terlalu tinggi: setiap kolom petak terbaca
+ * "cekung", petani menghabiskan seluruh waktunya meminta tanah timbun yang
+ * tidak pernah cukup, dan dari luar dia terlihat cuma berdiri diam di samping
+ * petinya. Itulah "patoknya tidak jalan" dan "petaninya diam saja".
+ */
+function solidTopAt(dimension, x, z, from) {
+  for (let y = Math.min(from + 12, 318); y > from - 40; y--) {
+    const here = blockAt(dimension, x, y, z);
+    const below = blockAt(dimension, x, y - 1, z);
+    if (!here || !below) continue;
+    if (here.isAir && isFooting(below)) return y - 1;
+  }
+  return undefined;
+}
+
+export function surfaceY(dimension, x, z, from) {
+  return solidTopAt(dimension, x, z, from) ?? from - 1;
+}
+
+// Titik contoh untuk menaksir ketinggian satu chunk: kisi 5x5 yang menjangkau
+// hampir seluruh petak 16x16. Kisi yang lebih jarang pernah dicoba dan salah:
+// tiga titik per sumbu bisa kebetulan jatuh di gelombang bukit yang sama dan
+// melaporkan seluruh chunk dua blok lebih rendah daripada yang sebenarnya.
+const SAMPLES = [-6, -3, 0, 3, 6];
+
+/**
+ * Tinggi permukaan yang mewakili satu chunk: median dari dua puluh lima kolom
+ * contoh, bukan cuma titik tengahnya.
+ *
+ * Satu lubang atau satu gundukan tepat di tengah chunk tidak boleh menentukan
+ * ketinggian seluruh ladang. Median tahan terhadap keduanya dan tetap murah —
+ * dua puluh lima kolom, sekali seumur patok.
+ *
+ * `undefined` kalau chunk-nya belum benar-benar dimuat: menebak dari kolom
+ * yang tidak terbaca berarti menuliskan ketinggian ngawur ke patok, dan itu
+ * persis kesalahan yang fungsi ini ada untuk mencegahnya.
+ */
+export function chunkSurfaceY(dimension, cx, cz, from) {
+  const { x, z } = chunkCenter(cx, cz);
+  const ys = [];
+  for (const dx of SAMPLES) {
+    for (const dz of SAMPLES) {
+      const y = solidTopAt(dimension, x + dx, z + dz, from);
+      if (typeof y === "number") ys.push(y);
+    }
+  }
+  if (ys.length < SAMPLES.length ** 2 / 2) {
+    logWarn(TAG, `chunkSurfaceY (${cx}, ${cz}): cuma ${ys.length}/${SAMPLES.length ** 2} kolom terbaca; chunk belum dimuat.`);
+    return undefined;
+  }
+  ys.sort((a, b) => a - b);
+  const median = ys[Math.floor(ys.length / 2)];
+  logDebug(TAG, `chunkSurfaceY (${cx}, ${cz}): ${ys.length} kolom -> median ${median}`);
+  return median;
+}
+
+// Versi skema entri patok. Patok yang dipasang sebelum ini menyimpan `y` dua
+// blok terlalu tinggi (lihat solidTopAt), dan dunia yang sudah terlanjur punya
+// patok begitu tidak boleh dibiarkan rusak selamanya: ensureClaimHeight
+// membetulkannya sekali, di tempat, begitu companion pertama menggarapnya.
+const CLAIM_VERSION = 2;
+
+/**
+ * Membetulkan ketinggian satu patok lama, sekali saja.
+ *
+ * Dipanggil petani dan pembangun sebelum memakai `entry.y`. Patok yang sudah
+ * SELESAI digarap tidak diutak-atik: permukaannya memang sudah dibentuk ke
+ * ketinggian itu, jadi angka apa pun yang tercatat di situ sekarang benar.
+ */
+export function ensureClaimHeight(dimension, cx, cz) {
+  const entry = getClaim(dimension.id, cx, cz);
+  if (!entry || entry.v === CLAIM_VERSION) return entry;
+  const before = Math.floor(entry.y ?? 64);
+  if (entry.worked) {
+    entry.v = CLAIM_VERSION;
+    setClaim(dimension.id, cx, cz, entry);
+    return entry;
+  }
+  const truth = chunkSurfaceY(dimension, cx, cz, before);
+  if (typeof truth !== "number") return entry;   // chunk belum dimuat; nanti lagi
+  entry.v = CLAIM_VERSION;
+  if (Math.abs(truth - before) >= 2) {
+    logWarn(TAG, `Ketinggian patok (${cx}, ${cz}) dibetulkan: ${before} -> ${truth}. ` +
+      "Patok lama menyimpan tinggi kaki pemain, bukan tinggi tanahnya.");
+    entry.y = truth;
+  }
+  setClaim(dimension.id, cx, cz, entry);
+  refreshMarker(dimension, cx, cz, entry);
+  return entry;
 }
 
 export function refreshMarker(dimension, cx, cz, entry) {
@@ -197,9 +210,17 @@ export function refreshMarker(dimension, cx, cz, entry) {
   try {
     const eventName = entry.worked ? "vbs:set_claimed" : "vbs:set_free";
     marker.triggerEvent(eventName);
+    // Patok desa dan patok ladang memakai penanda yang sama, jadi tulisannya
+    // yang harus membedakan. Sebelum ini keduanya sama-sama bertuliskan
+    // "Patok Ladang", dan chunk desa yang sudah ditandai terbaca seperti ladang
+    // yang tidak pernah digarap siapa pun.
+    const village = (entry.kind ?? "farm") === "village";
+    const label = village ? "Patok Desa" : "Patok Ladang";
+    const doneText = village ? "rumahnya sudah berdiri" : "sudah jadi ladang";
+    const todoText = village ? "belum dibangun" : "belum digarap";
     marker.nameTag = entry.worked
-      ? `§aPatok Ladang §7(${cx}, ${cz})\n§asudah jadi ladang`
-      : `§cPatok Ladang §7(${cx}, ${cz})\n§cbelum digarap`;
+      ? `§a${label} §7(${cx}, ${cz})\n§a${doneText}`
+      : `§c${label} §7(${cx}, ${cz})\n§c${todoText}`;
     logDebug(TAG, `Marker ${entStr(marker)} di-update dengan event: ${eventName}`);
   } catch (e) {
     logWarn(TAG, `Gagal memperbarui status/nameTag marker di (${cx}, ${cz})`, e);
@@ -253,15 +274,11 @@ export function tickBeams() {
 
 /**
  * Memasang atau mencabut patok pada satu chunk, ditunjuk dengan koordinat
- * chunk-nya langsung.
+ * chunk-nya langsung. Satu-satunya jalan masuk: Peta Patok di Buku Panduan.
  *
- * Ini yang sebenarnya mengerjakan pekerjaannya. Mengklik tanah dengan item
- * patok cuma salah satu jalan masuk; jalan yang satu lagi adalah Peta Patok di
- * Buku Panduan, yang tidak butuh item apa pun dan tidak butuh pemainnya
- * berjalan ke chunk itu dulu.
- *
- * `at` adalah titik acuan ketinggian — blok yang diklik, atau posisi pemain
- * kalau patoknya dipasang dari peta.
+ * `at` cuma titik acuan PENCARIAN ketinggian — biasanya posisi pemain. Yang
+ * disimpan tetap tinggi tanah chunk itu sendiri (chunkSurfaceY), bukan tinggi
+ * kaki pemain, karena chunk yang dipatok bisa saja ada di seberang lembah.
  */
 export function toggleClaimAt(player, cx, cz, kind = "farm", at) {
   const dimId = player.dimension.id;
@@ -269,7 +286,7 @@ export function toggleClaimAt(player, cx, cz, kind = "farm", at) {
   const existing = getClaim(dimId, cx, cz);
   if (existing) {
     // Patok orang lain bukan milikmu. Tanpa penjagaan ini, siapa pun di server
-    // bisa mencabut ladang pemain lain hanya dengan sebatang stik.
+    // bisa mencabut ladang pemain lain dari petanya sendiri.
     if (existing.by && existing.by !== player.id) {
       logInfo(TAG, `toggleClaim ditolak: chunk (${cx}, ${cz}) milik ${existing.name ?? existing.by}.`);
       return `§cChunk itu dipatok §f${existing.name ?? "pemain lain"}§c, bukan kamu.`;
@@ -285,11 +302,10 @@ export function toggleClaimAt(player, cx, cz, kind = "farm", at) {
     sound(player.dimension, "random.break", at ?? player.location);
     return `§7Patok chunk §f(${cx}, ${cz})§7 dicabut.`;
   }
-  const center = chunkCenter(cx, cz);
   const base = Math.floor((at ?? player.location).y);
   const entry = {
-    by: player.id, name: player.name, worked: false, kind,
-    y: at ? base + 1 : groundAt(player.dimension, center.x, center.z, base),
+    by: player.id, name: player.name, worked: false, kind, v: CLAIM_VERSION,
+    y: chunkSurfaceY(player.dimension, cx, cz, base) ?? base - 1,
   };
   logInfo(TAG, `Memasang patok baru (${kind}) di chunk (${cx}, ${cz}) oleh ${player.name}`);
   setClaim(dimId, cx, cz, entry);
@@ -301,12 +317,6 @@ export function toggleClaimAt(player, cx, cz, kind = "farm", at) {
   }
   return `§cChunk (${cx}, ${cz}) dipatok§7 — belum digarap. ` +
     "§7Suruh companionmu ke mode bertani, dia yang akan menggarapnya.";
-}
-
-/** Jalan masuk lama: mengklik tanah dengan item patok. */
-export function toggleClaim(player, block, kind = "farm") {
-  const { cx, cz } = chunkOf(block.location);
-  return toggleClaimAt(player, cx, cz, kind, block.location);
 }
 
 /**
@@ -431,58 +441,4 @@ export function chunkBounds(cx, cz) {
   const bounds = { x0: cx * 16, z0: cz * 16, x1: cx * 16 + 15, z1: cz * 16 + 15 };
   logDebug(TAG, `chunkBounds (${cx}, ${cz}) = ${JSON.stringify(bounds)}`);
   return bounds;
-}
-
-let wired = false;
-
-export function wireStake() {
-  if (wired) return;
-  wired = true;
-  logInfo(TAG, "Mendaftarkan listener interaksi itemUseOn & playerInteractWithBlock untuk Patok Ladang/Desa...");
-
-  const handle = (player, itemStack, block) => {
-    if (!player || !block) return false;
-    let kind;
-    if (isStake(itemStack)) kind = "farm";
-    else if (isVillageStake(itemStack)) kind = "village";
-    else return false;
-    logDebug(TAG, `Event patok (${kind}) dipicu oleh pemain ${player.name} pada ${posStr(block.location)}`);
-    system.run(() => {
-      try {
-        const msg = toggleClaim(player, block, kind);
-        player.sendMessage(msg);
-      } catch (e) {
-        logError(TAG, `Error saat mengeksekusi toggleClaim`, e);
-      }
-    });
-    return true;
-  };
-
-  const seen = new Map();
-  const once = (player, block) => {
-    const key = `${player.id}:${block.x},${block.y},${block.z}`;
-    const last = seen.get(key) ?? -99;
-    if (system.currentTick - last < 6) return false;
-    seen.set(key, system.currentTick);
-    return true;
-  };
-
-  try {
-    world.afterEvents.itemUseOn.subscribe((ev) => {
-      if (!once(ev.source, ev.block)) return;
-      handle(ev.source, ev.itemStack, ev.block);
-    });
-    logDebug(TAG, "Berhasil subscribe ke world.afterEvents.itemUseOn");
-  } catch (e) {
-    logWarn(TAG, "Gagal subscribe ke world.afterEvents.itemUseOn", e);
-  }
-  try {
-    world.afterEvents.playerInteractWithBlock.subscribe((ev) => {
-      if (!once(ev.player, ev.block)) return;
-      handle(ev.player, ev.itemStack ?? ev.beforeItemStack, ev.block);
-    });
-    logDebug(TAG, "Berhasil subscribe ke world.afterEvents.playerInteractWithBlock");
-  } catch (e) {
-    logWarn(TAG, "Gagal subscribe ke world.afterEvents.playerInteractWithBlock", e);
-  }
 }

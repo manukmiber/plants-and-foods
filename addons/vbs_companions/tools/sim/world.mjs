@@ -117,7 +117,23 @@ export function makeWorld({ groundY = 64, jagged = false } = {}) {
         return true;
       });
     },
-    spawnItem() {},
+    // spawnEntity dipakai dua tempat: patok memasang marker, dan peternak
+    // melahirkan anak ternak. Dua-duanya harus benar-benar muncul di dunia
+    // tiruan ini, kalau tidak uji kandang cuma menguji cabang gagalnya.
+    spawnEntity(typeId, at) {
+      // Lahir dewasa; yang membuatnya jadi anak adalah minecraft:entity_born
+      // yang dipicu peternak sesudahnya — persis urutan aslinya.
+      return makeAnimal(dimension, typeId, at);
+    },
+    spawnItem(stack, at) {
+      const drop = makeDrop(dimension, stack, at);
+      // Barang yang tergeletak di Minecraft hilang sendiri sesudah lima menit.
+      // Tanpa peniruan itu, dunia tiruan ini menumpuk puluhan ribu entity
+      // barang dalam satu uji panen dan getEntities berubah jadi kuadratik —
+      // simulasinya berhenti bukan karena add-on-nya salah.
+      prune(entities);
+      return drop;
+    },
     spawnParticle() {},
     playSound() {},
   };
@@ -126,6 +142,21 @@ export function makeWorld({ groundY = 64, jagged = false } = {}) {
     dimension, blocks, chests, surfaceFor, entities,
     put: (x, y, z, id) => blocks.set(key(x, y, z), id),
   };
+}
+
+
+// Batas jumlah entity barang di dunia tiruan; yang tertua dibuang lebih dulu,
+// meniru despawn vanilla.
+const DROP_LIMIT = 64;
+function prune(entities) {
+  let drops = 0;
+  for (let i = entities.length - 1; i >= 0; i--) {
+    const e = entities[i];
+    if (e.isValid === false) { entities.splice(i, 1); continue; }
+    if (e.typeId !== "minecraft:item") continue;
+    drops++;
+    if (drops > DROP_LIMIT) entities.splice(i, 1);
+  }
 }
 
 export function makeContainer(size = 27) {
@@ -159,7 +190,20 @@ export function makeContainer(size = 27) {
 
 export function makeCompanion(dimension, typeId, at) {
   const props = new Map();
+  // Nyawa harus bisa BERUBAH: sejak companion makan sendiri waktu terluka
+  // (survival.js), komponen nyawa yang nilainya beku 20/20 berarti jalur itu
+  // tidak pernah sekali pun dijalankan uji.
+  let hp = 20;
+  const health = {
+    get currentValue() { return hp; },
+    effectiveMax: 20,
+    defaultValue: 20,
+    setCurrentValue(value) { hp = value; },
+  };
   const entity = {
+    // Berapa tick lagi badannya terbakar. Uji api menyalakannya sendiri.
+    __fireTicks: 0,
+    __setHealth(value) { hp = value; },
     id: `test-${typeId}`,
     typeId,
     __families: ["vbs_companion", "mob"],
@@ -176,10 +220,18 @@ export function makeCompanion(dimension, typeId, at) {
     getProperty: () => 0,
     setProperty: () => {},
     getComponent(id) {
-      if (id === "minecraft:health") return { currentValue: 20, effectiveMax: 20 };
+      if (id === "minecraft:health") return health;
+      if (id === "minecraft:onfire") {
+        return entity.__fireTicks > 0
+          ? { onFireTicksRemaining: entity.__fireTicks } : undefined;
+      }
       if (id === "minecraft:is_tamed") return entity.__tamed ? {} : undefined;
       if (id === "minecraft:tameable") return { isTamed: entity.__tamed };
       return undefined;
+    },
+    extinguishFire() {
+      entity.__fireTicks = 0;
+      return true;
     },
     triggerEvent(event) {
       if (event === "vbs:on_tamed") entity.__tamed = true;
@@ -227,6 +279,87 @@ export function makePlayer(dimension, { id = "P1", name = "Pemain", at = { x: 0,
     sendMessage(text) { messages.push(text); },
     playSound() {},
     teleport(pos) { player.location = { x: pos.x, y: pos.y, z: pos.z }; },
+    // Mata pemain: dipakai look.js untuk tahu siapa yang sedang ditatap, dan
+    // energy.js untuk tahu ranjang mana yang sedang ditunjuk.
+    __view: { x: 0, y: 0, z: 1 },
+    getHeadLocation() {
+      return { x: player.location.x, y: player.location.y + 1.62, z: player.location.z };
+    },
+    getViewDirection() { return { ...player.__view }; },
+    getBlockFromViewDirection() { return player.__lookingAt; },
   };
   return player;
+}
+
+/**
+ * Hewan ternak tiruan: cukup untuk menguji peternak (rancher.js).
+ *
+ * Yang ditiru cuma yang benar-benar disentuh add-on — didorong, disembelih,
+ * dicukur, dan ditanya masih anak atau bukan.
+ */
+let animalSeq = 0;
+export function makeAnimal(dimension, typeId, at, { baby = false } = {}) {
+  const animal = {
+    id: `animal-${typeId}-${animalSeq++}`,
+    typeId,
+    __families: ["mob", "animal"],
+    __baby: baby,
+    __pushes: 0,
+    __sheared: 0,
+    isValid: true,
+    dimension,
+    location: { ...at },
+    nameTag: "",
+    getDynamicProperty: () => undefined,
+    setDynamicProperty: () => {},
+    getProperty: () => undefined,
+    setProperty: () => {},
+    getComponent(id) {
+      if (id === "minecraft:is_baby") return animal.__baby ? {} : undefined;
+      if (id === "minecraft:health") return { currentValue: 10, effectiveMax: 10 };
+      return undefined;
+    },
+    applyKnockback(dir, vertical) {
+      animal.__pushes++;
+      // Dorongannya benar-benar memindahkan hewannya, seperti di dunia asli.
+      const dx = typeof dir === "object" ? dir.x : dir;
+      const dz = typeof dir === "object" ? dir.z : vertical;
+      animal.location = {
+        x: animal.location.x + (dx ?? 0),
+        y: animal.location.y,
+        z: animal.location.z + (dz ?? 0),
+      };
+    },
+    triggerEvent(event) {
+      if (event === "minecraft:on_sheared") animal.__sheared++;
+      if (event === "minecraft:entity_born") animal.__baby = true;
+    },
+    teleport(pos) { animal.location = { x: pos.x, y: pos.y, z: pos.z }; },
+    kill() { animal.isValid = false; animal.__killed = true; },
+    remove() { animal.isValid = false; },
+  };
+  if (Array.isArray(dimension?.__entities)) dimension.__entities.push(animal);
+  return animal;
+}
+
+/** Barang yang tergeletak di tanah — dipungut peternak dan pencari barang. */
+let dropSeq = 0;
+export function makeDrop(dimension, stack, at) {
+  const drop = {
+    id: `drop-${dropSeq++}`,
+    typeId: "minecraft:item",
+    __families: ["item"],
+    isValid: true,
+    dimension,
+    location: { ...at },
+    getComponent(id) {
+      if (id === "minecraft:item") return { itemStack: stack };
+      return undefined;
+    },
+    getDynamicProperty: () => undefined,
+    setDynamicProperty: () => {},
+    remove() { drop.isValid = false; },
+  };
+  if (Array.isArray(dimension?.__entities)) dimension.__entities.push(drop);
+  return drop;
 }

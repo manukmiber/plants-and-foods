@@ -42,6 +42,8 @@ const EMPTY = {
   // atau belum dijawab, dan selama itu companion memakai perilaku bawaannya.
   seedSelf: null,      // "ya" = cari bibit sendiri, "tidak" = pemilik yang carikan
   mineWants: null,     // larik kunci MINE_TARGETS; null = tambang apa saja
+  mineHaul: true,      // bawa pulang hasil galian biasa (batu, tanah, kerikil)
+  bed: null,           // ranjang yang DITUNJUK pemain; dipakai energy.js
   villageOfferAt: 0,
   nick: null,
 };
@@ -154,6 +156,23 @@ export function readVillageHomes(ownerId) {
   } catch (e) {
     logWarn(TAG, `Gagal membaca rumah desa milik ${ownerId}`, e);
     return [];
+  }
+}
+
+/**
+ * Menulis ulang seluruh daftar rumah desa.
+ *
+ * Dipakai saat Pembangun MENUGASKAN satu rumah ke satu companion: catatannya
+ * berubah di tempat (`for` diisi), bukan ditambah. Tanpa ini, penugasan rumah
+ * cuma jadi kalimat di chat — persis keluhan "beneran jadi, bukan cuma chat".
+ */
+export function writeVillageHomes(ownerId, list) {
+  try {
+    world.setDynamicProperty(homeKey(ownerId), JSON.stringify(list));
+    return true;
+  } catch (e) {
+    logError(TAG, "Gagal menulis ulang daftar rumah desa", e);
+    return false;
   }
 }
 

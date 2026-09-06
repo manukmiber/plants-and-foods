@@ -7,12 +7,13 @@ import { FAMILY, MINE_TARGETS, MODES } from "./config.js";
 import { getActivity } from "./activity.js";
 import { answerAsk, askOf, pendingAsks } from "./ask.js";
 import { BLUEPRINTS } from "./builder.js";
-import {
-  chunkMap, ensureStake, ensureVillageStake, nearestClaimHint, toggleClaimAt,
-} from "./claim.js";
+import { chunkMap, nearestClaimHint, toggleClaimAt } from "./claim.js";
 import { betaLines } from "./beta.js";
 import { readDepot } from "./depot.js";
-import { energyOf, isResting, isSleeping, needsLabel, sleepOf } from "./energy.js";
+import {
+  bedLabel, clearBed, energyOf, isResting, isSleeping, needsLabel, pointBed,
+  sleepOf,
+} from "./energy.js";
 import { bagCount } from "./bag.js";
 import { dialogueStats } from "./lines.js";
 import { displayName } from "./nametag.js";
@@ -95,12 +96,12 @@ const MAP_SIZE = 8;
 const STAKE_KINDS = {
   farm: {
     label: "Patok Ladang", short: "ladang", color: "§c",
-    give: ensureStake, icon: "textures/items/wheat",
+    icon: "textures/items/wheat",
     hint: "§7Suruh companionmu ke Mode Bertani, dia yang akan menggarapnya.",
   },
   village: {
     label: "Patok Desa", short: "desa", color: "§2",
-    give: ensureVillageStake, icon: "textures/items/bed_red",
+    icon: "textures/items/bed_red",
     hint: "§7Suruh Pembangun ke Mode Membangun, dia yang akan membuat rumahnya.",
   },
 };
@@ -140,7 +141,8 @@ function mapBody(player, map, kind) {
       : `§8Kamu belum punya satu pun patok ${spec.short}.`,
     "",
     `§7Sedang memasang: ${spec.color}${spec.label}§7. Pilih satu baris, lalu tunjuk`,
-    "§7petaknya untuk memasang atau mencabut tanpa perlu membawa item stik.",
+    "§7petaknya untuk memasang atau mencabut. Patoknya bukan item — tidak ada",
+    "§7yang perlu dibawa, dan petak seberang lembah pun bisa ditunjuk dari sini.",
   ].join("\n");
 }
 
@@ -161,7 +163,6 @@ export async function openStakeMap(player, kind = "farm", returnCallback) {
     ? `§eCabut patok tempat aku berdiri\n§8chunk (${here.cx}, ${here.cz})`
     : `§aPatok chunk tempat aku berdiri\n§8chunk (${here?.cx ?? "?"}, ${here?.cz ?? "?"})`, info.icon);
   form.button(`§7Ganti ke ${STAKE_KINDS[other].label}\n§8Peta yang sama, jenis patok yang lain`);
-  form.button(`§8Beri Aku ${info.label} (Stik Fisik)\n§8Alternatif lama: klik tanah dengan item`, "textures/items/stick");
   form.button("§8« Kembali");
 
   const res = await forceShow(player, form);
@@ -178,11 +179,6 @@ export async function openStakeMap(player, kind = "farm", returnCallback) {
   }
   if (pick === MAP_SIZE + 1) {
     await openStakeMap(player, other, returnCallback);
-    return;
-  }
-  if (pick === MAP_SIZE + 2) {
-    if (!info.give(player)) player.sendMessage(`§7${info.label} sudah ada di kantongmu.`);
-    await openStakeMap(player, spec, returnCallback);
     return;
   }
   if (returnCallback) {
@@ -264,8 +260,77 @@ const CHAPTERS = [
       "§f4. Menanam§7 berjalur, satu jenis bibit per jalur",
       "§f5. Merawat§7 — panen, tanam ulang, perbaiki pengairan, menghias",
       "",
-      "§7Patok chunk langsung lewat §fBuku Panduan §7» §2Peta Patok§7 tanpa perlu stik.",
+      "§7Patok chunk langsung lewat §fBuku Panduan §7» §2Peta Patok§7 — patoknya",
+      "§7bukan item, jadi tidak ada yang perlu dibawa atau dicari di kantong.",
       "§8Hasil panen selalu masuk peti companion, bukan kantongmu.",
+    ],
+  },
+  {
+    title: "§aBeternak",
+    icon: "textures/items/wheat",
+    body: [
+      "§7Kandangnya berdiri di chunk berpatok §2desa§7 — pemain yang memilih",
+      "§7tanahnya, bukan companion. Pagarnya dirakit sendiri dari papan dan",
+      "§7stik, satu petak 9x9 dengan satu gerbang di sisi selatan.",
+      "",
+      "§f1. Menggiring§7 hewan liar masuk dengan dorongan pelan dari belakang",
+      "§f2. Memberi makan§7 anak-anaknya supaya cepat besar",
+      "§f3. Beranak§7 kalau ada dua induk berdekatan dan pakannya ada",
+      "§f4. Mencukur§7 domba (butuh gunting: 2 besi)",
+      "§f5. Memerah§7 sapi (butuh ember: 3 besi)",
+      "§f6. Memungut telur§7 yang tergeletak di kandang",
+      "",
+      "§7Populasi dibatasi per jenis. Yang lebih disembelih jadi daging untuk",
+      "§7dapur perajin — itu satu-satunya sumber daging di add-on ini.",
+      "§8Kandang penuh yang beranak tanpa rem adalah cara tercepat membuat",
+      "§8dunia Bedrock berhenti bernapas; batasnya bukan hiasan.",
+    ],
+  },
+  {
+    title: "§3Memancing",
+    icon: "textures/items/fishing_rod",
+    body: [
+      "§7Joran dibuat sendiri dari 3 stik dan 2 benang. Companion mencari",
+      "§7perairan yang benar-benar besar — parit ladang sendiri tidak dihitung",
+      "§7— lalu berdiri di §ftepinya§7, bukan di dalam airnya.",
+      "",
+      "§7Melempar kail lalu §fmenunggu§7 5 sampai 20 detik. Menunggu itu inti",
+      "§7perannya: ikan yang langsung muncul bukan memancing, itu keran ikan.",
+      "",
+      "§7Sesekali yang tersangkut rumput laut atau sepatu bot bekas.",
+      "§8Tangkapannya masuk peti dan jadi bahan dapur perajin — cara tercepat",
+      "§8memberi makan seisi halaman sebelum petak ladang pertama jadi.",
+    ],
+  },
+  {
+    title: "§dBerdagang",
+    icon: "textures/items/emerald",
+    body: [
+      "§7Companion membawa §fkelebihan§7 isi peti ke villager terdekat, menukarnya",
+      "§7dengan emerald, lalu memakai emerald itu untuk membeli bahan yang",
+      "§7sedang §fdiminta companion lain§7 di papan permintaan.",
+      "",
+      "§7Yang disimpan tidak pernah dijual: gandum cukup untuk bibit dan roti,",
+      "§7batu cukup untuk alat dan tungku. Cuma sisanya yang dibawa ke pasar.",
+      "",
+      "§8Jujur: script Bedrock yang stabil tidak bisa membuka layar dagang",
+      "§8villager. Villager, jarak dan waktunya nyata; yang ditiru cuma daftar",
+      "§8harganya. Barangnya benar-benar keluar dari peti.",
+    ],
+  },
+  {
+    title: "§6Dapur perajin",
+    icon: "textures/items/bread",
+    body: [
+      "§7Perajin tidak cuma menempa alat. Kalau bahannya ada di peti, dia",
+      "§7memanggang daging dan ikan di tungku, lalu merakit roti dan makanan",
+      "§7lain di meja kerja.",
+      "",
+      "§f· Companion yang terluka§7 disuapi lebih dulu, yang paling parah duluan",
+      "§f· Pemain§7 ditawari kalau stoknya sudah cukup, lalu diantar ke tangan",
+      "",
+      "§7Rantainya: peternak dan pemancing membawa bahan, perajin memasaknya,",
+      "§7semua yang lapar makan. Tidak ada makanan yang muncul dari udara.",
     ],
   },
   {
@@ -276,8 +341,15 @@ const CHAPTERS = [
       "§7blok — dinding, lantai, atap — bukan blok tertentu.",
       "",
       "§7Tandai chunk desa di §fBuku Panduan §7» §2Peta Patok Desa§7.",
-      "§7Tiap chunk berpatok dibangun satu rumah lengkap ranjang, dan",
-      "§7companion yang mengantuk akan tidur di sana.",
+      "§7Tiap chunk berpatok dibangun satu rumah lengkap ranjang, lalu",
+      "§7ranjangnya §fditugaskan§7 ke satu companion — namanya benar-benar",
+      "§7tercatat di rumah itu, dan sejak itu dia pulang ke sana tiap",
+      "§7mengantuk. Bukan cuma diumumkan di chat.",
+      "",
+      "§7Sesudah rumah terakhir berdiri, Pembangun meneruskan sendiri:",
+      "§f· Jalan§7 selebar dua blok antar rumah dan balai kerja",
+      "§f· Lampu jalan§7 tiap enam langkah, di tepi bukan di tengah",
+      "§f· Penerangan§7 titik gelap kampung supaya monster tidak lahir",
       "",
       "§8Rancangan baru bisa ditambah sebagai berkas JSON di folder",
       "§8addons/vbs_companions/blueprints/ — lihat halaman Isi Tambahan.",
@@ -354,12 +426,38 @@ const CHAPTERS = [
     icon: "textures/items/bed_red",
     body: [
       "§7§lTenaga§r§7 terkuras karena bekerja, pulih dengan istirahat atau ngobrol.",
-      "§7§lKantuk§r§7 naik seiring waktu, pulih dengan tidur di ranjang rumah desa.",
+      "§7§lKantuk§r§7 naik seiring waktu, pulih dengan tidur di ranjang.",
+      "",
+      "§7§lDi ranjang yang mana?§r§7 Urutannya:",
+      "§f1. Ranjang yang kamu tunjuk§7 lewat §fTunjuk Ranjang§7 — rumah buatanmu",
+      "§7   sendiri, atau satu ranjang tertentu di kampung",
+      "§f2. Ranjang rumah desa§7 buatan Pembangun",
+      "§f3. Ranjang mana pun§7 dalam 12 blok, lalu §f4. bawah pohon",
       "",
       "§7Companion yang kehabisan bahan §fmemasang permintaan§7, bukan diam:",
       "§8  Mencari Barang -> bahan mentah -> Merajin -> alat & barang jadi",
       "",
       "§7Papan permintaan ada di menu companion » §fPermintaan Bantuan§7.",
+    ],
+  },
+  {
+    title: "§9Api, air, dan makan",
+    icon: "textures/items/water_bucket",
+    body: [
+      "§7Companion §fmenghindari air§7 saat berjalan: selama masih ada jalan",
+      "§7kering ke tujuannya, dia tidak akan menginjak permukaan danau. Parit",
+      "§7irigasi selebar satu blok tetap diseberangi — itu memang harus.",
+      "",
+      "§7§lTerbakar§r§7 — dia berhenti bekerja dan lari ke air terdekat dalam 12",
+      "§7blok, lalu nyemplung. Api padam, kerja dilanjut.",
+      "",
+      "§7§lTerlanjur di air dalam§r§7 — dia berenang naik ke permukaan lalu menuju",
+      "§7daratan terdekat. Kalau terlalu lama terbenam, dia benar-benar",
+      "§7kehabisan napas dan kamu diberi tahu lewat chat.",
+      "",
+      "§7§lNyawa tinggal sedikit§r§7 — dia makan sendiri dari peti atau kantongnya.",
+      "§7Kalau tidak ada makanan, dia §fmemesan roti ke Perajin§7, dan Perajin",
+      "§7mengantar makanan apa pun yang kebetulan sudah ada di peti.",
     ],
   },
 ];
@@ -506,6 +604,7 @@ async function openCompanionHub(player, entity) {
     form.button("§2Peta Patok Desa\n§8Tunjuk chunk desa di peta", "textures/items/map_filled");
   }
   form
+    .button("§dTunjuk Ranjang\n§8Di mana dia tidur kalau mengantuk", "textures/items/bed_red")
     .button("§dMenu Lengkap\n§8Perintah, perlengkapan, ladang, rancangan", "textures/items/name_tag")
     .button("§8« Kembali");
 
@@ -517,7 +616,7 @@ async function openCompanionHub(player, entity) {
   if (mode === "mine") buttons.push("mine");
   if (mode === "farm") buttons.push("farm_map");
   if (mode === "build") buttons.push("build_map");
-  buttons.push("menu", "back");
+  buttons.push("bed", "menu", "back");
 
   switch (buttons[res.selection]) {
     case "doing": await openDoing(player, entity); break;
@@ -527,9 +626,63 @@ async function openCompanionHub(player, entity) {
     case "mine": await openMineTargets(player, entity); break;
     case "farm_map": await openStakeMap(player, "farm", () => openCompanionHub(player, entity)); break;
     case "build_map": await openStakeMap(player, "village", () => openCompanionHub(player, entity)); break;
+    case "bed": await openBedPage(player, entity); break;
     case "menu": await openMenu(player, entity); break;
     default: await openControl(player); break;
   }
+}
+
+/**
+ * Menunjuk ranjang dari dalam buku.
+ *
+ * Bedanya dengan tombol yang sama di menu companion cuma satu, dan itu yang
+ * penting: buku bisa dibuka DI MANA SAJA. Jadi ranjang yang ditunjuk dari sini
+ * adalah ranjang di dekat KAMU — rumah yang baru kamu bangun sendiri, atau
+ * ranjang di kampung tempat kamu sedang berdiri — sementara companionnya
+ * mungkin sedang bekerja di seberang bukit.
+ */
+async function openBedPage(player, entity) {
+  const bed = bedLabel(entity, readState(entity));
+  const form = new ActionFormData()
+    .title(`§l§dRanjang ${displayName(entity)}`)
+    .body([
+      "§7Berdiri di dekat ranjangnya, §flihat ke ranjang itu§7, lalu tekan tombol",
+      "§7di bawah. Kalau tatapanmu meleset, ranjang terdekat dalam 12 blok dari",
+      "§7tempatmu berdiri yang dipakai.",
+      "",
+      bed
+        ? (bed.gone
+          ? `§cRanjang tertunjuk di (${bed.x}, ${bed.y}, ${bed.z}) sudah tidak ada di situ.`
+          : `§aRanjangnya: §f(${bed.x}, ${bed.y}, ${bed.z})§a.`)
+        : "§8Belum ada ranjang yang ditunjuk untuk dia.",
+      "",
+      "§7Urutan tempat tidurnya:",
+      "§f1. Ranjang yang kamu tunjuk§7 — rumahmu sendiri, atau rumah di kampung",
+      "§f2. Ranjang rumah desa§7 yang dibangun Pembangun di chunk berpatok desa",
+      "§f3. Ranjang mana pun§7 dalam 12 blok dari tempatnya mengantuk",
+      "§f4. Bawah pohon§7 atau stasiunnya sendiri kalau memang tidak ada ranjang",
+    ].join("\n"))
+    .button("§aTunjuk Ranjang yang Kulihat\n§8Atau ranjang terdekat dalam 12 blok", "textures/items/bed_red")
+    .button(bed ? "§cLupakan Ranjang Ini\n§8Kembali ke urutan biasa" : "§8Belum ada yang bisa dilupakan")
+    .button("§8« Kembali");
+
+  const res = await forceShow(player, form);
+  if (!res || res.canceled || res.selection === undefined) return;
+  if (res.selection === 0) {
+    const spot = pointBed(player, entity);
+    player.sendMessage(spot
+      ? `§a${displayName(entity)} akan tidur di ranjang (${spot.x}, ${spot.y}, ${spot.z}).`
+      : "§cTidak ada ranjang yang terlihat maupun dalam 12 blok dari tempatmu berdiri.");
+    await openBedPage(player, entity);
+    return;
+  }
+  if (res.selection === 1 && bed) {
+    clearBed(entity);
+    player.sendMessage(`§7${displayName(entity)} kembali memakai urutan tempat tidur biasa.`);
+    await openBedPage(player, entity);
+    return;
+  }
+  await openCompanionHub(player, entity);
 }
 
 async function openDoing(player, entity) {
@@ -663,6 +816,8 @@ async function openMineTargets(player, entity) {
     ? Math.min(...wants.map((k) => MINE_TARGETS[k]?.depth ?? -54))
     : -54;
 
+  const haul = state.mineHaul !== false;
+
   const form = new ActionFormData()
     .title(`§l§7Tambangan ${displayName(entity)}`)
     .body([
@@ -674,12 +829,20 @@ async function openMineTargets(player, entity) {
         ? `§7Sekarang: §f${wants.map((k) => MINE_TARGETS[k]?.label ?? k).join(", ")}`
         : "§7Sekarang: §fapa saja §8(belum dipilih)",
       `§7Terowongan akan turun sampai §fy ${deepest}§7.`,
+      "",
+      `§7Bawa pulang batu & tanah galian: ${haul ? "§ahidup" : "§cmati"}`,
+      "§8Kalau hidup, batu, tanah, kerikil dan pasir yang terpaksa dibongkar",
+      "§8ikut disetor ke peti — bahan timbun petani dan batu pembangun datang",
+      "§8dari sana. Kalau dimatikan, cuma bijih yang dibawa pulang.",
     ].join("\n"));
   for (const key of keys) {
     const on = wants.includes(key);
     form.button(`${on ? "§a✔ " : "§8✘ "}${MINE_TARGETS[key].label}\n§8sampai y ${MINE_TARGETS[key].depth}`,
                 MINE_TARGETS[key].icon);
   }
+  form.button(haul
+    ? "§cJangan bawa pulang batu & tanah\n§8Cuma bijih yang disetor ke peti"
+    : "§aBawa pulang batu & tanah galian\n§8Batu, tanah, kerikil ikut disetor", "textures/items/dirt");
   form.button("§eSelesai — apa saja boleh\n§8Kosongkan pilihan, tambang semuanya");
   form.button("§8« Kembali");
 
@@ -695,6 +858,14 @@ async function openMineTargets(player, entity) {
     return;
   }
   if (res.selection === keys.length) {
+    patchState(entity, { mineHaul: !haul });
+    player.sendMessage(haul
+      ? `§7${displayName(entity)} cuma membawa pulang bijih sekarang.`
+      : `§a${displayName(entity)} akan membawa pulang batu dan tanah galian juga.`);
+    await openMineTargets(player, entity);
+    return;
+  }
+  if (res.selection === keys.length + 1) {
     patchState(entity, { mineWants: [] });
     answerAskIfAny(player, entity, []);
     player.sendMessage(`§7${displayName(entity)} akan menambang apa saja.`);

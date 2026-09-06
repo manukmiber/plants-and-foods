@@ -8,12 +8,19 @@
  *                    bawah pohon, atau sekadar mengobrol dengan companion lain
  *                    (social.js ikut memulihkan tenaga).
  *   kantuk (sleep)   naik karena WAKTU berjalan, dan jauh lebih cepat saat
- *                    malam. Kalau sudah memuncak, companion mencari RANJANG —
- *                    yang paling utama ranjang di rumah desa buatan Pembangun.
- *                    Tidak ada ranjang? Dia tidur di bawah pohon atau di
- *                    stasiunnya sendiri.
+ *                    malam. Kalau sudah memuncak, companion mencari RANJANG.
  *
  * Jadi mereka tidak bisa kerja terus-terusan, persis seperti yang diminta.
+ *
+ * Urutan mencari ranjang, dari yang paling menang:
+ *
+ *   1. Ranjang yang DITUNJUK pemain (pointBed) — rumah buatan pemain sendiri,
+ *      atau satu ranjang tertentu di kampung. Ini yang paling menang: kalau
+ *      pemain sudah menunjuk, companion tidak boleh malah berjalan pulang ke
+ *      rumah desa di seberang bukit.
+ *   2. Ranjang rumah desa yang dicatat Pembangun saat rumahnya selesai.
+ *   3. Ranjang mana pun dalam 12 blok dari tempatnya mengantuk.
+ *   4. Bawah pohon, atau stasiunnya sendiri.
  */
 
 import { system, world } from "@minecraft/server";
@@ -21,7 +28,7 @@ import { BED_IDS, ENERGY, FACE, LOGS, POSE, SLEEP, WORK_MODES } from "./config.j
 import { report, sayFrom } from "./chat.js";
 import { threatened } from "./combat.js";
 import { hold } from "./hold.js";
-import { readVillageHomes } from "./state.js";
+import { patchState, readVillageHomes } from "./state.js";
 import { alive, blockAt, dist2, getOwnerId, isAir, setFace, steer } from "./util.js";
 import { entStr, logDebug, logInfo, posStr } from "./logger.js";
 
@@ -29,6 +36,8 @@ const TAG = "ENERGY";
 const REST_REACH = 2.6;
 const TREE_SEARCH_RADIUS = 10;
 const BED_SEARCH_RADIUS = 12;
+// Sejauh apa pemain boleh berdiri dari ranjang yang ditunjuknya.
+const BED_POINT_REACH = 12;
 
 function clamp(value, max) {
   return Math.max(0, Math.min(max, value));
@@ -103,11 +112,98 @@ function nearbyBlock(dimension, at, ids, radius) {
   return undefined;
 }
 
+/** Blok di titik itu masih benar-benar ranjang? */
+function stillBed(dimension, at) {
+  const block = blockAt(dimension, at.x, at.y, at.z);
+  return Boolean(block) && BED_IDS.includes(block.typeId);
+}
+
 /**
- * Ranjang tempat companion tidur. Prioritas: ranjang rumah desa yang dicatat
- * Pembangun, lalu ranjang apa pun yang kebetulan ada di sekitar.
+ * Ranjang yang DITUNJUK pemain untuk companion ini.
+ *
+ * Ini yang menang di atas segalanya, termasuk rumah desa buatan Pembangun:
+ * kalau pemain sudah repot-repot menunjuk satu ranjang di rumahnya sendiri,
+ * companion tidak boleh malah berjalan pulang ke kampung di seberang bukit.
+ * Ranjang yang sudah dibongkar (atau ada di dimensi lain) dilewati diam-diam
+ * dan companion kembali memakai urutan biasa.
+ */
+function pointedBed(entity, state) {
+  const bed = state.bed;
+  if (!bed || typeof bed.x !== "number") return undefined;
+  if (bed.dim && bed.dim !== entity.dimension.id) {
+    logDebug(TAG, `${entStr(entity)} punya ranjang tertunjuk di dimensi lain (${bed.dim}); dilewati.`);
+    return undefined;
+  }
+  if (!stillBed(entity.dimension, bed)) {
+    logDebug(TAG, `Ranjang tertunjuk ${entStr(entity)} di ${posStr(bed)} sudah tidak ada.`);
+    return undefined;
+  }
+  return { x: bed.x + 0.5, y: bed.y, z: bed.z + 0.5, label: "ranjang yang kamu tunjuk" };
+}
+
+/**
+ * Cari ranjang dari ARAH PANDANG pemain, lalu dari sekitarnya.
+ *
+ * Menunjuk itu harfiah: pemain melihat ke ranjangnya lalu menekan tombolnya.
+ * Kalau ray-nya meleset (atau versi API-nya tidak punya
+ * getBlockFromViewDirection), ranjang terdekat di sekitar pemain yang dipakai
+ * — jadi tombolnya tidak pernah gagal tanpa alasan yang jelas.
+ */
+function bedInView(player) {
+  try {
+    const hit = player.getBlockFromViewDirection?.({
+      maxDistance: BED_POINT_REACH,
+      includeLiquidBlocks: false,
+      includePassableBlocks: false,
+    });
+    const block = hit?.block;
+    if (block && BED_IDS.includes(block.typeId)) return block.location;
+  } catch (e) {
+    logDebug(TAG, `getBlockFromViewDirection tidak tersedia untuk ${player?.name}`, e);
+  }
+  return undefined;
+}
+
+/**
+ * Menunjuk satu ranjang untuk companion ini. Balikan titiknya, atau undefined
+ * kalau memang tidak ada ranjang yang bisa ditunjuk.
+ */
+export function pointBed(player, entity) {
+  const at = bedInView(player) ??
+    nearbyBlock(player.dimension, player.location, BED_IDS, BED_POINT_REACH);
+  if (!at) {
+    logInfo(TAG, `${player.name} menunjuk ranjang tapi tidak ada ranjang dalam ${BED_POINT_REACH} blok.`);
+    return undefined;
+  }
+  const spot = { x: at.x, y: at.y, z: at.z, dim: player.dimension.id };
+  patchState(entity, { bed: spot });
+  logInfo(TAG, `${player.name} menunjuk ranjang di ${posStr(spot)} untuk ${entStr(entity)}.`);
+  return spot;
+}
+
+/** Melupakan ranjang tertunjuk; companion kembali ke urutan biasa. */
+export function clearBed(entity) {
+  patchState(entity, { bed: null });
+  logInfo(TAG, `Ranjang tertunjuk ${entStr(entity)} dilupakan.`);
+}
+
+/** Ringkasan untuk menu: di mana ranjangnya, dan masih ada atau tidak. */
+export function bedLabel(entity, state) {
+  const bed = state.bed;
+  if (!bed || typeof bed.x !== "number") return undefined;
+  const gone = (!bed.dim || bed.dim === entity.dimension.id) &&
+    !stillBed(entity.dimension, bed);
+  return { x: bed.x, y: bed.y, z: bed.z, dim: bed.dim, gone };
+}
+
+/**
+ * Ranjang tempat companion tidur. Prioritas: ranjang yang DITUNJUK pemain,
+ * lalu ranjang rumah desa yang dicatat Pembangun, lalu ranjang apa pun yang
+ * kebetulan ada di sekitar.
  */
 function bedFor(entity, state) {
+  const pointed = pointedBed(entity, state);
+  if (pointed) return pointed;
   const ownerId = getOwnerId(entity);
   if (ownerId) {
     const homes = readVillageHomes(ownerId)

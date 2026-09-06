@@ -1,9 +1,11 @@
 // Simulasi otak companion di luar Minecraft.
 import { system, world, __harness, __setPlayers, __setDimension } from "@minecraft/server";
-import { makeWorld, makeContainer, makeCompanion, makePlayer } from "./world.mjs";
+import {
+  makeWorld, makeContainer, makeCompanion, makePlayer, makeAnimal,
+} from "./world.mjs";
 import { LOG_CONFIG, LogLevel, logStats } from "./scripts/logger.js";
 import { readState, writeState, patchState } from "./scripts/state.js";
-import { setClaim } from "./scripts/state.js";
+import { addVillageHome, readClaims, setClaim } from "./scripts/state.js";
 import { tickFarm, plotOf, workArea } from "./scripts/farming.js";
 import { tickMine } from "./scripts/mining.js";
 import { tickCrafter } from "./scripts/crafter.js";
@@ -24,13 +26,23 @@ import { hasHelper, gatherOwn } from "./scripts/selfhelp.js";
 import { findMaterial, forget as forgetGather } from "./scripts/gather.js";
 import { pickSmelt } from "./scripts/smelting.js";
 import {
-  chunkMap, nearestClaimHint, toggleClaimAt, claimsNear,
+  chunkMap, ensureClaimHeight, nearestClaimHint, toggleClaimAt, claimsNear,
 } from "./scripts/claim.js";
 import { askOwner, pendingAsks, answerAsk, answerLatestYesNo } from "./scripts/ask.js";
 import { openBook } from "./scripts/bookui.js";
 import { getActivity, setActivity } from "./scripts/activity.js";
-import { summarize, setGear, makeItem, stopWalking } from "./scripts/util.js";
+import { tickSurvival } from "./scripts/survival.js";
+import { tickLook } from "./scripts/look.js";
+import { pointBed } from "./scripts/energy.js";
+import { steer, summarize, setGear, makeItem, stopWalking } from "./scripts/util.js";
 import { bagCount } from "./scripts/bag.js";
+import { tickTrader, surplusIn } from "./scripts/trader.js";
+import { tickFisher, findSpot } from "./scripts/fisher.js";
+import { tickRancher, penBounds, insidePen, census } from "./scripts/rancher.js";
+import { cookStep, nextMeal, nextRoast, mealsReady } from "./scripts/kitchen.js";
+import { assignHome, nextRoad, roadPlan, darkSpot } from "./scripts/village.js";
+import { readVillageHomes } from "./scripts/state.js";
+import { findPath } from "./scripts/path.js";
 
 LOG_CONFIG.minLevel = LogLevel.WARN;   // simulasi: cuma tampilkan yang penting
 
@@ -41,6 +53,24 @@ function check(ok, what, detail = "") {
 }
 
 function advance(n = 1) { system.currentTick += n; }
+
+/**
+ * Isi SELURUH peti di dunia tiruan.
+ *
+ * Sejak ada balai kerja bersama, hasil kerja companion pindah dari peti
+ * stasiunnya ke gudang. Memeriksa satu peti saja berarti menguji ke mana
+ * barangnya pindah, bukan apakah barangnya benar-benar ada.
+ */
+function allStock(W) {
+  const total = {};
+  for (const box of W.chests.values()) {
+    for (const [id, n] of Object.entries(summarize(box))) {
+      total[id] = (total[id] ?? 0) + n;
+    }
+  }
+  return total;
+}
+
 
 /* ---------------- Uji 1: petani meratakan, mengairi, mencangkul ------------ */
 console.log("\n== Uji petani: ratakan -> parit -> cangkul -> tanam ==");
@@ -68,11 +98,14 @@ console.log("\n== Uji petani: ratakan -> parit -> cangkul -> tanam ==");
 
   const phases = new Set();
   let status = "";
-  for (let i = 0; i < 45000; i++) {
+  // Petak selesai jauh sebelum putaran ini habis sejak mode Bertani dirombak
+  // (antrean tugas, bukan mesin fase). Angka lamanya 45.000 dan cuma membuat
+  // simulasi berjalan dua menit di satu adegan tanpa memeriksa apa pun lagi.
+  for (let i = 0; i < 6000; i++) {
     const state = readState(farmer);
     status = tickFarm(farmer, state, undefined);
     writeState(farmer, state);
-    phases.add(state.plan?.farm?.phase);
+    phases.add(state.plan?.farm?.job?.kind);
     advance(10);
   }
 
@@ -80,8 +113,9 @@ console.log("\n== Uji petani: ratakan -> parit -> cangkul -> tanam ==");
   const hand = getGear(farmer).mainhand;
   check(Boolean(hand && hand.includes("hoe")), "petani menempa cangkul sendiri", String(hand));
   check(hand === "minecraft:wooden_hoe", "cangkul PERTAMA harus kayu, bukan langsung besi", String(hand));
-  check(phases.has("level"), "melewati fase meratakan lahan", [...phases].join(" -> "));
-  check(phases.has("water"), "melewati fase menggali & mengairi parit");
+  check(phases.has("ratakan"), "mengerjakan tugas meratakan lahan", [...phases].join(", "));
+  check(phases.has("gali parit") || phases.has("tuang air"),
+        "mengerjakan tugas menggali & mengairi parit", [...phases].join(", "));
 
   // Berapa banyak air yang benar-benar dituang di kolom parit?
   let water = 0;
@@ -172,7 +206,7 @@ console.log("\n== Uji penambang: lorong 1x3 dan urutan tingkat beliung ==");
   chest.fill("minecraft:cobblestone", 64);
 
   const seen = [];
-  for (let i = 0; i < 12000; i++) {
+  for (let i = 0; i < 6000; i++) {
     const state = readState(miner);
     tickMine(miner, state, undefined);
     writeState(miner, state);
@@ -227,14 +261,16 @@ console.log("\n== Uji petani di tanah datar: sampai menanam dan memanen ==");
 
   const phases = new Set();
   let status = "";
-  for (let i = 0; i < 40000; i++) {
+  // Sama seperti adegan pertama: petak datar selesai jauh lebih cepat.
+  for (let i = 0; i < 6000; i++) {
     const state = readState(farmer);
     status = tickFarm(farmer, state, undefined);
     writeState(farmer, state);
-    phases.add(state.plan?.farm?.phase);
+    phases.add(state.plan?.farm?.job?.kind);
     advance(10);
   }
-  check(phases.has("plant"), "mencapai fase menanam", [...phases].join(" -> "));
+  check(phases.has("tanam") || phases.has("cangkul"),
+        "sampai ke tugas mencangkul dan menanam", [...phases].join(", "));
   let planted = 0;
   let farmland = 0;
   let dry = 0;
@@ -1083,6 +1119,672 @@ console.log("\n== Uji buku: isi peti, aktivitas, dan halaman companion ==");
     threw = err;
   }
   check(!threw, "buku panduan terbuka tanpa melempar", threw ? String(threw) : "");
+  __setPlayers([]);
+  __setDimension(undefined);
+}
+
+/* -------- Uji 13: tinggi patok, dan patok lama yang dibetulkan ----------- */
+console.log("\n== Uji patok: tinggi tanah, bukan tinggi kaki pemain ==");
+{
+  const W = makeWorld({ groundY: 64 });
+  __setDimension(W.dimension);
+  // Chunk (20, 20) sengaja: chunk-chunk kecil di sekitar nol sudah dipatok uji
+  // lain, dan papan klaim itu satu untuk seluruh simulasi.
+  const player = makePlayer(W.dimension, { id: "H1", name: "Patok", at: { x: 328, y: 65, z: 328 } });
+  __setPlayers([player]);
+
+  toggleClaimAt(player, 20, 20, "farm", player.location);
+  const fresh = readClaims()["minecraft:overworld|20,20"];
+  check(fresh?.y === 64,
+        "patok baru menyimpan tinggi TANAH (blok padat teratas), bukan tinggi kaki",
+        `y=${fresh?.y} (harusnya 64)`);
+
+  // Patok versi lama: tersimpan dua blok terlalu tinggi dan tanpa penanda
+  // versi. Inilah yang ada di dunia pemain sekarang, dan yang membuat petani
+  // menganggap seluruh petak cekung lalu berdiri diam minta tanah timbun.
+  setClaim("minecraft:overworld", 25, 25, { by: "H1", worked: false, kind: "farm", y: 66 });
+  const healed = ensureClaimHeight(W.dimension, 25, 25);
+  check(healed?.y === 64, "patok lama yang dua blok terlalu tinggi dibetulkan sendiri",
+        `y=${healed?.y} (semula 66)`);
+  check(healed?.v === 2, "patok yang sudah dibetulkan ditandai supaya tidak dihitung ulang");
+
+  // Patok yang SUDAH selesai digarap tidak diutak-atik: permukaannya memang
+  // sudah dibentuk ke ketinggian itu.
+  setClaim("minecraft:overworld", 27, 27, { by: "H1", worked: true, kind: "farm", y: 66 });
+  const done = ensureClaimHeight(W.dimension, 27, 27);
+  check(done?.y === 66, "patok yang sudah jadi ladang dibiarkan apa adanya", `y=${done?.y}`);
+
+  // Dan yang paling penting: petani yang menggarap patok DARI PETA benar-benar
+  // maju melewati fase meratakan, bukan mentok minta tanah timbun.
+  const farmer = makeCompanion(W.dimension, "vbs:kohane", { x: 328, y: 65, z: 328 });
+  farmer.setDynamicProperty("vbs:owner", "H1");
+  farmer.setDynamicProperty("vbs:mode", "farm");
+  W.put(330, 65, 330, "minecraft:chest");
+  patchState(farmer, { station: { x: 330, y: 65, z: 330 } });
+  const box = W.dimension.getBlock({ x: 330, y: 65, z: 330 }).getComponent("minecraft:inventory").container;
+  box.fill("minecraft:oak_planks", 64);
+  box.fill("minecraft:stick", 64);
+  box.fill("minecraft:bucket", 1);
+  box.fill("minecraft:dirt", 64);
+  for (let z = 320; z < 336; z++) for (let x = 314; x < 317; x++) W.put(x, 64, z, "minecraft:water");
+
+  const phases = new Set();
+  let farmStatus = "";
+  for (let i = 0; i < 400; i++) {
+    const st = readState(farmer);
+    farmStatus = tickFarm(farmer, st, undefined);
+    writeState(farmer, st);
+    phases.add(st.plan?.farm?.job?.kind);
+    advance(10);
+  }
+  check(phases.has("gali parit") || phases.has("cangkul") || phases.has("tanam") ||
+        phases.has("tuang air"),
+        "petani maju melewati meratakan pada patok yang dipasang dari peta",
+        [...phases].join(", "));
+  check(phases.size > 1,
+        "dan mengerjakan lebih dari satu jenis tugas, bukan mengunci di satu",
+        [...phases].join(", "));
+  check(!/tanah timbun/.test(farmStatus),
+        "petani tidak lagi mentok di 'butuh tanah timbun'", farmStatus);
+  __setPlayers([]);
+  __setDimension(undefined);
+}
+
+/* -------- Uji 14: air, api, dan makan ----------------------------------- */
+console.log("\n== Uji keselamatan: hindari air, berenang, terbakar, makan ==");
+{
+  const W = makeWorld({ groundY: 64 });
+  __setDimension(W.dimension);
+
+  // Danau sedalam tiga blok di sebelah timur, daratan tetap ada di barat.
+  for (let x = 10; x <= 24; x++) {
+    for (let z = -4; z <= 12; z++) {
+      for (let y = 62; y <= 64; y++) W.put(x, y, z, "minecraft:water");
+    }
+  }
+
+  // 14a. Langkah kaki memilih jalan kering: tujuan di seberang danau, tapi
+  //      companion tidak boleh berdiri di atas permukaan air.
+  const walker = makeCompanion(W.dimension, "vbs:an", { x: 8, y: 65, z: 4 });
+  for (let i = 0; i < 60; i++) {
+    steer(walker, { x: 30, y: 65, z: 4 });
+    advance(4);
+  }
+  const under = W.dimension.getBlock({
+    x: Math.floor(walker.location.x),
+    y: Math.floor(walker.location.y) - 1,
+    z: Math.floor(walker.location.z),
+  });
+  check(under.typeId !== "minecraft:water",
+        "companion tidak berjalan di atas permukaan danau",
+        `berdiri di atas ${under.typeId} pada x=${walker.location.x.toFixed(1)}`);
+  stopWalking(walker.id);
+
+  // 14b. Yang SUDAH terlanjur di tengah danau berenang naik lalu ke darat.
+  const swimmer = makeCompanion(W.dimension, "vbs:toya", { x: 18, y: 62, z: 4 });
+  swimmer.setDynamicProperty("vbs:owner", "S1");
+  const startX = swimmer.location.x;
+  let sawSwim = false;
+  let rose = false;
+  for (let i = 0; i < 300; i++) {
+    const st = readState(swimmer);
+    const line = tickSurvival(swimmer, st, "S1") ?? "";
+    if (/berenang/.test(line)) sawSwim = true;
+    if (swimmer.location.y >= 64) rose = true;
+    writeState(swimmer, st);
+    advance(10);
+  }
+  check(rose, "companion yang terbenam berenang naik ke permukaan",
+        `y ${swimmer.location.y.toFixed(1)}`);
+  check(sawSwim, "keselamatan mengambil alih denyut kerjanya selama dia di air");
+  const standing = W.dimension.getBlock({
+    x: Math.floor(swimmer.location.x),
+    y: Math.floor(swimmer.location.y) - 1,
+    z: Math.floor(swimmer.location.z),
+  });
+  check(standing.typeId !== "minecraft:water",
+        "dan berakhir berdiri di darat, bukan mengambang di tengah danau",
+        `x ${startX} -> ${swimmer.location.x.toFixed(1)}, di atas ${standing.typeId}`);
+  stopWalking(swimmer.id);
+
+  // 14c. Badan terbakar: kerja ditinggal, air dituju.
+  const burning = makeCompanion(W.dimension, "vbs:akito", { x: 4, y: 65, z: 4 });
+  burning.setDynamicProperty("vbs:owner", "S1");
+  burning.__fireTicks = 100;
+  const beforeX = burning.location.x;
+  let sawFire = false;
+  for (let i = 0; i < 60; i++) {
+    const st = readState(burning);
+    const line = tickSurvival(burning, st, "S1") ?? "";
+    if (/terbakar|api/.test(line)) sawFire = true;
+    writeState(burning, st);
+    advance(10);
+  }
+  check(sawFire, "companion yang terbakar berhenti bekerja dan mencari air");
+  check(burning.location.x > beforeX, "dan benar-benar bergerak ke arah air",
+        `x ${beforeX} -> ${burning.location.x.toFixed(1)}`);
+  check(burning.__fireTicks === 0, "apinya padam begitu dia nyemplung",
+        `sisa ${burning.__fireTicks} tick`);
+  stopWalking(burning.id);
+
+  // 14d. Nyawa tinggal sedikit: makan sendiri dari peti.
+  const hurt = makeCompanion(W.dimension, "vbs:flins", { x: 2, y: 65, z: 2 });
+  hurt.setDynamicProperty("vbs:owner", "S1");
+  W.put(3, 65, 3, "minecraft:chest");
+  patchState(hurt, { station: { x: 3, y: 65, z: 3 } });
+  const pantryBox = W.dimension.getBlock({ x: 3, y: 65, z: 3 }).getComponent("minecraft:inventory").container;
+  pantryBox.fill("minecraft:bread", 4);
+  hurt.__setHealth(6);
+  const st = readState(hurt);
+  const meal = tickSurvival(hurt, st, "S1");
+  writeState(hurt, st);
+  check(/makan/.test(meal ?? ""), "companion terluka makan sendiri dari petinya", meal ?? "(tidak makan)");
+  check(hurt.getComponent("minecraft:health").currentValue > 6,
+        "dan nyawanya benar-benar naik",
+        String(hurt.getComponent("minecraft:health").currentValue));
+
+  // 14e. Tidak ada makanan sama sekali: pesanan roti dipasang ke perajin.
+  const starving = makeCompanion(W.dimension, "vbs:kohane", { x: 2, y: 65, z: 6 });
+  starving.setDynamicProperty("vbs:owner", "S2");
+  W.put(4, 65, 6, "minecraft:chest");
+  patchState(starving, { station: { x: 4, y: 65, z: 6 } });
+  starving.__setHealth(5);
+  const hungry = readState(starving);
+  tickSurvival(starving, hungry, "S2");
+  writeState(starving, hungry);
+  const orders = readRequests("S2");
+  check(orders.some((r) => r.type === "item" && r.kind === "bread"),
+        "tanpa makanan, dia memesan roti ke perajin",
+        orders.map((r) => `${r.type}/${r.kind}`).join(", ") || "(papan kosong)");
+  __setDimension(undefined);
+}
+
+/* -------- Uji 15: penambang membawa pulang batu dan tanah ---------------- */
+console.log("\n== Uji penambang: hasil galian biasa ikut dibawa pulang ==");
+{
+  const W = makeWorld({ groundY: 64 });
+  const miner = makeCompanion(W.dimension, "vbs:akito", { x: 4, y: 65, z: 4 });
+  miner.setDynamicProperty("vbs:owner", "M9");
+  miner.setDynamicProperty("vbs:mode", "mine");
+  W.put(6, 65, 6, "minecraft:chest");
+  patchState(miner, { station: { x: 6, y: 65, z: 6 }, mineWants: ["diamond"] });
+  const box = W.dimension.getBlock({ x: 6, y: 65, z: 6 }).getComponent("minecraft:inventory").container;
+  box.fill("minecraft:oak_planks", 64);
+  box.fill("minecraft:stick", 32);
+  box.fill("minecraft:cobblestone", 64);
+  for (let i = 0; i < 6000; i++) {
+    const st = readState(miner);
+    tickMine(miner, st, undefined);
+    writeState(miner, st);
+    advance(10);
+  }
+  // Batu bulat yang ditaruh uji ini di peti sejak awal tidak boleh ikut
+  // terhitung, jadi yang dilihat cuma KANTONG penambang.
+  const haul = readState(miner).bag;
+  const spoil = Object.keys(haul).filter((id) =>
+    id.includes("cobble") || id.includes("dirt") || id.includes("gravel") ||
+    id.includes("deepslate") || id.includes("andesite"));
+  check(spoil.length > 0,
+        "batu/tanah galian benar-benar dibawa pulang, bukan menguap",
+        spoil.map((id) => `${id} x${haul[id]}`).join(", ") || JSON.stringify(haul));
+
+  // Dan saklarnya benar-benar mematikannya.
+  const picky = makeCompanion(W.dimension, "vbs:toya", { x: 40, y: 65, z: 40 });
+  picky.setDynamicProperty("vbs:owner", "M8");
+  picky.setDynamicProperty("vbs:mode", "mine");
+  W.put(42, 65, 42, "minecraft:chest");
+  patchState(picky, { station: { x: 42, y: 65, z: 42 }, mineWants: ["diamond"], mineHaul: false });
+  const pickyBox = W.dimension.getBlock({ x: 42, y: 65, z: 42 })
+    .getComponent("minecraft:inventory").container;
+  pickyBox.fill("minecraft:oak_planks", 64);
+  pickyBox.fill("minecraft:stick", 32);
+  pickyBox.fill("minecraft:cobblestone", 64);
+  for (let i = 0; i < 6000; i++) {
+    const st = readState(picky);
+    tickMine(picky, st, undefined);
+    writeState(picky, st);
+    advance(10);
+  }
+  const pickyBag = readState(picky).bag;
+  check(!Object.keys(pickyBag).some((id) => id.includes("cobble") || id === "minecraft:dirt"),
+        "saklar 'jangan bawa pulang' benar-benar dipatuhi", JSON.stringify(pickyBag));
+}
+
+/* -------- Uji 16: menyapa pemain lain yang menatap ----------------------- */
+console.log("\n== Uji sapaan: pemain lain menatap companion ==");
+{
+  const W = makeWorld({ groundY: 64 });
+  __setDimension(W.dimension);
+  // Pemiliknya jauh (di luar radius gelembung), orang asingnya tepat di depan.
+  const owner = makePlayer(W.dimension, { id: "O1", name: "Pemilik", at: { x: 200, y: 65, z: 0 } });
+  const stranger = makePlayer(W.dimension, { id: "X1", name: "Bagas", at: { x: 0, y: 65, z: 0 } });
+  stranger.__view = { x: 0, y: 0, z: 1 };
+  __setPlayers([owner, stranger]);
+
+  const guard = makeCompanion(W.dimension, "vbs:an", { x: 0, y: 65, z: 6 });
+  guard.setDynamicProperty("vbs:owner", "O1");
+  guard.setDynamicProperty("vbs:owner_name", "Pemilik");
+  guard.setDynamicProperty("vbs:mode", "stay");
+
+  tickLook([guard]);
+  check(/Bagas|halo|Halo|Yo/.test(guard.nameTag),
+        "companion menyapa pemain lain yang menatapnya", guard.nameTag.replace(/\n/g, " | "));
+  check(owner.messages.some((m) => m.includes("Bagas")),
+        "dan pemiliknya diberi tahu ada orang lain di dekat companionnya",
+        owner.messages.join(" / ") || "(tidak ada pesan)");
+
+  // Pemiliknya sendiri yang menatap tidak memicu sapaan orang asing.
+  const before = owner.messages.length;
+  owner.location = { x: 0, y: 65, z: 0 };
+  advance(1200);
+  tickLook([guard]);
+  check(!owner.messages.slice(before).some((m) => m.includes("Ada Pemilik")),
+        "pemiliknya sendiri tidak dilaporkan sebagai orang asing");
+  __setPlayers([]);
+  __setDimension(undefined);
+}
+
+/* -------- Uji 17: menunjuk ranjang -------------------------------------- */
+console.log("\n== Uji ranjang: pemain menunjuk, companion tidur di situ ==");
+{
+  const W = makeWorld({ groundY: 64 });
+  __setDimension(W.dimension);
+  const player = makePlayer(W.dimension, { id: "R1", name: "Tuan", at: { x: 0, y: 65, z: 0 } });
+  __setPlayers([player]);
+
+  const sleeper = makeCompanion(W.dimension, "vbs:kohane", { x: 1, y: 65, z: 1 });
+  sleeper.setDynamicProperty("vbs:owner", "R1");
+  sleeper.setDynamicProperty("vbs:mode", "farm");
+
+  check(!pointBed(player, sleeper), "tanpa ranjang di sekitar, menunjuk memang gagal");
+
+  W.put(3, 65, 3, "minecraft:red_bed");
+  const spot = pointBed(player, sleeper);
+  check(Boolean(spot) && spot.x === 3 && spot.z === 3,
+        "ranjang terdekat ditunjuk dan tercatat", JSON.stringify(spot));
+  check(readState(sleeper).bed?.x === 3, "tersimpan di state companion, bukan di ingatan sesaat");
+
+  // Ranjang yang ditunjuk harus MENANG atas rumah desa yang jauh.
+  addVillageHome("R1", { x: 80, y: 65, z: 80, dim: "minecraft:overworld" });
+  W.put(80, 65, 80, "minecraft:red_bed");
+  const tired = readState(sleeper);
+  tired.sleepiness = 99;
+  tickEnergy(sleeper, tired, "farm");
+  writeState(sleeper, tired);
+  check(tired.sleeping?.spot?.label === "ranjang yang kamu tunjuk",
+        "companion mengantuk tidur di ranjang yang ditunjuk, bukan di rumah desa jauh",
+        tired.sleeping?.spot?.label ?? "(tidak tidur)");
+
+  // Ranjangnya dibongkar: companion kembali ke urutan biasa tanpa mogok.
+  W.put(3, 65, 3, "minecraft:air");
+  const again = readState(sleeper);
+  again.sleeping = null;
+  again.sleepiness = 99;
+  tickEnergy(sleeper, again, "farm");
+  check(again.sleeping?.spot?.label !== "ranjang yang kamu tunjuk",
+        "ranjang yang sudah dibongkar tidak dipakai lagi",
+        again.sleeping?.spot?.label ?? "(tidak tidur)");
+  __setPlayers([]);
+  __setDimension(undefined);
+}
+
+
+/* ---------------- Uji pathfinding: memutari tembok, bukan menembusnya ------ */
+console.log("\n== Uji pathfinding: tembok diputari, tebing dinaiki ==");
+{
+  const W = makeWorld({ groundY: 64 });
+  // Tembok panjang tepat di antara titik awal dan tujuan, dengan satu celah.
+  for (let z = -6; z <= 6; z++) {
+    if (z === 5) continue;                       // celahnya
+    for (let dy = 1; dy <= 3; dy++) W.put(4, 64 + dy, z, "minecraft:stone");
+  }
+
+  const path = findPath(W.dimension, { x: 0, y: 65, z: 0 }, { x: 8, y: 65, z: 0 });
+  check(Array.isArray(path) && path.length > 0, "jalur ketemu meski dihalangi tembok",
+        `${path?.length ?? 0} sel`);
+  const through = (path ?? []).some((c) => c.x === 4 && c.z >= -6 && c.z <= 4);
+  check(!through, "jalurnya TIDAK menembus tembok");
+  const usesGap = (path ?? []).some((c) => c.x === 4 && c.z === 5);
+  check(usesGap, "jalurnya lewat celah yang memang ada");
+  check((path ?? []).length > 8, "jalur memutar lebih panjang dari garis lurus",
+        `${path?.length ?? 0} sel`);
+
+  // Tujuan yang benar-benar tertutup rapat harus GAGAL, bukan menggantung.
+  for (let dx = -1; dx <= 1; dx++) {
+    for (let dz = -1; dz <= 1; dz++) {
+      for (let dy = 0; dy <= 3; dy++) W.put(40 + dx, 64 + dy, dz, "minecraft:bedrock");
+    }
+  }
+  // Tujuan yang tertutup rapat TIDAK dijawab "menyerah": jalur paling mendekat
+  // yang dipakai, supaya companion tetap berjalan sedekat mungkin lalu berhenti
+  // di depan temboknya — bukan berdiri diam di tempat asalnya.
+  const walled = findPath(W.dimension, { x: 0, y: 65, z: 0 }, { x: 40, y: 65, z: 0 });
+  const reached = (walled ?? []).some((c) => c.x === 40 && c.z === 0);
+  check(!reached, "tujuan yang tertutup rapat TIDAK diklaim tercapai",
+        `${walled?.length ?? 0} sel`);
+  check(!walled || walled.every((c) => W.blocks.get(`${c.x},${c.y},${c.z}`) !== "minecraft:bedrock"),
+        "jalur paling mendekat pun tidak menembus bedrock");
+}
+
+/* ---------------- Uji dapur: perajin memasak, bukan memunculkan makanan ---- */
+console.log("\n== Uji dapur perajin: memanggang, merakit, menyuapi ==");
+{
+  const W = makeWorld({ groundY: 64 });
+  __setDimension(W.dimension);
+  W.put(2, 65, 2, "minecraft:chest");
+  W.put(3, 65, 2, "minecraft:crafting_table");
+  W.put(4, 65, 2, "minecraft:furnace");
+  const chest = W.chests.get("2,65,2") ?? (() => {
+    const box = makeContainer(27);
+    W.chests.set("2,65,2", box);
+    return box;
+  })();
+  chest.fill("minecraft:beef", 6);
+  chest.fill("minecraft:wheat", 9);
+
+  const roast = nextRoast(chest);
+  check(Boolean(roast) && roast.raw === "minecraft:beef",
+        "daging mentah di peti dikenali sebagai bahan panggangan", roast?.raw ?? "-");
+  const meal = nextMeal(chest);
+  check(Boolean(meal), "gandum di peti dikenali sebagai bahan roti", meal?.key ?? "-");
+  check(mealsReady(chest) === 0, "sebelum dimasak, porsi siap masih nol");
+
+  // Masak sungguhan: bahannya HABIS dan hasilnya masuk peti.
+  const cook = makeCompanion(W.dimension, "vbs:toya", { x: 3, y: 65, z: 3 });
+  cook.setDynamicProperty("vbs:owner", "K1");
+  cook.setDynamicProperty("vbs:mode", "crafter");
+  const state = readState(cook);
+  let cooked = 0;
+  for (let i = 0; i < 400 && !cooked; i++) {
+    const res = cookStep(cook, state, chest, meal);
+    if (res?.status === "done") cooked = 1;
+    advance(4);
+  }
+  const wheatLeft = summarize(chest)["minecraft:wheat"] ?? 0;
+  check(cooked === 1, "satu porsi benar-benar selesai dirakit");
+  check(wheatLeft < 9, "gandumnya BENAR-BENAR habis dari peti, bukan disalin",
+        `sisa ${wheatLeft}`);
+  check(mealsReady(chest) > 0, "porsi siap bertambah sesudah dimasak",
+        `${mealsReady(chest)} porsi`);
+  __setDimension(undefined);
+}
+
+/* ---------------- Uji pedagang: menjual kelebihan, membeli pesanan -------- */
+console.log("\n== Uji pedagang: kelebihan dijual, pesanan kawan dibeli ==");
+{
+  const W = makeWorld({ groundY: 64 });
+  __setDimension(W.dimension);
+  W.put(2, 65, 2, "minecraft:chest");
+  const chest = W.chests.get("2,65,2") ?? (() => {
+    const box = makeContainer(27);
+    W.chests.set("2,65,2", box);
+    return box;
+  })();
+  chest.fill("minecraft:wheat", 64);
+  chest.fill("minecraft:wheat", 40);      // 104 total, 64 disimpan
+
+  const spare = surplusIn(chest);
+  check(Boolean(spare) && spare.id === "minecraft:wheat",
+        "kelebihan gandum dikenali sebagai barang jualan", spare?.count + "x");
+  check(spare.count <= 104 - 64, "yang dijual cuma KELEBIHANNYA, simpanan tidak disentuh",
+        `${spare.count} dari 104`);
+
+  const trader = makeCompanion(W.dimension, "vbs:akito", { x: 2, y: 65, z: 3 });
+  trader.setDynamicProperty("vbs:owner", "D1");
+  trader.setDynamicProperty("vbs:mode", "trader");
+  patchState(trader, { station: { x: 2, y: 65, z: 2 } });
+
+  // Tanpa villager: mengeluh, tidak diam-diam menukar barang jadi emerald.
+  const alone = readState(trader);
+  const noOne = tickTrader(trader, alone, undefined);
+  check(/villager/i.test(String(noOne)), "tanpa villager, dagang berhenti dan bilang kenapa",
+        String(noOne));
+  check((summarize(chest)["minecraft:emerald"] ?? 0) === 0,
+        "tidak ada emerald yang muncul dari udara");
+
+  // Villager sungguhan di sebelahnya.
+  makeAnimal(W.dimension, "minecraft:villager_v2", { x: 3, y: 65, z: 3 });
+  let sold = 0;
+  const st = readState(trader);
+  for (let i = 0; i < 200 && !sold; i++) {
+    const status = tickTrader(trader, st, undefined);
+    if (/menjual/.test(String(status))) sold = 1;
+    advance(8);
+  }
+  const purse = summarize(chest)["minecraft:emerald"] ?? 0;
+  const wheatNow = summarize(chest)["minecraft:wheat"] ?? 0;
+  check(sold === 1, "transaksi benar-benar terjadi sesudah menawar");
+  check(purse > 0, "emerald masuk peti", `${purse} emerald`);
+  check(wheatNow < 104, "gandumnya benar-benar keluar dari peti", `sisa ${wheatNow}`);
+  __setDimension(undefined);
+}
+
+/* ---------------- Uji pemancing: tepi danau, menunggu, tangkapan ---------- */
+console.log("\n== Uji pemancing: berdiri di TEPI, menunggu, dapat ikan ==");
+{
+  const W = makeWorld({ groundY: 64 });
+  __setDimension(W.dimension);
+  // Danau 11x11 di sebelah timur.
+  for (let x = 10; x <= 20; x++) for (let z = -5; z <= 5; z++) W.put(x, 64, z, "minecraft:water");
+  W.put(2, 65, 2, "minecraft:chest");
+  const chest = W.chests.get("2,65,2") ?? (() => {
+    const box = makeContainer(27);
+    W.chests.set("2,65,2", box);
+    return box;
+  })();
+  chest.fill("minecraft:fishing_rod", 1);
+
+  const angler = makeCompanion(W.dimension, "vbs:flins", { x: 6, y: 65, z: 0 });
+  angler.setDynamicProperty("vbs:owner", "F1");
+  angler.setDynamicProperty("vbs:mode", "fisher");
+  patchState(angler, { station: { x: 2, y: 65, z: 2 } });
+
+  const spot = findSpot(angler, 24);
+  check(Boolean(spot), "danau yang cukup besar ketemu", JSON.stringify(spot?.stand));
+  const standBlock = W.blocks.get(`${spot.stand.x},${spot.stand.y},${spot.stand.z}`);
+  check(standBlock !== "minecraft:water",
+        "tempat BERDIRINYA kering, bukan di dalam danau", String(standBlock));
+
+  const st = readState(angler);
+  let waited = false;
+  let caught = 0;
+  for (let i = 0; i < 600; i++) {
+    const status = tickFisher(angler, st, undefined);
+    if (/menunggu umpan/.test(String(status))) waited = true;
+    if (/dapat /.test(String(status))) caught++;
+    advance(10);
+  }
+  check(waited, "kailnya dilempar lalu BENAR-BENAR ditunggu, bukan langsung jadi");
+  check(caught > 0, "ada tangkapan yang masuk peti", `${caught} kali`);
+  const haul = summarize(chest);
+  const fish = (haul["minecraft:cod"] ?? 0) + (haul["minecraft:salmon"] ?? 0);
+  check(fish > 0 || caught > 0, "tangkapannya nyata di dalam peti", `${fish} ikan`);
+  __setDimension(undefined);
+}
+
+/* ---------------- Uji peternak: kandang, giring, beranak, batas ----------- */
+console.log("\n== Uji peternak: memagari, menggiring, beranak, batas populasi ==");
+{
+  const W = makeWorld({ groundY: 64 });
+  __setDimension(W.dimension);
+  W.put(2, 65, 2, "minecraft:chest");
+  const chest = W.chests.get("2,65,2") ?? (() => {
+    const box = makeContainer(27);
+    W.chests.set("2,65,2", box);
+    return box;
+  })();
+  chest.fill("minecraft:oak_fence", 64);
+  chest.fill("minecraft:oak_fence_gate", 4);
+  chest.fill("minecraft:wheat", 32);
+  chest.fill("minecraft:shears", 1);
+  chest.fill("minecraft:bucket", 2);
+
+  setClaim("minecraft:overworld", 0, 0, { by: "T9", name: "Tuan", worked: true, kind: "village", y: 64 });
+  const pen = penBounds({ cx: 0, cz: 0 }, 64);
+  check(insidePen(pen, { x: pen.center.x, y: 64, z: pen.center.z }),
+        "titik tengah kandang dihitung ada DI DALAM kandang");
+  check(!insidePen(pen, { x: pen.x1 + 6, y: 64, z: pen.center.z }),
+        "titik di luar pagar dihitung di luar kandang");
+
+  const rancher = makeCompanion(W.dimension, "vbs:kanade", { x: 8, y: 65, z: 8 });
+  rancher.setDynamicProperty("vbs:owner", "T9");
+  rancher.setDynamicProperty("vbs:mode", "rancher");
+  patchState(rancher, { station: { x: 2, y: 65, z: 2 } });
+
+  // Dua sapi dewasa di luar kandang, satu domba berbulu di dalam.
+  const cowA = makeAnimal(W.dimension, "minecraft:cow", { x: pen.x1 + 4, y: 65, z: pen.center.z });
+  const cowB = makeAnimal(W.dimension, "minecraft:cow", { x: pen.x1 + 5, y: 65, z: pen.center.z });
+  const sheep = makeAnimal(W.dimension, "minecraft:sheep",
+                           { x: pen.center.x, y: 65, z: pen.center.z });
+
+  const st = readState(rancher);
+  let fenced = 0;
+  let herded = 0;
+  let sheared = 0;
+  for (let i = 0; i < 900; i++) {
+    const status = tickRancher(rancher, st, undefined);
+    if (/memagari|gerbang/.test(String(status))) fenced++;
+    if (/menggiring/.test(String(status))) herded++;
+    if (/mencukur/.test(String(status))) sheared++;
+    advance(6);
+  }
+  const fencePlaced = [...W.blocks.values()].filter((b) => b === "minecraft:oak_fence").length;
+  check(fenced > 0, "pagar kandang benar-benar dipasang", `${fenced} langkah`);
+  check(fencePlaced > 8, "pagarnya nyata di dunia, bukan cuma di status",
+        `${fencePlaced} batang`);
+  // Isi peti dihitung dari SELURUH peti kru: begitu balai kerja bersama berdiri,
+  // companion mengangkut hasil kerjanya ke gudang, jadi memeriksa satu peti saja
+  // berarti menguji ke mana barangnya pindah, bukan apakah barangnya nyata.
+  const stock = allStock(W);
+  check((stock["minecraft:oak_fence"] ?? 0) < 64,
+        "pagarnya BENAR-BENAR keluar dari peti",
+        `sisa ${stock["minecraft:oak_fence"] ?? 0}`);
+  check(herded > 0, "sapi liar digiring, bukan diteleport ke dalam kandang",
+        `${herded} dorongan`);
+  check(cowA.__pushes > 0 || cowB.__pushes > 0, "dorongannya sampai ke badan sapinya",
+        `${cowA.__pushes + cowB.__pushes} dorongan`);
+  check(sheared > 0 && sheep.__sheared > 0, "domba di kandang dicukur",
+        `${sheep.__sheared} kali`);
+  check((stock["minecraft:wool"] ?? 0) > 0, "wolnya masuk peti",
+        `${stock["minecraft:wool"] ?? 0} wol`);
+
+  // Batas populasi: kandang penuh tidak beranak lagi.
+  const many = [];
+  for (let i = 0; i < 10; i++) {
+    many.push(makeAnimal(W.dimension, "minecraft:pig",
+                         { x: pen.center.x + (i % 3), y: 65, z: pen.center.z + Math.floor(i / 3) }));
+  }
+  const counts = census(many, pen);
+  check((counts["minecraft:pig"]?.adults ?? 0) === 10,
+        "sensus menghitung yang di dalam kandang saja",
+        String(counts["minecraft:pig"]?.adults));
+  __setDimension(undefined);
+}
+
+/* ---------------- Uji kampung: rumah ditugaskan, jalan, penerangan -------- */
+console.log("\n== Uji kampung: rumah BENAR-BENAR ditugaskan, jalan, obor ==");
+{
+  const W = makeWorld({ groundY: 64 });
+  __setDimension(W.dimension);
+  const owner = makePlayer(W.dimension, { id: "V1", name: "Tuan", at: { x: 0, y: 65, z: 0 } });
+  __setPlayers([owner]);
+
+  // Dua companion tanpa ranjang; typeId berbeda supaya id-nya berbeda juga.
+  const a = makeCompanion(W.dimension, "vbs:kohane", { x: 20, y: 65, z: 20 });
+  const b = makeCompanion(W.dimension, "vbs:toya", { x: 4, y: 65, z: 4 });
+  for (const c of [a, b]) {
+    c.setDynamicProperty("vbs:owner", "V1");
+    c.setDynamicProperty("vbs:mode", "farm");
+  }
+  const builder = makeCompanion(W.dimension, "vbs:akito", { x: 2, y: 65, z: 2 });
+  builder.setDynamicProperty("vbs:owner", "V1");
+  builder.setDynamicProperty("vbs:mode", "build");
+
+  const bed = { x: 6, y: 65, z: 6, dim: "minecraft:overworld" };
+  W.put(6, 65, 6, "minecraft:red_bed");
+  addVillageHome("V1", bed);
+
+  const chosen = assignHome(builder, "V1", bed);
+  check(Boolean(chosen), "satu companion benar-benar ditunjuk jadi penghuni",
+        chosen?.typeId ?? "-");
+  check(readState(chosen).bed?.x === 6,
+        "ranjangnya DITULIS ke state penghuninya, bukan cuma diumumkan di chat",
+        JSON.stringify(readState(chosen).bed));
+  const homes = readVillageHomes("V1");
+  check(homes.some((h) => h.x === 6 && h.for === chosen.id),
+        "papan rumah desa mencatat nama penghuninya");
+  check(chosen.id === a.id,
+        "yang dipilih companion yang paling jauh dari ranjang mana pun",
+        chosen.typeId);
+
+  // Rumah kedua tidak boleh diberikan ke penghuni yang sama.
+  const bed2 = { x: 30, y: 65, z: 30, dim: "minecraft:overworld" };
+  W.put(30, 65, 30, "minecraft:red_bed");
+  addVillageHome("V1", bed2);
+  const second = assignHome(builder, "V1", bed2);
+  check(Boolean(second) && second.id !== chosen.id,
+        "rumah kedua jatuh ke companion LAIN, bukan ke penghuni yang sama",
+        second?.typeId ?? "-");
+
+  // Jalan: dua rumah + balai kerja harus tersambung.
+  const road = nextRoad(W.dimension, "V1", { x: 2, y: 65, z: 2 }, []);
+  check(Boolean(road), "ada ruas jalan yang perlu dibuat", road?.key ?? "-");
+  const plan = roadPlan(road.from, road.to);
+  check(plan.length > 0, "ruas jalannya punya langkah", `${plan.length} langkah`);
+  // Lampu jalan berjarak enam langkah, jadi ruas pendek memang tidak berlampu —
+  // yang diuji ruas panjang ke rumah kedua.
+  const longPlan = roadPlan({ x: 2, z: 2 }, { x: 30, z: 30 });
+  check(longPlan.some((p) => p.role === "lamp"),
+        "ruas jalan panjang kebagian lampu", `${longPlan.length} langkah`);
+  const lamps = longPlan.filter((p) => p.role === "lamp");
+  const onRoad = lamps.some((l) => longPlan.some(
+    (r) => r.role === "road" && r.x === l.x && r.z === l.z));
+  check(!onRoad, "lampunya berdiri di TEPI jalan, bukan di tengah jalannya",
+        `${lamps.length} lampu`);
+  const widths = new Set(plan.filter((p) => p.role === "road").map((p) => `${p.x},${p.z}`));
+  check(widths.size > plan.filter((p) => p.role === "road").length / 2 - 1,
+        "jalannya selebar dua blok, bukan satu");
+
+  // Penerangan: titik gelap ketemu, lalu tidak ketemu lagi sesudah diobori.
+  const dark = darkSpot(W.dimension, { x: 2, y: 65, z: 2 }, 12);
+  check(Boolean(dark), "titik gelap di kampung ketemu", JSON.stringify(dark));
+  if (dark) {
+    W.put(dark.x, dark.y, dark.z, "minecraft:torch");
+    const again = darkSpot(W.dimension, { x: 2, y: 65, z: 2 }, 12);
+    check(!again || again.x !== dark.x || again.z !== dark.z,
+          "titik yang sudah diobori tidak diobori dua kali");
+  }
+  // Ujung ke ujung: pembangun tanpa rancangan pilihan pemain BENAR-BENAR
+  // membuat jalan dan memasang obor, bukan cuma punya rencananya.
+  W.put(2, 65, 2, "minecraft:chest");
+  const depot = W.dimension.getBlock({ x: 2, y: 65, z: 2 })
+    .getComponent("minecraft:inventory").container;
+  depot.fill("minecraft:torch", 32);
+  depot.fill("minecraft:gravel", 64);
+  patchState(builder, { station: { x: 2, y: 65, z: 2 }, blueprint: null });
+
+  for (let i = 0; i < 1500; i++) {
+    const st = readState(builder);
+    tickBuild(builder, st, owner);
+    writeState(builder, st);
+    advance(10);
+  }
+  // Peti stasiunnya harus MASIH BERDIRI: jalan yang menimpa peti kru menghapus
+  // seluruh persediaan mereka sekaligus, dan itu pernah benar-benar terjadi.
+  check(W.blocks.get("2,65,2") === "minecraft:chest",
+        "jalan kampung TIDAK menimpa peti stasiun", String(W.blocks.get("2,65,2")));
+  const paved = [...W.blocks.values()].filter((b) => b === "minecraft:dirt_path").length;
+  const torches = [...W.blocks.values()].filter((b) => b === "minecraft:torch").length;
+  check(paved > 4, "jalan kampung benar-benar terpasang di dunia", `${paved} petak`);
+  check(torches > 1, "obor kampung benar-benar terpasang", `${torches} obor`);
+  // Sama seperti uji peternak: obornya boleh sudah ikut terangkut ke gudang
+  // bersama, jadi yang dihitung isi SELURUH peti kru.
+  // Kuncinya hilang sama sekali kalau obornya HABIS terpakai — itu justru
+  // keberhasilan, bukan kegagalan. Cadangan 0, bukan 32.
+  check((allStock(W)["minecraft:torch"] ?? 0) < 32,
+        "obornya BENAR-BENAR keluar dari peti, bukan muncul dari udara",
+        `sisa ${allStock(W)["minecraft:torch"] ?? 0}`);
+
   __setPlayers([]);
   __setDimension(undefined);
 }

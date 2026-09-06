@@ -14,10 +14,21 @@ import { entStr, logDebug, logInfo, logWarn } from "./logger.js";
 
 const TAG = "CHAT";
 
+/**
+ * Nama yang dipakai di dalam kalimat. Lawan bicaranya tidak selalu companion:
+ * sejak companion menyapa pemain lain yang menatapnya (look.js), `{kamu}` bisa
+ * berisi nama PEMAIN. displayName cuma mengenal companion dan mengembalikan
+ * "?" untuk yang lain, jadi pemain diambil namanya langsung.
+ */
+function nameOf(who) {
+  if (!who) return undefined;
+  return info(who) ? displayName(who) : (who.name ?? "?");
+}
+
 export function fill(text, entity, other) {
   const filled = text
     .replace(/\{aku\}/g, displayName(entity))
-    .replace(/\{kamu\}/g, other ? displayName(other) : getOwnerName(entity))
+    .replace(/\{kamu\}/g, nameOf(other) ?? getOwnerName(entity))
     .replace(/\{owner\}/g, getOwnerName(entity));
   logDebug(TAG, `Template dialog: "${text}" -> "${filled}"`);
   return filled;

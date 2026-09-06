@@ -25,6 +25,16 @@
 #     berhenti begitu ada perajin milik pemilik yang sama
 #   * companion bertanya dan pemain menjawab; pilihan bijih penambang benar-benar
 #     mengubah kedalaman galiannya
+#   * pathfinding A* memutari tembok, lewat celah yang memang ada, dan tidak
+#     pernah mengklaim tujuan yang tertutup rapat sebagai tercapai
+#   * perajin benar-benar memasak: bahannya HABIS dari peti dan porsinya nyata
+#   * pedagang menolak dagang tanpa villager, lalu benar-benar menukar barang
+#     jadi emerald begitu ada villager di dekatnya
+#   * pemancing berdiri di TEPI danau (bukan di dalamnya), menunggu, dan dapat
+#   * peternak memagari kandang, menggiring hewan dengan dorongan (bukan
+#     teleport), mencukur domba, dan menghitung populasi kandang
+#   * pembangun MENUGASKAN rumah yang selesai ke satu companion — ranjangnya
+#     benar-benar tertulis di state penghuninya — lalu membuat jalan dan obor
 #   * Beta API: sim dijalankan DUA KALI, dengan dan tanpa modul beta
 #
 # Butuh Node.js 18+. Keluar dengan kode 1 kalau ada pemeriksaan yang gagal.

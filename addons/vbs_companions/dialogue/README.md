@@ -78,6 +78,10 @@ Isi minimal satu di antara `lines` atau `topics`.
 | `ask` `thanks` | Minta bahan / berterima kasih |
 | `morning` `night` | Pergantian pagi dan malam |
 | `alone` | Tidak ada companion lain di dekatnya |
+| `swim` | Terjebak di air dalam, sedang berenang ke tepi |
+| `burn` | Badannya terbakar dan sedang mencari air |
+| `eat` | Baru makan untuk memulihkan nyawa |
+| `hail` | Ditatap pemain lain yang BUKAN pemiliknya |
 
 Kunci di luar daftar itu **ditolak generator** — kalau tidak, kalimatnya diam-diam
 tidak akan pernah terpakai.

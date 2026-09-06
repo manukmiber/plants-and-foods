@@ -8,6 +8,7 @@ import {
   ARMOR_POINTS, COMPANIONS, DEFAULT_MODE, FACE, LEAVES, MODES, POSE, PROP,
   SOFT_PATH,
 } from "./config.js";
+import { follow } from "./path.js";
 import { entStr, logDebug, logError, logInfo, logTrace, logWarn, posStr } from "./logger.js";
 
 const TAG = "UTIL";
@@ -364,6 +365,16 @@ export function isPassable(block) {
 // dihitung padat, jadi tidak ada satu pun langkah yang sah untuk menyeberang.
 const WADEABLE = new Set(["minecraft:water", "minecraft:flowing_water"]);
 
+/** Blok ini air? Dipakai langkah kaki untuk memilih jalur kering. */
+export function isWaterBlock(block) {
+  if (!block) return false;
+  try {
+    return WADEABLE.has(block.typeId);
+  } catch {
+    return false;
+  }
+}
+
 /** Blok yang boleh ditempati badan companion (udara, tanaman, atau air). */
 export function canOccupy(block) {
   if (!block) return false;
@@ -521,15 +532,35 @@ function noteProgress(entity, row) {
   }
 }
 
-export function steer(entity, target, step = 0.32) {
+/**
+ * Berjalan ke satu titik. Ini satu-satunya cara seluruh mode kerja menyuruh
+ * companion berpindah tempat.
+ *
+ * Yang mengerjakan rutenya sekarang A* di path.js, bukan langkah rakus di
+ * berkas ini. Bedanya bukan kosmetik: langkah rakus tidak punya rencana, jadi
+ * pagar ladang buatan companion sendiri, tebing empat blok, danau kecil dan
+ * lubang tambang semuanya menghentikannya — dan tiap satu dari itu muncul
+ * sebagai keluhan "companion mentok" yang berbeda. A* melihat seluruh jalur
+ * sampai tujuan sebelum satu langkah pun diambil.
+ *
+ * stepDirect di bawah tetap ada dan tetap dipakai: itulah satu langkah kaki
+ * yang menjalani satu petak jalur, dan jaring pengaman kalau jalurnya memang
+ * tidak ada.
+ */
+export function steer(entity, target, step = 0.32, opts = {}) {
   const prev = walking.get(entity.id);
   const same = prev && prev.target.x === target.x && prev.target.z === target.z;
   const row = same ? prev : { target: { ...target }, step };
   row.target = { ...target };
   row.step = step;
+  // Pilihan rute ikut disimpan supaya denyut cepat (tickSteer) menjalani jalur
+  // yang sama. Tanpa ini, companion yang sengaja disuruh MASUK air — yang
+  // badannya terbakar — dituntun keluar lagi setengah detik kemudian oleh
+  // denyut yang memakai pilihan bawaan.
+  row.opts = opts;
   row.at = system.currentTick;
   walking.set(entity.id, row);
-  const done = stepToward(entity, target, step);
+  const done = follow(entity, target, { ...opts, step });
   noteProgress(entity, row);
   return done;
 }
@@ -541,7 +572,7 @@ export function tickSteer(entity) {
     walking.delete(entity.id);
     return false;
   }
-  const done = stepToward(entity, row.target, row.step);
+  const done = follow(entity, row.target, { ...(row.opts ?? {}), step: row.step });
   noteProgress(entity, row);
   return done;
 }
@@ -602,8 +633,38 @@ export function unstick(entity) {
   return false;
 }
 
+function landOn(entity, nx, ny, nz, a, target) {
+  try {
+    entity.teleport({ x: nx, y: Math.floor(ny) + 0.02, z: nz }, {
+      dimension: entity.dimension,
+      rotation: { x: 0, y: yawTo(a, target) },
+    });
+  } catch {
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Satu langkah kaki, dan langkah yang KERING selalu menang.
+ *
+ * "Berpijak di air" berarti lantai di bawah kaki itu sendiri air — bukan kaki
+ * yang basah. Menyeberangi parit irigasi selebar satu blok tetap boleh (di
+ * situ lantainya tanah, cuma kakinya yang tercelup), dan memang harus boleh:
+ * companion yang panik tiap kali menyeberangi paritnya sendiri tidak akan
+ * pernah menyelesaikan satu ladang pun.
+ *
+ * Yang tidak boleh adalah berjalan ke tengah danau seolah permukaannya lantai.
+ * Itulah yang selama ini terjadi — isStandable menghitung air sebagai lantai,
+ * jadi companion menyeberangi laut dengan santai lalu mengambang di tengahnya
+ * sampai pemiliknya menariknya pulang. Sekarang langkah basah cuma dipakai
+ * sebagai CADANGAN: kalau memang tidak ada satu pun langkah kering ke arah
+ * yang dituju, barulah air diinjak — supaya companion yang sudah terlanjur
+ * berada di tengah air tetap bisa berenang keluar (survival.js).
+ */
 function tryStep(entity, nx, nz, a, target) {
   const dim = entity.dimension;
+  let wetY;
   // Urutannya sengaja dari perubahan tinggi TERKECIL dulu: datar, lalu turun
   // satu, lalu naik satu. Kalau naik didahulukan, penambang memanjat keluar
   // dari tangganya sendiri tiap langkah dan tidak pernah sampai ke dasar.
@@ -620,26 +681,34 @@ function tryStep(entity, nx, nz, a, target) {
     if (!canOccupy(feet)) clearWay(entity, feet);
     if (!canOccupy(head)) clearWay(entity, head);
     if (!canOccupy(feet) || !canOccupy(head) || !isStandable(floor)) continue;
-    try {
-      entity.teleport({ x: nx, y: Math.floor(a.y + dy) + 0.02, z: nz }, {
-        dimension: dim,
-        rotation: { x: 0, y: yawTo(a, target) },
-      });
-    } catch {
-      return false;
+    if (isWaterBlock(floor)) {
+      if (wetY === undefined) wetY = a.y + dy;
+      continue;
     }
-    return true;
+    return landOn(entity, nx, a.y + dy, nz, a, target);
   }
-  return false;
+  if (wetY === undefined) return false;
+  logDebug(TAG, `${entStr(entity)} tidak punya langkah kering ke (${nx.toFixed(1)}, ${nz.toFixed(1)}); menginjak air.`);
+  return landOn(entity, nx, wetY, nz, a, target);
 }
 
-function stepToward(entity, target, step) {
+/**
+ * Satu langkah kaki lurus ke arah target, tanpa rencana apa pun.
+ *
+ * Dipakai path.js untuk menjalani SATU petak jalur yang sudah dihitung — di
+ * situ jaraknya paling satu blok dan langkah rakus memang jawaban yang benar.
+ * Jangan panggil ini langsung dari mode kerja; pakai steer().
+ */
+export function stepDirect(entity, target, step) {
   unstick(entity);
   const a = entity.location;
   const dx = target.x - a.x;
   const dz = target.z - a.z;
   const flat = Math.hypot(dx, dz);
-  if (flat < 0.8 && Math.abs(target.y - a.y) < 2) return true;
+  // "Sudah sampai" harus menyebut tinggi juga. Ambang lama (dua blok) membuat
+  // langkah kaki menyerah tepat di kaki tanjakan: mendatar sudah dekat, tegak
+  // masih satu setengah blok, dan tidak ada satu langkah pun yang diambil.
+  if (flat < 0.6 && Math.abs(target.y - a.y) < 1.2) return true;
   if (flat < 0.001) return false;
 
   const move = Math.min(step, flat);

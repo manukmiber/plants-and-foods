@@ -3,7 +3,8 @@
  */
 
 import {
-  DIGGABLE, DIGGABLE_EXTRA, MINE_KEY_OF, MINE_TARGETS, ORES, POSE, PROTECTED,
+  DIGGABLE, DIGGABLE_EXTRA, MINE_KEY_OF, MINE_SPOIL, MINE_SPOIL_CAP,
+  MINE_TARGETS, ORES, POSE, PROTECTED,
 } from "./config.js";
 import { askOwner } from "./ask.js";
 import { report, sayFrom } from "./chat.js";
@@ -25,7 +26,10 @@ const DIRS = [[1, 0], [0, 1], [-1, 0], [0, -1]];
 const TORCH_EVERY = 8;
 const BRANCH_EVERY = 3;
 const BRANCH_LENGTH = 8;
-const BAG_LIMIT = 96;
+// Muatan yang dibawa sekali jalan. Dinaikkan dari 96 sejak hasil galian biasa
+// (batu, tanah, kerikil) ikut dibawa pulang: dengan batas lama, penambang
+// pulang menyetor tiap belasan blok dan hampir tidak sempat menggali.
+const BAG_LIMIT = 192;
 const REACH = 4.0;
 // Lebar x tinggi terowongan: 1 blok lebar, 3 blok tinggi — cukup lega untuk
 // companion (dan pemain) berjalan tanpa menunduk, tidak seperti versi lama
@@ -50,6 +54,17 @@ function targetDepth(dimensionId, wants) {
     .map((key) => MINE_TARGETS[key]?.depth)
     .filter((d) => typeof d === "number");
   return depths.length ? Math.min(...depths) : -54;
+}
+
+/**
+ * Hasil galian biasa dibawa pulang?
+ *
+ * Bawaannya menyala. Pemain yang memang cuma mau bijih bisa mematikannya di
+ * Buku Panduan » Apa yang Ditambang, dan sesudah itu batu galian kembali
+ * menguap seperti dulu.
+ */
+function haulSpoil(state) {
+  return state.mineHaul !== false;
 }
 
 /** Bijih ini termasuk yang diminta pemilik? null/kosong berarti "apa saja". */
@@ -187,10 +202,15 @@ function dig(entity, state, block, tool) {
     addToBag(state, ore, 1);
     particle(entity.dimension, "minecraft:villager_happy", at);
     sound(entity.dimension, "random.orb", at, { volume: 0.4 });
-  } else if (wanted(state, "minecraft:cobblestone") &&
-             (state.bag["minecraft:cobblestone"] ?? 0) < 32 &&
-             (id === "minecraft:stone" || id === "minecraft:cobblestone")) {
-    addToBag(state, "minecraft:cobblestone", 1);
+  } else if (haulSpoil(state)) {
+    // Hasil galian biasa. Bloknya toh sudah terlanjur harus dibongkar supaya
+    // lorongnya lewat; membiarkannya menguap sama saja dengan membuangnya,
+    // padahal batu dan tanah itulah yang ditunggu petani (tanah timbun),
+    // pembangun (batu) dan perajin (tungku) di permukaan.
+    const spoil = MINE_SPOIL[id];
+    if (spoil && (state.bag[spoil] ?? 0) < MINE_SPOIL_CAP) {
+      addToBag(state, spoil, 1);
+    }
   }
   return { status: "broke", id };
 }

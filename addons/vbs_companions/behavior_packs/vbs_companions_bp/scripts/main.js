@@ -104,7 +104,9 @@ function bootstrap(entity, claimant) {
 
 function heldFlower(player) {
   try {
-    const stack = player.getComponent("minecraft:equippable")?.getEquipment("Mainhand");
+    const inv = player.getComponent("minecraft:inventory")?.container;
+    if (!inv) return undefined;
+    const stack = inv.getItem(player.selectedSlotIndex);
     return stack && FLOWERS.has(stack.typeId) ? stack : undefined;
   } catch (e) {
     logWarn(TAG, `Gagal membaca item di tangan ${player?.name}`, e);
@@ -113,12 +115,21 @@ function heldFlower(player) {
 }
 
 function consumeOne(player, stack) {
-  const eq = player.getComponent("minecraft:equippable");
-  if (stack.amount > 1) {
-    stack.amount -= 1;
-    eq.setEquipment("Mainhand", stack);
-  } else {
-    eq.setEquipment("Mainhand", undefined);
+  try {
+    const inv = player.getComponent("minecraft:inventory")?.container;
+    if (!inv) return;
+    const slot = player.selectedSlotIndex;
+    const current = inv.getItem(slot);
+    if (!current) return;
+    
+    if (current.amount > 1) {
+      current.amount -= 1;
+      inv.setItem(slot, current);
+    } else {
+      inv.setItem(slot, undefined);
+    }
+  } catch (e) {
+    logWarn(TAG, `Gagal mengurangi bunga dari tangan ${player?.name}`, e);
   }
 }
 

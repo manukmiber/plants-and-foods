@@ -344,6 +344,7 @@ export const VILLAGE_STAKE_ITEM = "minecraft:stick";
 // liar (untamed) begitu muncul, dan baru menempel ke pemain sesudah diberi satu
 // bunga (item ini langsung habis dipakai, sama seperti taming kucing pakai ikan).
 export const FLOWERS = new Set([
+  "minecraft:yellow_flower","minecraft:red_flower","minecraft:double_plant",
   "minecraft:poppy", "minecraft:dandelion", "minecraft:blue_orchid",
   "minecraft:allium", "minecraft:azure_bluet", "minecraft:red_tulip",
   "minecraft:orange_tulip", "minecraft:white_tulip", "minecraft:pink_tulip",

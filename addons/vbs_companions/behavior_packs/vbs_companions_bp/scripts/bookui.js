@@ -1,21 +1,5 @@
 /**
  * Isi Buku Panduan Companion.
- *
- * Semuanya benar-benar dikerjakan dari sini, bukan sekadar teks:
- *
- *   1. CARA PAKAI          panduan bertahap, dibagi per bab
- *   2. KENDALI COMPANION   daftar companion milik pemain, menunya, dan perintah
- *                          untuk semuanya sekaligus tanpa perlu mendekat
- *   2b. SATU COMPANION     apa yang sedang dia kerjakan, isi peti dan kantongnya,
- *                          dan kotak untuk mengajaknya bicara — inilah yang
- *                          membuat buku ini alat, bukan bacaan
- *   3. PERTANYAAN          companion yang menunggu keputusanmu (ask.js)
- *   4. PENGATURAN MOD      saklar per pemain, tersimpan di tingkat dunia
- *
- * Semua layar memakai ActionFormData, termasuk halaman pengaturan. Itu disengaja:
- * bentuk parameter ModalFormData.toggle() berubah antara versi stabil dan beta
- * @minecraft/server-ui, dan halaman pengaturan yang menampilkan nilai bawaan yang
- * salah lebih buruk daripada satu tombol per saklar.
  */
 
 import { ActionFormData, ModalFormData } from "@minecraft/server-ui";
@@ -93,7 +77,7 @@ export async function openBook(player) {
   switch (res.selection) {
     case 0: await openHowTo(player); break;
     case 1: await openControl(player); break;
-    case 2: await openStakeMap(player); break;
+    case 2: await openStakeMap(player, "farm", () => openBook(player)); break;
     case 3: await openAsks(player); break;
     case 4: await openPrefs(player); break;
     case 5: await openStatus(player); break;
@@ -103,16 +87,6 @@ export async function openBook(player) {
 
 /* ------------------------------------------------------------------ *
  * 1b. Peta Patok
- *
- * Patok ladang berbentuk ITEM yang harus dibawa dan diklikkan ke tanah chunk
- * yang dituju. Dua hal membuatnya menyusahkan: itemnya terselip di antara isi
- * kantong (bentuknya cuma sebatang stik), dan chunk yang mau dipatok sering
- * ada di seberang lembah — memasang satu patok jadi perjalanan tersendiri.
- *
- * Halaman ini menggantikan keduanya. Seluruh petak di sekitar tergambar
- * sekaligus lengkap dengan statusnya, dan tinggal ditunjuk: pilih barisnya,
- * pilih petaknya. Item patoknya tetap ada dan tetap bekerja seperti dulu —
- * ini jalan masuk kedua, bukan penggantinya.
  * ------------------------------------------------------------------ */
 
 const MAP_SIZE = 8;
@@ -130,11 +104,6 @@ const STAKE_KINDS = {
   },
 };
 
-/**
- * Satu petak selalu DUA huruf supaya barisnya tetap lurus. Yang membedakan
- * bukan bentuknya melainkan warnanya, dan huruf X menandai petak tempat pemain
- * berdiri sekarang — tanpa itu peta 8x8 tidak ada titik acuannya.
- */
 function cellGlyph(cell) {
   const mark = cell.here ? "XX" : "##";
   if (!cell.kind) return cell.here ? "§eXX" : "§8--";
@@ -170,11 +139,11 @@ function mapBody(player, map, kind) {
       : `§8Kamu belum punya satu pun patok ${spec.short}.`,
     "",
     `§7Sedang memasang: ${spec.color}${spec.label}§7. Pilih satu baris, lalu tunjuk`,
-    "§7petaknya untuk memasang atau mencabut. Tidak perlu memegang item apa pun.",
+    "§7petaknya untuk memasang atau mencabut tanpa perlu membawa item stik.",
   ].join("\n");
 }
 
-async function openStakeMap(player, kind = "farm") {
+export async function openStakeMap(player, kind = "farm", returnCallback) {
   const spec = STAKE_KINDS[kind] ? kind : "farm";
   const info = STAKE_KINDS[spec];
   const map = chunkMap(player, MAP_SIZE);
@@ -191,34 +160,38 @@ async function openStakeMap(player, kind = "farm") {
     ? `§eCabut patok tempat aku berdiri\n§8chunk (${here.cx}, ${here.cz})`
     : `§aPatok chunk tempat aku berdiri\n§8chunk (${here?.cx ?? "?"}, ${here?.cz ?? "?"})`, info.icon);
   form.button(`§7Ganti ke ${STAKE_KINDS[other].label}\n§8Peta yang sama, jenis patok yang lain`);
-  form.button(`§8Beri Aku ${info.label}\n§8Cara lama: klik tanah dengan itemnya`, "textures/items/stick");
+  form.button(`§8Beri Aku ${info.label} (Stik Fisik)\n§8Alternatif lama: klik tanah dengan item`, "textures/items/stick");
   form.button("§8« Kembali");
 
   const res = await forceShow(player, form);
   if (!res || res.canceled || res.selection === undefined) return;
   const pick = res.selection;
   if (pick < MAP_SIZE) {
-    await openStakeRow(player, spec, pick);
+    await openStakeRow(player, spec, pick, returnCallback);
     return;
   }
   if (pick === MAP_SIZE) {
     if (here) player.sendMessage(toggleClaimAt(player, here.cx, here.cz, spec, player.location));
-    await openStakeMap(player, spec);
+    await openStakeMap(player, spec, returnCallback);
     return;
   }
   if (pick === MAP_SIZE + 1) {
-    await openStakeMap(player, other);
+    await openStakeMap(player, other, returnCallback);
     return;
   }
   if (pick === MAP_SIZE + 2) {
     if (!info.give(player)) player.sendMessage(`§7${info.label} sudah ada di kantongmu.`);
-    await openStakeMap(player, spec);
+    await openStakeMap(player, spec, returnCallback);
     return;
   }
-  await openBook(player);
+  if (returnCallback) {
+    await returnCallback();
+  } else {
+    await openBook(player);
+  }
 }
 
-async function openStakeRow(player, kind, rowIndex) {
+async function openStakeRow(player, kind, rowIndex, returnCallback) {
   const info = STAKE_KINDS[kind];
   const map = chunkMap(player, MAP_SIZE);
   const row = map.rows[rowIndex] ?? [];
@@ -244,7 +217,7 @@ async function openStakeRow(player, kind, rowIndex) {
     logInfo(TAG, `${player.name} menunjuk chunk (${cell.cx}, ${cell.cz}) dari Peta Patok.`);
     player.sendMessage(toggleClaimAt(player, cell.cx, cell.cz, kind, player.location));
   }
-  await openStakeMap(player, kind);
+  await openStakeMap(player, kind, returnCallback);
 }
 
 /* ------------------------------------------------------------------ *
@@ -263,8 +236,6 @@ const CHAPTERS = [
       "§7   dua-duanya boleh. Bunganya habis dipakai dan dia jadi milikmu.",
       "§74. Jongkok lalu klik dia untuk membuka menunya.",
       "",
-      "§8Menjinakkan dikerjakan mesin gim sendiri, sama seperti serigala dengan",
-      "§8tulang — jadi tidak ada lagi bunga yang habis tanpa dia jadi jinak.",
       "§8Bunga yang sama juga bahan buku ini: buku + bunga di meja kerja.",
     ],
   },
@@ -292,7 +263,7 @@ const CHAPTERS = [
       "§f4. Menanam§7 berjalur, satu jenis bibit per jalur",
       "§f5. Merawat§7 — panen, tanam ulang, perbaiki pengairan, menghias",
       "",
-      "§7Patok chunk dengan §fPatok Ladang§7 supaya dia boleh menggarap lebih luas.",
+      "§7Patok chunk langsung lewat §fBuku Panduan §7» §2Peta Patok§7 tanpa perlu stik.",
       "§8Hasil panen selalu masuk peti companion, bukan kantongmu.",
     ],
   },
@@ -301,12 +272,11 @@ const CHAPTERS = [
     icon: "textures/items/brick",
     body: [
       "§7Bahannya diambil dari §fpeti stasiun§7, dan rancangan menyebut §fperan§7",
-      "§7blok — dinding, lantai, atap — bukan blok tertentu. Jadi rumah yang sama",
-      "§7jadi rumah kayu kalau petimu berisi papan, rumah batu kalau berisi batu.",
+      "§7blok — dinding, lantai, atap — bukan blok tertentu.",
       "",
-      "§7Ambil §fPatok Desa§7 di menu Rancangan Bangunan untuk mematok chunk yang",
-      "§7boleh dibangun rumah. Tiap chunk berpatok dibangun satu rumah lengkap",
-      "§7ranjang, dan companion yang mengantuk akan tidur di sana.",
+      "§7Tandai chunk desa di §fBuku Panduan §7» §2Peta Patok Desa§7.",
+      "§7Tiap chunk berpatok dibangun satu rumah lengkap ranjang, dan",
+      "§7companion yang mengantuk akan tidur di sana.",
       "",
       "§8Rancangan baru bisa ditambah sebagai berkas JSON di folder",
       "§8addons/vbs_companions/blueprints/ — lihat halaman Isi Tambahan.",
@@ -336,16 +306,12 @@ const CHAPTERS = [
       "§7Dua keputusan tidak ditebak sendiri oleh mereka — kamu yang ditanya:",
       "",
       "§f• Petani§7 yang kehabisan bibit bertanya apakah dia mencari bibit",
-      "§7  sendiri (membabat rumput) atau kamu yang menyetok di petinya.",
-      "§f• Penambang§7 bertanya bijih apa saja yang kamu cari, lalu kedalaman",
-      "§7  terowongannya disesuaikan — batu bara tidak perlu digali sampai -54.",
+      "§7  sendiri atau kamu yang menyetok di petinya.",
+      "§f• Penambang§7 bertanya bijih apa saja yang kamu cari.",
       "",
       "§7Menjawabnya dua cara:",
       "§f  ketik ya / tidak §7di chat untuk pertanyaan ya-tidak",
       "§f  buku ini » Pertanyaan Companion §7untuk semuanya",
-      "",
-      "§8Jawaban tersimpan dan dituruti seterusnya, dan bisa diubah lagi kapan",
-      "§8saja lewat halaman yang sama.",
     ],
   },
   {
@@ -355,12 +321,10 @@ const CHAPTERS = [
       "§7Buka §fKendalikan Companion§7, pilih satu companion, dan semua ini ada",
       "§7di situ tanpa perlu berjalan ke tempat dia bekerja:",
       "",
-      "§f• Sedang Apa§7 — pekerjaan yang sedang dikerjakan detik ini,",
-      "§7  tenaga, kantuk, dan bahan yang sedang ditunggu",
+      "§f• Sedang Apa§7 — pekerjaan, tenaga, dan bahan yang ditunggu",
       "§f• Isi Peti & Kantong§7 — semua yang dia simpan dan bawa",
-      "§f• Ngobrol§7 — kirim pesan langsung, jawabannya masuk chatmu",
-      "§f• Jawab Pertanyaannya§7 — kalau dia sedang menunggu jawaban",
-      "§f• Apa yang Ditambang§7 — khusus penambang",
+      "§f• Ngobrol§7 — kirim pesan langsung dari jarak jauh",
+      "§f• Peta Patok§7 — patok ladang atau desa langsung dari menu",
       "",
       "§8Semuanya jalan lintas dimensi: companion di Nether pun tetap terbaca.",
     ],
@@ -370,16 +334,10 @@ const CHAPTERS = [
     icon: "textures/items/bed_red",
     body: [
       "§7§lTenaga§r§7 terkuras karena bekerja, pulih dengan istirahat atau ngobrol.",
-      "§7§lKantuk§r§7 naik seiring waktu, memuncak malam hari, pulih dengan tidur",
-      "§7di ranjang rumah desa.",
+      "§7§lKantuk§r§7 naik seiring waktu, pulih dengan tidur di ranjang rumah desa.",
       "",
       "§7Companion yang kehabisan bahan §fmemasang permintaan§7, bukan diam:",
       "§8  Mencari Barang -> bahan mentah -> Merajin -> alat & barang jadi",
-      "",
-      "§7Kalau kamu §fbelum punya§7 companion bermode Merajin atau Mencari",
-      "§7Barang, mereka §atidak menunggu§7: pohon ditebang sendiri pakai tangan,",
-      "§7batu digali sendiri, lalu meja kerja, peti, papan nama dan alatnya",
-      "§7dibuat sendiri dari situ — persis seperti kamu di menit pertama.",
       "",
       "§7Papan permintaan ada di menu companion » §fPermintaan Bantuan§7.",
     ],
@@ -479,13 +437,7 @@ async function openAllOrders(player, mine) {
 }
 
 /* ------------------------------------------------------------------ *
- * 2b. Satu companion: sedang apa, isi petinya, dan diajak bicara
- *
- * Inilah yang membuat buku ini benar-benar alat, bukan cuma bacaan: tiga hal
- * yang sebelumnya cuma bisa didapat dengan berjalan ke tempat companion
- * bekerja lalu jongkok-klik — apa yang sedang dikerjakan, apa isi petinya, dan
- * mengajaknya bicara — sekarang ada di sini, dari jarak berapa pun dan dari
- * dimensi mana pun.
+ * 2b. Satu companion
  * ------------------------------------------------------------------ */
 
 function hubBody(player, entity) {
@@ -508,6 +460,7 @@ function hubBody(player, entity) {
 
 async function openCompanionHub(player, entity) {
   const question = askOf(player.id, entity.id);
+  const mode = getMode(entity);
   const form = new ActionFormData()
     .title(`§l§b${displayName(entity)}`)
     .body(hubBody(player, entity))
@@ -517,8 +470,14 @@ async function openCompanionHub(player, entity) {
   if (question) {
     form.button(`§6Jawab Pertanyaannya\n§8${question.text.slice(0, 40)}...`, "textures/items/wheat");
   }
-  if (getMode(entity) === "mine") {
+  if (mode === "mine") {
     form.button("§7Apa yang Ditambang\n§8Pilih bijih yang dia cari", "textures/items/iron_pickaxe");
+  }
+  if (mode === "farm") {
+    form.button("§2Peta Patok Ladang\n§8Tunjuk chunk ladang di peta", "textures/items/map_filled");
+  }
+  if (mode === "build") {
+    form.button("§2Peta Patok Desa\n§8Tunjuk chunk desa di peta", "textures/items/map_filled");
   }
   form
     .button("§dMenu Lengkap\n§8Perintah, perlengkapan, ladang, rancangan", "textures/items/name_tag")
@@ -527,12 +486,11 @@ async function openCompanionHub(player, entity) {
   const res = await forceShow(player, form);
   if (!res || res.canceled || res.selection === undefined) return;
 
-  // Tombol yang muncul-hilang tergantung keadaan, jadi urutannya dihitung
-  // ulang di sini alih-alih ditulis sebagai angka mati — angka mati adalah
-  // cara paling gampang membuat tombol "Ngobrol" membuka halaman lain.
   const buttons = ["doing", "bag", "talk"];
   if (question) buttons.push("ask");
-  if (getMode(entity) === "mine") buttons.push("mine");
+  if (mode === "mine") buttons.push("mine");
+  if (mode === "farm") buttons.push("farm_map");
+  if (mode === "build") buttons.push("build_map");
   buttons.push("menu", "back");
 
   switch (buttons[res.selection]) {
@@ -541,6 +499,8 @@ async function openCompanionHub(player, entity) {
     case "talk": await openTalk(player, entity); break;
     case "ask": await openAsks(player, entity); break;
     case "mine": await openMineTargets(player, entity); break;
+    case "farm_map": await openStakeMap(player, "farm", () => openCompanionHub(player, entity)); break;
+    case "build_map": await openStakeMap(player, "village", () => openCompanionHub(player, entity)); break;
     case "menu": await openMenu(player, entity); break;
     default: await openControl(player); break;
   }
@@ -569,13 +529,6 @@ async function openDoing(player, entity) {
   await openCompanionHub(player, entity);
 }
 
-/**
- * Isi peti stasiun DAN kantong pribadinya.
- *
- * Keduanya ditampilkan karena keduanya benar-benar ada: selama peti belum
- * berdiri, semua hasil kerja companion hidup di kantong (bag.js), dan pemain
- * yang cuma melihat peti kosong akan mengira companion tidak bekerja.
- */
 async function openBag(player, entity) {
   const state = readState(entity);
   const container = stationContainer(entity, state);
@@ -676,14 +629,6 @@ async function openAsks(player, entity) {
   else await openAsks(player);
 }
 
-/**
- * "Apa saja yang harus aku mine?"
- *
- * Dibuat sebagai daftar saklar satu tombol per bijih, sama pola dengan halaman
- * Pengaturan Mod, karena alasan yang sama: bentuk ModalFormData.toggle()
- * berbeda antara modul stabil dan beta, dan centang yang salah tampil lebih
- * buruk daripada satu tombol per baris.
- */
 async function openMineTargets(player, entity) {
   const state = readState(entity);
   const wants = Array.isArray(state.mineWants) ? state.mineWants : [];
@@ -733,11 +678,6 @@ async function openMineTargets(player, entity) {
   await openCompanionHub(player, entity);
 }
 
-/**
- * Mencentang bijih di halaman ini SEKALIGUS menjawab pertanyaan yang sedang
- * menggantung — tanpa ini, penambang akan tetap merasa belum dijawab dan
- * bertanya lagi lima menit kemudian.
- */
 function answerAskIfAny(player, entity, value) {
   const question = askOf(player.id, entity.id);
   if (question && question.field === "mineWants") {
@@ -822,7 +762,6 @@ async function openPrefs(player) {
   const sw = SWITCHES[res.selection];
   const next = !prefs[sw.key];
   writeSettings(player.id, { [sw.key]: next });
-  // Dua saklar punya akibat langsung di luar penyimpanan setelan.
   if (sw.key === "logToChat") watchLogs(player.id, next);
   if (sw.key === "keepBook" && next) {
     player.sendMessage("§7Buku akan dikembalikan lagi kalau hilang.");

@@ -515,13 +515,10 @@ function offerVillage(entity, state, owner, ownerId, dimension) {
   state.villageOfferAt = now;
   logInfo(TAG, `${entStr(entity)} mengajukan pembuatan kampung ke ${owner.name}.`);
   sayFrom(entity, "village");
-  report(entity, "Boleh aku bangun kampung kecil? Patok saja chunk yang kamu mau.");
-  const gave = ensureVillageStake(owner);
-  owner.sendMessage(gave
-    ? "§2Pembangun menyerahkan §fPatok Desa§2 ke kantongmu. §7Klik tanah untuk memilih " +
-      "chunk; tiap chunk berpatok akan dibangun satu rumah lengkap dengan ranjang, " +
-      "dan companion akan tidur di sana."
-    : "§7Patok Desa sudah ada di kantongmu — patok saja chunk yang kamu mau dibangun.");
+  report(entity, "Boleh aku bangun kampung kecil? Buka Buku Panduan » Peta Patok untuk menandai chunk desa.");
+  owner.sendMessage(
+    "§2Pembangun ingin membangun kampung! §7Buka §6Buku Panduan §7» §2Peta Patok Desa§7 " +
+    "(atau menu Rancangan Bangunan) untuk menandai chunk yang ingin dibangun rumah.");
   return true;
 }
 

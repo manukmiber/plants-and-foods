@@ -6,7 +6,8 @@ import { ActionFormData, MessageFormData, ModalFormData } from "@minecraft/serve
 import { ENERGY, FAMILY, FOOD_HEAL, MODES, SLEEP } from "./config.js";
 import { getActivity } from "./activity.js";
 import { BLUEPRINTS, startBlueprint } from "./builder.js";
-import { claimsNear, ensureStake, ensureVillageStake } from "./claim.js";
+import { claimsNear, ensureStake } from "./claim.js";
+import { openStakeMap } from "./bookui.js";
 import { syncWeapon } from "./combat.js";
 import { bestTier, tierName, toolRank } from "./crafting.js";
 import { energyOf, isResting, isSleeping, needsLabel, sleepOf } from "./energy.js";
@@ -138,7 +139,11 @@ export function applyMode(player, entity, key) {
   syncWeapon(entity);
   player.sendMessage(`${meta.color}${displayName(entity)} §7» §f${MODES[key].label}`);
   player.playSound("random.orb", { location: player.location });
-  if (key === "farm") ensureStake(player);
+  if (key === "farm") {
+    player.sendMessage("§7Tip: Buka §6Buku Panduan §7» §2Peta Patok§7 untuk mematok ladang tanpa stik.");
+  } else if (key === "build") {
+    player.sendMessage("§7Tip: Buka §6Buku Panduan §7» §2Peta Patok Desa§7 untuk menandai chunk desa.");
+  }
 }
 
 async function openSettings(player, entity) {
@@ -155,12 +160,12 @@ async function openSettings(player, entity) {
     .button("§aPakaikan Item di Tangan\n§8Zirah, senjata, busur atau alat", "textures/items/iron_chestplate")
     .button("§eBeri Makan\n§8Pulihkan nyawa dengan makanan di tangan", "textures/items/bread")
     .button("§6Lepas Semua Perlengkapan\n§8Dikembalikan ke kantongmu", "textures/items/leather")
-    .button("§2Ladang & Patok\n§8Batas garapan dan izin melebar", "textures/items/wheat")
-    .button("§eRancangan Bangunan\n§8Pilih yang akan dibangun", "textures/items/brick")
+    .button("§2Ladang & Patok\n§8Peta patok dan batas garapan", "textures/items/wheat")
+    .button("§eRancangan Bangunan\n§8Pilih yang akan dibangun & patok desa", "textures/items/brick")
     .button("§bCatatan Pengembara\n§8Temuan beserta koordinatnya", "textures/items/map_filled")
     .button(`§7Celoteh: ${state.quiet ? "§cmati" : "§ahidup"}\n§8Gelembung teks dan obrolan`, "textures/items/book_normal")
     .button(`§7Nama pemilik (dia saja): ${state.hideOwner ? "§csembunyi" : "§aterlihat"}\n§8Berlaku untuk companion ini saja`, "textures/items/paper")
-    .button(`§7Nama pemilik (SEMUA milikku): ${global.hideOwner ? "§csembunyi" : "§aterlihat"}\n§8Kalau disembunyikan, tidak ada pemain di server yang tahu ini punya siapa`, "textures/items/paper")
+    .button(`§7Nama pemilik (SEMUA milikku): ${global.hideOwner ? "§csembunyi" : "§aterlihat"}\n§8Sembunyikan pemilik seluruh companion`, "textures/items/paper")
     .button("§6Permintaan Bantuan\n§8Siapa sedang menunggu bahan atau alat", "textures/items/emerald")
     .button("§bCatatan Kejadian (Log)\n§8Untuk melacak error dan memperbaikinya", "textures/items/book_writable")
     .button("§bGanti Nama", "textures/items/name_tag")
@@ -190,10 +195,6 @@ async function openSettings(player, entity) {
   }
 }
 
-/**
- * Papan permintaan: siapa sedang menunggu bahan atau alat dari siapa. Ini
- * jendela pemain ke rantai kerja pencari barang -> perajin -> pekerja lain.
- */
 async function openRequests(player, entity) {
   const form = new ActionFormData()
     .title("§l§6Permintaan Bantuan")
@@ -212,10 +213,6 @@ async function openRequests(player, entity) {
   await openSettings(player, entity);
 }
 
-/**
- * Jendela log di dalam game. Content log Minecraft tidak selalu bisa dibaca
- * pemain (apalagi di HP dan di server), padahal justru di situ error tercatat.
- */
 async function openLogs(player, entity) {
   const stats = logStats();
   const watching = isWatching(player.id);
@@ -256,30 +253,33 @@ async function openFarm(player, entity) {
     .title("§l§6Ladang & Patok")
     .body([
       "§7Patok menentukan sampai mana companion boleh menggarap.",
-      "§7Klik tanah pakai §fPatok Ladang§7 untuk memilih chunk — atau buka",
-      "§fBuku Panduan » Peta Patok§7 dan tunjuk petaknya langsung dari peta,",
-      "§7tanpa perlu memegang itemnya dan tanpa perlu berjalan ke sana.",
+      "§7Tunjuk petak langsung di §fPeta Patok Ladang§7 tanpa perlu stik fisik.",
       "§8Merah = dipatok tapi belum digarap. Hijau = sudah jadi ladang.",
       "",
       ...lines,
       "",
       `§7Izin melebar satu chunk lagi: ${state.allowExpand ? "§ahidup" : "§cmati"}`,
       "§8Kalau dihidupkan, companion menggarap chunk berpatok kedua yang terdekat",
-      "§8setelah chunk pertama selesai — asal ada ember/besi dan sungai di dekatnya.",
+      "§8setelah chunk pertama selesai.",
     ].join("\n"))
-    .button("§eBeri Aku Patok Ladang", "textures/items/stick")
+    .button("§2Buka Peta Patok Ladang\n§8Pilih dan patok chunk langsung dari peta", "textures/items/map_filled")
     .button(state.allowExpand ? "§cMatikan izin melebar" : "§aIzinkan melebar 1 chunk lagi", "textures/items/wheat")
+    .button("§8Minta Stik Fisik\n§8Alternatif lama: klik tanah dengan item", "textures/items/stick")
     .button("§8« Kembali");
 
   const res = await forceShow(player, form);
   if (!res || res.canceled || res.selection === undefined) return;
   if (res.selection === 0) {
-    if (!ensureStake(player)) player.sendMessage("§7Patok Ladang sudah ada di kantongmu.");
-  } else if (res.selection === 1) {
+    await openStakeMap(player, "farm", () => openFarm(player, entity));
+    return;
+  }
+  if (res.selection === 1) {
     setExpand(entity, !state.allowExpand);
     player.sendMessage(state.allowExpand
       ? "§7Izin melebar dimatikan."
       : "§aIzin melebar dihidupkan. Patok satu chunk lagi supaya ada tujuannya.");
+  } else if (res.selection === 2) {
+    if (!ensureStake(player)) player.sendMessage("§7Patok Ladang sudah ada di kantongmu.");
   }
   await openSettings(player, entity);
 }
@@ -295,13 +295,8 @@ async function openBlueprints(player, entity) {
       "",
       `§7Rancangan sekarang: §f${BLUEPRINTS[state.blueprint]?.label ?? "belum dipilih"}`,
       "",
-      "§7Mau bikin kampung kecil? Ambil §fPatok Desa§7 di bawah, patok beberapa",
-      "§7chunk, lalu suruh dia ke Mode Membangun — rumah lengkap ranjang akan",
-      "§7dibangun duluan sebelum rancangan di atas.",
-      "",
-      "§8Rancangan bertanda §7JSON§8 datang dari berkas di folder",
-      "§8addons/vbs_companions/blueprints/ — tambah berkas di sana untuk",
-      "§8menambah rancangan baru tanpa menyentuh kode.",
+      "§7Ingin membangun kampung desa? Buka §fPeta Patok Desa§7 di bawah untuk",
+      "§7menandai chunk yang ingin dibangun rumah berisi ranjang.",
     ].join("\n"));
   for (const key of keys) {
     const bp = BLUEPRINTS[key];
@@ -309,14 +304,13 @@ async function openBlueprints(player, entity) {
     const from = bp.source ? " §7JSON" : "";
     form.button(`§f${bp.label}${mark}${from}\n§8${bp.hint}`);
   }
-  form.button("§2Ajukan Desa\n§8Minta Patok Desa untuk menandai chunk yang boleh dibangun rumah");
+  form.button("§2Peta Patok Desa\n§8Tunjuk chunk desa langsung dari peta", "textures/items/map_filled");
   form.button("§8« Kembali");
 
   const res = await forceShow(player, form);
   if (!res || res.canceled || res.selection === undefined) return;
   if (res.selection === keys.length) {
-    if (!ensureVillageStake(player)) player.sendMessage("§7Patok Desa sudah ada di kantongmu.");
-    await openBlueprints(player, entity);
+    await openStakeMap(player, "village", () => openBlueprints(player, entity));
     return;
   }
   if (res.selection < keys.length) {
@@ -361,11 +355,6 @@ function toggleHideOwner(player, entity) {
     : "§7Nama pemilik companion ini disembunyikan.");
 }
 
-/**
- * Saklar menyeluruh: semua companion milik pemain ini berhenti memajang nama
- * pemiliknya, di penanda kepala maupun di papan stasiun. Inilah yang membuat
- * pemain lain di server tidak bisa tahu companion itu punya siapa.
- */
 function toggleHideOwnerAll(player, entity) {
   const before = readSettings(player.id).hideOwner;
   const next = writeSettings(player.id, { hideOwner: !before });

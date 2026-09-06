@@ -109,6 +109,9 @@
       "vbs:mode_build": {},
       "vbs:mode_crafter": {},
       "vbs:mode_looter": {},
+      "vbs:mode_trader": {},
+      "vbs:mode_fisher": {},
+      "vbs:mode_rancher": {},
       "vbs:weapon_melee": {
         "minecraft:behavior.melee_attack": {
           "priority": 5,
@@ -353,7 +356,10 @@
             "vbs:mode_wander",
             "vbs:mode_build",
             "vbs:mode_crafter",
-            "vbs:mode_looter"
+            "vbs:mode_looter",
+            "vbs:mode_trader",
+            "vbs:mode_fisher",
+            "vbs:mode_rancher"
           ]
         },
         "add": {
@@ -373,7 +379,10 @@
             "vbs:mode_wander",
             "vbs:mode_build",
             "vbs:mode_crafter",
-            "vbs:mode_looter"
+            "vbs:mode_looter",
+            "vbs:mode_trader",
+            "vbs:mode_fisher",
+            "vbs:mode_rancher"
           ]
         },
         "add": {
@@ -393,7 +402,10 @@
             "vbs:mode_wander",
             "vbs:mode_build",
             "vbs:mode_crafter",
-            "vbs:mode_looter"
+            "vbs:mode_looter",
+            "vbs:mode_trader",
+            "vbs:mode_fisher",
+            "vbs:mode_rancher"
           ]
         },
         "add": {
@@ -413,7 +425,10 @@
             "vbs:mode_wander",
             "vbs:mode_build",
             "vbs:mode_crafter",
-            "vbs:mode_looter"
+            "vbs:mode_looter",
+            "vbs:mode_trader",
+            "vbs:mode_fisher",
+            "vbs:mode_rancher"
           ]
         },
         "add": {
@@ -433,7 +448,10 @@
             "vbs:mode_wander",
             "vbs:mode_build",
             "vbs:mode_crafter",
-            "vbs:mode_looter"
+            "vbs:mode_looter",
+            "vbs:mode_trader",
+            "vbs:mode_fisher",
+            "vbs:mode_rancher"
           ]
         },
         "add": {
@@ -453,7 +471,10 @@
             "vbs:mode_wander",
             "vbs:mode_build",
             "vbs:mode_crafter",
-            "vbs:mode_looter"
+            "vbs:mode_looter",
+            "vbs:mode_trader",
+            "vbs:mode_fisher",
+            "vbs:mode_rancher"
           ]
         },
         "add": {
@@ -473,7 +494,10 @@
             "vbs:mode_wander",
             "vbs:mode_build",
             "vbs:mode_crafter",
-            "vbs:mode_looter"
+            "vbs:mode_looter",
+            "vbs:mode_trader",
+            "vbs:mode_fisher",
+            "vbs:mode_rancher"
           ]
         },
         "add": {
@@ -493,7 +517,10 @@
             "vbs:mode_wander",
             "vbs:mode_build",
             "vbs:mode_crafter",
-            "vbs:mode_looter"
+            "vbs:mode_looter",
+            "vbs:mode_trader",
+            "vbs:mode_fisher",
+            "vbs:mode_rancher"
           ]
         },
         "add": {
@@ -513,12 +540,84 @@
             "vbs:mode_wander",
             "vbs:mode_build",
             "vbs:mode_crafter",
-            "vbs:mode_looter"
+            "vbs:mode_looter",
+            "vbs:mode_trader",
+            "vbs:mode_fisher",
+            "vbs:mode_rancher"
           ]
         },
         "add": {
           "component_groups": [
             "vbs:mode_looter"
+          ]
+        }
+      },
+      "vbs:set_trader": {
+        "remove": {
+          "component_groups": [
+            "vbs:mode_follow",
+            "vbs:mode_farm",
+            "vbs:mode_attack",
+            "vbs:mode_stay",
+            "vbs:mode_mine",
+            "vbs:mode_wander",
+            "vbs:mode_build",
+            "vbs:mode_crafter",
+            "vbs:mode_looter",
+            "vbs:mode_trader",
+            "vbs:mode_fisher",
+            "vbs:mode_rancher"
+          ]
+        },
+        "add": {
+          "component_groups": [
+            "vbs:mode_trader"
+          ]
+        }
+      },
+      "vbs:set_fisher": {
+        "remove": {
+          "component_groups": [
+            "vbs:mode_follow",
+            "vbs:mode_farm",
+            "vbs:mode_attack",
+            "vbs:mode_stay",
+            "vbs:mode_mine",
+            "vbs:mode_wander",
+            "vbs:mode_build",
+            "vbs:mode_crafter",
+            "vbs:mode_looter",
+            "vbs:mode_trader",
+            "vbs:mode_fisher",
+            "vbs:mode_rancher"
+          ]
+        },
+        "add": {
+          "component_groups": [
+            "vbs:mode_fisher"
+          ]
+        }
+      },
+      "vbs:set_rancher": {
+        "remove": {
+          "component_groups": [
+            "vbs:mode_follow",
+            "vbs:mode_farm",
+            "vbs:mode_attack",
+            "vbs:mode_stay",
+            "vbs:mode_mine",
+            "vbs:mode_wander",
+            "vbs:mode_build",
+            "vbs:mode_crafter",
+            "vbs:mode_looter",
+            "vbs:mode_trader",
+            "vbs:mode_fisher",
+            "vbs:mode_rancher"
+          ]
+        },
+        "add": {
+          "component_groups": [
+            "vbs:mode_rancher"
           ]
         }
       }

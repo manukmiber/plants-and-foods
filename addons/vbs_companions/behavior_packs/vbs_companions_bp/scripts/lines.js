@@ -39,6 +39,9 @@ export const LINES = {
     burn: ["Panas! Mana airnya?!", "Kebakar aku. Minggir."],
     eat: ["Lumayan. Aku lanjut kerja.", "Sudah kenyang. Puas?"],
     hail: ["Oi. Kamu siapa?", "Ngapain ngeliatin? Aku punya {owner}.", "Kalau butuh sesuatu, bilang ke {owner}."],
+    trader: ["Harga segini? Jangan bercanda.", "Aku yang tawar, kamu diam saja.", "Emerald-nya kubawa pulang."],
+    fisher: ["Sabar itu bagian tersulitnya.", "Kena satu. Lumayan.", "Air ini dingin juga."],
+    rancher: ["Jangan kabur, kamu.", "Sapinya nurut kalau dibawain gandum.", "Kandangnya sudah kututup."],
   },
   kohane: {
     greet: ["A-ada apa?", "Ehm... halo, {owner}.", "Aku... aku baik-baik saja.", "Ma-mau kubantu?", "A-aku di sini kok.", "Se-selamat datang..."],
@@ -70,6 +73,9 @@ export const LINES = {
     burn: ["Pa-panas! Aku cari air!", "Aduh, aku kebakar..."],
     eat: ["Terima kasih makanannya...", "Sudah agak enakan sekarang."],
     hail: ["E-eh... halo. Aku companion-nya {owner}.", "Ha-halo... ada perlu?", "Ma-mau kupanggilkan {owner}?"],
+    trader: ["A-aku coba tawar ya...", "Semoga harganya cocok...", "Ini hasil dagangannya."],
+    fisher: ["Airnya tenang sekali...", "A-ada yang menarik pancingku!", "Ikannya kubawa ke dapur ya."],
+    rancher: ["Halo, ayam kecil...", "Aku beri makan dulu ya.", "Mereka lucu sekali..."],
   },
   an: {
     greet: ["Yo.", "Kenapa? Ada kerjaan?", "Santai aja, {owner}.", "Lagi ngeliatin siapa nih.", "Yo, apa kabar.", "Butuh sesuatu?"],
@@ -100,6 +106,9 @@ export const LINES = {
     burn: ["Panas panas panas! Air mana air!", "Aduh kebakar, minggir dulu!"],
     eat: ["Nyam. Mantap.", "Udah kenyang, gas lagi!"],
     hail: ["Yo! Kenal {owner}, gak?", "Halo! Aku companion-nya {owner}.", "Eh, ada orang baru. Halo!"],
+    trader: ["Deal! Gampang kan?", "Villagernya baik nih.", "Untung dikit gapapa lah."],
+    fisher: ["Mancing itu santai, cocok buatku.", "Strike! Dapet!", "Sekalian berjemur nih."],
+    rancher: ["Sini sini, ada makanan!", "Domba ini butuh dicukur.", "Kandangnya udah penuh nih."],
   },
   toya: {
     greet: ["Ada yang bisa kubantu?", "Selamat datang kembali, {owner}.", "Aku mendengarkan.", "Silakan.", "Ada yang perlu dicatat?", "Aku siap menerima perintah."],
@@ -134,6 +143,9 @@ export const LINES = {
     burn: ["Api. Air terdekat sudah kutentukan.", "Aku terbakar. Menuju air."],
     eat: ["Nyawaku kembali normal.", "Cukup. Aku lanjutkan pekerjaan."],
     hail: ["Selamat datang. Aku milik {owner}.", "Ada yang bisa kucatat untukmu?", "Kau bukan {owner}, tapi silakan."],
+    trader: ["Harganya sudah kuhitung sebelum berangkat.", "Penawaran ini masuk akal.", "Untungnya kucatat."],
+    fisher: ["Waktu tunggunya kira-kira dua puluh detik.", "Satu ikan. Sesuai perkiraan.", "Perairan ini cukup dalam."],
+    rancher: ["Populasinya kujaga tetap di batas.", "Dua induk, satu anak. Cukup.", "Pakannya kuhitung per hari."],
   },
   flins: {
     greet: ["Selamat bertemu.", "Ada perintah, Tuan {owner}?", "Aku siap.", "Silakan bicara.", "Salam.", "Aku menunggu perintahmu."],
@@ -164,6 +176,9 @@ export const LINES = {
     burn: ["Api di badanku. Air, cepat.", "Bahkan penjaga mercusuar takut api."],
     eat: ["Sepiring cukup untuk melanjutkan.", "Terima kasih. Aku pulih."],
     hail: ["Salam. Aku menjaga milik {owner}.", "Kau bukan tuanku, tapi kau kusambut.", "Selamat datang, orang asing."],
+    trader: ["Dagang itu juga soal kepercayaan.", "Kusepakati harganya.", "Barangnya sudah berpindah tangan."],
+    fisher: ["Laut kampungku mengajariku menunggu.", "Ikan ini akan jadi makan malam.", "Air yang tenang menyembunyikan banyak hal."],
+    rancher: ["Hewan pun perlu dijaga.", "Mereka tenang kalau diperlakukan tenang.", "Kandangnya sudah aman."],
   },
 };
 
@@ -195,6 +210,9 @@ export const FALLBACK = {
   burn: ["Panas! Aku cari air."],
   eat: ["Sudah kenyang. Aku lanjut."],
   hail: ["Halo. Aku companion milik {owner}."],
+  trader: ["Aku sedang berdagang."],
+  fisher: ["Aku sedang memancing."],
+  rancher: ["Aku mengurus hewan-hewan."],
 };
 
 export const TOPICS = [

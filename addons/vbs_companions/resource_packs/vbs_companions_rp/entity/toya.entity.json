@@ -18,6 +18,7 @@
         "idle": "animation.vbs_companion.idle",
         "walk": "animation.vbs_companion.walk",
         "hair": "animation.vbs_companion.hair",
+        "detail": "animation.vbs_companion.detail",
         "harvest": "animation.vbs_companion.harvest",
         "mine": "animation.vbs_companion.mine",
         "build": "animation.vbs_companion.build",
@@ -32,6 +33,7 @@
           "idle",
           "walk",
           "hair",
+          "detail",
           {
             "harvest": "query.property('vbs:pose') == 1"
           },
@@ -53,6 +55,12 @@
           {
             "greet": "query.property('vbs:pose') == 2"
           }
+        ],
+        "initialize": [
+          "variable.vbs_face = 0;"
+        ],
+        "pre_animation": [
+          "variable.vbs_face = (query.property('vbs:face') > 0) ? (query.property('vbs:face') - 1) : ((query.hurt_time > 0) ? 5 : ((query.property('vbs:pose') == 5 || query.property('vbs:pose') == 6) ? 4 : ((!query.is_on_ground) ? 4 : ((query.property('vbs:pose') == 1 || query.property('vbs:pose') == 3 || query.property('vbs:pose') == 4) ? 3 : ((math.mod(query.life_time, 4.6) < 0.16) ? 1 : ((query.modified_move_speed > 0.86) ? 7 : ((query.modified_move_speed > 0.08) ? 3 : ((math.mod(query.life_time, 37) < 2.4 && query.modified_move_speed < 0.02) ? 6 : ((math.mod(query.life_time, 13) < 2.2) ? 2 : 0)))))))));"
         ]
       },
       "render_controllers": [

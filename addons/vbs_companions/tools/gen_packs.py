@@ -33,7 +33,7 @@ import model
 BP = os.path.join(model.HERE, "..", "behavior_packs", "vbs_companions_bp")
 RP = os.path.join(model.HERE, "..", "resource_packs", "vbs_companions_rp")
 
-VERSION = [1, 6, 0]
+VERSION = [2, 0, 0]
 MIN_ENGINE = [1, 21, 0]
 
 # UUID ini adalah identitas pack di mata Minecraft. JANGAN diubah setelah dirilis:
@@ -105,7 +105,7 @@ ORE_BLOCKS = [
 # Sembilan perintah yang bisa dipilih pemain. Urutannya sama dengan MODES di
 # config.js; validate.py yang memeriksa keduanya tidak melenceng.
 MODES = ["follow", "farm", "attack", "stay", "mine", "wander", "build",
-         "crafter", "looter"]
+         "crafter", "looter", "trader", "fisher", "rancher"]
 MODE_GROUPS = [f"vbs:mode_{m}" for m in MODES]
 WEAPON_GROUPS = ["vbs:weapon_melee", "vbs:weapon_bow"]
 
@@ -376,6 +376,12 @@ def entity_doc(char):
         "vbs:mode_build": {},
         "vbs:mode_crafter": {},
         "vbs:mode_looter": {},
+        # Tiga peran baru. Sama seperti mode kerja lain, grupnya sengaja kosong:
+        # yang menyetir kaki companion adalah pathfinding add-on ini sendiri
+        # (path.js), bukan behavior bawaan yang menyeretnya ke tujuan acak.
+        "vbs:mode_trader": {},
+        "vbs:mode_fisher": {},
+        "vbs:mode_rancher": {},
         # --- senjata: dipilih script dari isi tangan companion ---------------
         "vbs:weapon_melee": {
             "minecraft:behavior.melee_attack": {

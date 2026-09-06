@@ -19,8 +19,8 @@ Add-on ini dibungkus jadi **dua berkas terpisah**, satu per pack:
 
 | Berkas | Isinya |
 |---|---|
-| `VBS-Companions-v1.6.0-BP.mcaddon` | Behavior pack — entity, mode, dan seluruh script |
-| `VBS-Companions-v1.6.0-RP.mcaddon` | Resource pack — model, tekstur, animasi, teks |
+| `VBS-Companions-v2.0.0-BP.mcaddon` | Behavior pack — entity, mode, dan seluruh script |
+| `VBS-Companions-v2.0.0-RP.mcaddon` | Resource pack — model, tekstur, animasi, teks |
 
 **Keduanya harus dipasang.** Manifest keduanya saling menyebut sebagai dependensi,
 jadi memasang salah satu saja akan membuat Minecraft mengeluh pasangannya tidak ada.
@@ -37,8 +37,8 @@ API versi stabil.
 ### Di dedicated server (BDS)
 
 ```bash
-unzip VBS-Companions-v1.6.0-BP.mcaddon -d /tmp/vbs
-unzip VBS-Companions-v1.6.0-RP.mcaddon -d /tmp/vbs
+unzip VBS-Companions-v2.0.0-BP.mcaddon -d /tmp/vbs
+unzip VBS-Companions-v2.0.0-RP.mcaddon -d /tmp/vbs
 cp -r /tmp/vbs/vbs_companions_bp  <server>/behavior_packs/
 cp -r /tmp/vbs/vbs_companions_rp  <server>/resource_packs/
 ```
@@ -47,7 +47,7 @@ Lalu daftarkan ke dunianya. `<server>/worlds/<nama dunia>/world_behavior_packs.j
 
 ```json
 [
-  { "pack_id": "e980994d-a9a6-469e-af1b-a31c3e9f7838", "version": [1, 6, 0] }
+  { "pack_id": "e980994d-a9a6-469e-af1b-a31c3e9f7838", "version": [2, 0, 0] }
 ]
 ```
 
@@ -55,7 +55,7 @@ Lalu daftarkan ke dunianya. `<server>/worlds/<nama dunia>/world_behavior_packs.j
 
 ```json
 [
-  { "pack_id": "b5872873-2873-40c9-8d5b-424bc5592785", "version": [1, 6, 0] }
+  { "pack_id": "b5872873-2873-40c9-8d5b-424bc5592785", "version": [2, 0, 0] }
 ]
 ```
 
@@ -107,7 +107,7 @@ Bagian **Owner** di penanda itu bisa disembunyikan lewat menu **Pengaturan &
 Perlengkapan** — kalau dimatikan, pemain lain di server tidak akan tahu
 companion itu milik siapa hanya dengan melihat penandanya.
 
-### Sembilan perintah
+### Dua belas perintah
 
 | Perintah | Yang dia lakukan |
 |---|---|
@@ -120,6 +120,9 @@ companion itu milik siapa hanya dengan melihat penandanya.
 | **Mode Membangun** | Membangun rumah desa (kalau ada chunk yang dipatok) lalu rancangan pilihanmu, dari bahan yang ada di peti stasiun. |
 | **Mode Merajin** | Menempakan alat DAN barang (ember, peti, papan nama, meja kerja, obor) pesanan companion lain, lalu mengantarnya ke peti si pemesan. |
 | **Mode Mencari Barang** | Mencari bahan yang **diminta** companion lain — kayu, batu, besi, tanah, arang, bibit — lalu mengantarnya ke peti si pemesan. |
+| **Mode Berdagang** | Membawa **kelebihan** isi peti ke villager terdekat, menukarnya jadi emerald, lalu membeli bahan yang sedang diminta companion lain. |
+| **Mode Memancing** | Membuat joran sendiri, mencari perairan yang cukup besar, berdiri di tepinya, melempar kail, lalu **menunggu** sampai umpannya disambar. |
+| **Mode Beternak** | Memagari kandang di chunk desa, menggiring hewan masuk, memberi makan, membiakkan sampai batas populasi, mencukur, memerah, dan memungut telur. |
 
 Menu **Pengaturan & Perlengkapan** berisi: memakaikan zirah/senjata/alat dari
 tanganmu, memberi makan, melepas perlengkapan, mengatur ladang dan patok, memilih
@@ -489,7 +492,7 @@ pagar keliling, lampu tiap lima langkah, jerami di sudut, dan **orang-orangan sa
 
 ---
 
-## Tiga role baru
+## Menambang, Mengembara, Membangun
 
 ### Menambang
 
@@ -563,10 +566,43 @@ menimpa yang lain). Pembangun yang belum punya satu pun chunk desa akan
 Begitu **Mode Membangun** dipilih, Pembangun mengerjakan chunk desa yang belum
 dibangun LEBIH DULU, sebelum rancangan blueprint biasa: satu rumah 5×5 lengkap
 lantai, dinding, jendela, pintu, atap, peti, **dan satu ranjang** per chunk.
-Setelah rumahnya jadi, posisi ranjangnya dicatat — itulah tempat companion milik
-pemain yang sama akan pergi tidur kalau tenaganya habis di malam hari (lihat
-**Energi dan istirahat** di bawah). Kalau kamu ingin dia tidur di rumah buatanmu
-sendiri, **tunjuk ranjangnya** — lihat bagian di bawah.
+Setelah rumahnya jadi, ranjangnya **benar-benar ditugaskan** ke satu companion:
+namanya dicatat di rumah itu, dan posisi ranjangnya ditulis ke state companion
+tersebut — kolom yang sama persis yang dipakai waktu kamu menunjuk ranjang
+sendiri. Sejak itu dia pulang ke rumahnya sendiri tiap mengantuk, dan companion
+berikutnya tidak akan diberi ranjang yang sama.
+
+Yang dipilih: companion yang **belum punya ranjang** dan yang paling jauh dari
+rumah barunya — yang selama ini bekerja paling jauh dari kampung tanpa tempat
+pulang. Pembangunnya sendiri ikut antre seperti yang lain. Ranjang yang **kamu
+tunjuk sendiri** tidak pernah ditimpa penugasan kampung.
+
+> Sampai versi sebelumnya, "rumahmu sudah jadi" cuma satu baris chat yang tidak
+> mengubah apa pun: companion yang mengantuk tetap tidur di ranjang terdekat mana
+> pun, termasuk ranjang yang sama dengan kawannya.
+
+#### Jalan dan penerangan
+
+Sesudah rumah terakhir berdiri, Pembangun **tidak berhenti**. Dia meneruskan
+sendiri dua pekerjaan umum:
+
+- **Jalan** selebar dua blok antara tiap rumah dan balai kerja. Yang dibangun
+  pohon rentang: tiap titik disambungkan ke titik terdekat yang sudah tersambung,
+  jadi kampung sepuluh rumah dapat sembilan ruas jalan — bukan empat puluh lima,
+  dan yang sembilan itu semuanya terpakai. Ruas yang lebih panjang dari 64 blok
+  dilewati.
+- **Penerangan**: lampu jalan tiap enam langkah (di **tepi** jalan, bukan di
+  tengah — companion yang berjalan pulang tidak boleh menabrak tiang lampunya
+  sendiri), lalu obor di titik gelap kampung supaya monster tidak lahir di dalam
+  rumah yang baru dibangun kemarin.
+
+Rumput yang diinjak jadi jalan **tidak menghabiskan apa pun**, persis seperti
+sekop di vanilla. Yang menghabiskan bahan cuma kerikil, dan itu cuma dipakai di
+petak yang tanahnya memang bukan tanah (pasir pantai, batu tebing). Obornya
+dirakit sendiri dari stik dan arang kalau petinya kosong.
+
+Kalau kamu ingin dia tidur di rumah buatanmu sendiri, **tunjuk ranjangnya** —
+lihat bagian di bawah.
 
 #### Rancangan sendiri dari berkas JSON
 
@@ -615,6 +651,100 @@ Tiga hal yang membuat bentuk ini betah dipakai:
 Dua contoh ikut di dalam folder itu: **Menara Pengawas** (bentuk `layers`) dan
 **Sumur Desa** (bentuk `blocks`, yaitu daftar koordinat jarang seperti hasil
 konversi schematic).
+
+---
+
+## Berdagang, Memancing, Beternak
+
+Rantai kerja add-on ini selalu berhenti di tempat yang sama: **di peti**. Petani
+memanen tiga ratus gandum, penambang membawa pulang enam tumpuk batu bulat, dan
+semuanya menumpuk sampai peti penuh dan hasil kerja berikutnya jatuh ke tanah.
+Sementara di sisi lain pembangun kehabisan kaca dan perajin kehabisan besi.
+Tiga peran ini yang menyambungkan ujung-ujung yang menganggur itu.
+
+### Berdagang
+
+Companion membawa kelebihan isi peti ke **villager sungguhan** yang terdekat,
+menawar beberapa detik, lalu barangnya benar-benar berpindah: keluar dari peti,
+emerald masuk. Emeraldnya dipakai untuk membeli bahan yang sedang **diminta
+companion lain** di papan permintaan — besi, kaca, bibit, barang yang tidak
+tumbuh di ladang dan tidak selalu ada di tambang. Barang belian diantar ke peti
+si pemesan, bukan ditinggal di peti sendiri.
+
+Yang **disimpan** tidak pernah dijual: gandum cukup untuk bibit dan roti, batu
+cukup untuk alat dan tungku. Cuma sisanya yang dibawa ke pasar.
+
+> **Yang ditiru, dan ini disebutkan terang-terangan.** Script API Bedrock yang
+> stabil tidak bisa membuka layar dagang villager maupun membaca daftar
+> tawarannya. Jadi yang dipakai daftar harga add-on ini sendiri. Villager-nya
+> nyata, jaraknya nyata, waktu menawarnya nyata, dan barangnya benar-benar
+> keluar dari peti — yang ditiru cuma daftar harganya. Harganya sengaja dibuat
+> tidak menguntungkan: berdagang harus lebih lambat daripada bekerja sendiri,
+> kalau tidak seluruh mode kerja lain jadi tidak ada gunanya.
+
+### Memancing
+
+Joran dibuat sendiri dari 3 stik dan 2 benang. Companion mencari perairan yang
+**benar-benar besar** — petak periksa 9×9 harus berisi minimal 24 blok air, jadi
+parit irigasi ladang sendiri dan genangan hujan tidak lolos — lalu berdiri di
+**tepinya**, bukan di dalam airnya (kalau berdiri di air, modul keselamatan akan
+langsung menyeretnya berenang keluar; dua sistem yang saling melawan).
+
+Lalu melempar kail dan **menunggu 5 sampai 20 detik**. Menunggu itu inti
+perannya, bukan kekurangannya: ikan yang langsung muncul berhenti terasa seperti
+memancing dan berubah jadi keran ikan gratis. Sesekali yang tersangkut rumput
+laut, benang, tulang, atau sepatu bot bekas.
+
+Gunanya: ikan adalah satu-satunya bahan makanan di add-on ini yang tidak menuntut
+ladang, tidak menuntut ternak, dan tidak menuntut pemainnya menyetok apa pun.
+Companion yang baru dijinakkan di tepi danau bisa langsung memberi makan seisi
+halaman lewat dapur perajin, jauh sebelum petak ladang pertama jadi.
+
+### Beternak
+
+Kandangnya berdiri di chunk berpatok **desa** — pemain yang memilih tanahnya,
+bukan companion. Di dalamnya peternak memagari satu petak 9×9 dengan satu
+gerbang di tengah sisi selatan, pagarnya dirakit sendiri dari papan dan stik.
+
+Lalu, berurutan:
+
+| Yang dikerjakan | Bagaimana |
+|---|---|
+| **Menggiring** | Berdiri di sisi hewan yang membelakangi gerbang, lalu mendorong pelan. Hewannya benar-benar berjalan, benar-benar tertahan pagar, dan benar-benar bisa gagal kalau ada tebing di jalannya. |
+| **Memberi makan** | Anak ternak disuapi supaya cepat besar; pakannya benar-benar habis dari peti. |
+| **Beranak** | Perlu dua induk dewasa yang benar-benar berdiri berdekatan di dalam kandang, pakan di peti, dan jeda yang berjalan. |
+| **Mencukur** | Butuh gunting (2 besi). Wolnya masuk peti. |
+| **Memerah** | Butuh ember (3 besi); embernya benar-benar berubah jadi ember susu. |
+| **Memungut telur** | Telur yang tergeletak di kandang dipungut sebelum hilang. Entity barang sungguhan yang benar-benar dihapus dari dunia. |
+| **Menyembelih** | Kelebihan populasi disembelih jadi daging — satu-satunya sumber daging di add-on ini. |
+
+Populasi dibatasi per jenis (8 sapi, 8 domba, 8 babi, 10 ayam), dan tidak pernah
+disembelih sampai tersisa kurang dari tiga. Batas itu rem sungguhan, bukan
+hiasan: kandang yang beranak tanpa henti adalah cara tercepat membuat dunia
+Bedrock berhenti bernapas.
+
+> **Yang ditiru.** Script API Bedrock yang stabil tidak punya cara menyalakan
+> "love mode" vanilla, tidak punya tali, dan tidak bisa memerintah AI hewan
+> mengikuti seseorang. Yang nyata: pakannya habis dari peti, induknya harus
+> benar-benar berdekatan, jedanya berjalan, dan anaknya lahir lewat
+> `spawnEntity` + `minecraft:entity_born` (event bawaan hewan ternak vanilla).
+> Yang ditiru cuma pemicu asmaranya. Menggiring memakai dorongan kecil, bukan
+> teleport.
+
+---
+
+## Dapur perajin
+
+Perajin tidak cuma menempa alat. Kalau bahannya ada di peti, dia:
+
+1. **Memanggang** daging dan ikan di tungku — dagingnya dari peternak, ikannya
+   dari pemancing.
+2. **Merakit** roti dan masakan lain di meja kerja.
+3. **Menyuapi** companion yang terluka, yang paling parah lebih dulu.
+4. **Menawari pemain** sesudah stoknya cukup, lalu mengantarnya ke tangan.
+
+Tidak ada satu pun makanan yang muncul dari udara: tiap porsi menghabiskan
+bahan yang benar-benar ada di peti, dan tiap panggangan menghabiskan bahan bakar.
 
 ---
 
@@ -1176,7 +1306,7 @@ python3 gen_blueprints.py     # blueprints/*.json   -> scripts/blueprints.data.j
 python3 gen_dialogue.py       # dialogue/*.json     -> scripts/dialogue.data.js
 python3 render_preview.py     # -> docs/preview/*.png
 python3 validate.py           # periksa semua kaitan antar berkas
-python3 build_mcaddon.py      # -> VBS-Companions-v1.6.0-BP.mcaddon dan -RP.mcaddon
+python3 build_mcaddon.py      # -> VBS-Companions-v2.0.0-BP.mcaddon dan -RP.mcaddon
 
 cd sim && ./run.sh            # jalankan otak companion di luar Minecraft, dua kali
 ```

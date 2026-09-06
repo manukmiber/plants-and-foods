@@ -3,17 +3,24 @@
  */
 
 import { system } from "@minecraft/server";
-import { BED_IDS, CHEST_IDS, POSE, PROTECTED } from "./config.js";
+import {
+  BED_IDS, CHEST_IDS, LIGHT_IDS, POSE, PROTECTED, VILLAGE,
+} from "./config.js";
 import { report, sayFrom } from "./chat.js";
 import { dataBlueprints } from "./blueprints.js";
 import { claimsNear, ensureClaimHeight, markWorked } from "./claim.js";
 import { workArea } from "./farming.js";
 import { hold } from "./hold.js";
 import { isGreeting } from "./look.js";
+import { displayName } from "./nametag.js";
 import { takeOrMake } from "./items.js";
 import { ensureMaterial } from "./selfhelp.js";
-import { addVillageHome, writeState } from "./state.js";
+import { addVillageHome, readVillageHomes, writeState } from "./state.js";
+import { craftItemStep } from "./crafting.js";
 import { ensureStation, stationTravel } from "./station.js";
+import {
+  announceHome, assignHome, darkSpot, nextRoad, roadPlan,
+} from "./village.js";
 import {
   alive, blockAt, chunkCenter, countIn, dist2, face, getOwnerId, isAir,
   isFooting, makeItem, particle, putIn, resolveOwner, sound, steer, takeFrom,
@@ -483,10 +490,20 @@ function villageStep(entity, state, dimension, container, claim, ownerId) {
     addVillageHome(ownerId, bed);
     logInfo(TAG, `Rumah desa selesai di chunk (${claim.cx}, ${claim.cz}). Ranjang dicatat di ${posStr(bed)}`);
     sayFrom(entity, "village");
+
+    // Rumahnya BENAR-BENAR ditugaskan, bukan diumumkan saja: ranjangnya
+    // ditulis ke state penghuninya (kolom yang sama yang dipakai pemain waktu
+    // menunjuk ranjang), dan namanya dicatat di papan rumah desa supaya
+    // companion berikutnya tidak diberi ranjang yang sama.
+    const chosen = assignHome(entity, ownerId, bed);
+    if (chosen) {
+      announceHome(entity, chosen, bed, resolveOwner(entity));
+      return `rumah desa selesai, ditempati ${displayName(chosen)}`;
+    }
     report(entity,
       `Rumah baru selesai di chunk (${claim.cx}, ${claim.cz}), ranjangnya di ${bed.x}, ${bed.y}, ${bed.z}. ` +
-      "Kalian semua tidur di sana ya kalau sudah mengantuk.");
-    return "rumah desa selesai";
+      "Belum ada yang butuh kamar, jadi kubiarkan kosong dulu.");
+    return "rumah desa selesai (belum ada penghuni)";
   }
 
   writeState(entity, state);
@@ -496,6 +513,206 @@ function villageStep(entity, state, dimension, container, claim, ownerId) {
     return own ?? `peti kehabisan bahan rumah desa untuk ${result.missing} (sudah minta bahan)`;
   }
   return `membangun rumah desa: ${result.index}/${result.total}`;
+}
+
+
+/* ------------------------------------------------------------------ *
+ * Pekerjaan umum kampung: jalan dan penerangan
+ *
+ * Dikerjakan SESUDAH rumah terakhir berdiri. Sebelum ini pembangun berhenti di
+ * situ dan kampungnya tinggal kumpulan kotak kayu di rumput tinggi — gelap
+ * begitu malam, tanpa satu pun jalan di antara rumahnya.
+ * ------------------------------------------------------------------ */
+
+// Tanah yang boleh diinjak jadi jalan. Sama persis dengan yang bisa dicangkul
+// sekop di vanilla — jalan tidak pernah menimpa batu, kayu, apalagi ladang.
+const PATHABLE = [
+  "minecraft:grass_block", "minecraft:dirt", "minecraft:coarse_dirt",
+  "minecraft:podzol", "minecraft:mycelium", "minecraft:rooted_dirt",
+];
+
+/**
+ * Permukaan yang boleh diinjak jadi jalan di kolom ini.
+ *
+ * Dua penolakan yang WAJIB ada, dan keduanya ditemukan dengan cara yang mahal:
+ * jalan yang menimpa peti stasiun menghapus seluruh persediaan kru sekaligus,
+ * dan jalan yang menembus dinding rumah membuat rumah yang baru dibangun
+ * kemarin berlubang. Jadi apa pun yang dilindungi — peti, tungku, meja kerja,
+ * ranjang — dan apa pun yang berdiri di atas kolomnya membatalkan petak itu,
+ * bukan sekadar dilewati satu lapis.
+ */
+function roadSurface(dimension, x, baseY, z) {
+  for (let y = baseY + 4; y >= baseY - 5; y--) {
+    const here = blockAt(dimension, x, y, z);
+    const above = blockAt(dimension, x, y + 1, z);
+    if (!here || !above) continue;
+    if (!isFooting(here)) continue;
+    if (PROTECTED.has(here.typeId) || LIGHT_IDS.includes(here.typeId)) return undefined;
+    if (!isAir(above)) return undefined;
+    return { y, block: here };
+  }
+  return undefined;
+}
+
+/**
+ * Satu langkah pekerjaan jalan.
+ *
+ * Rumput yang diinjak jadi jalan tidak menghabiskan apa pun — persis seperti
+ * sekop vanilla. Yang menghabiskan bahan cuma kerikil, dan itu cuma dipakai di
+ * petak yang tanahnya memang bukan tanah (pasir pantai, batu tebing).
+ */
+function roadStep(entity, state, dimension, container, ownerId, station) {
+  if (!state.plan) state.plan = {};
+  let job = state.plan.road;
+  if (!job) {
+    const next = nextRoad(dimension, ownerId, station.chest ?? state.station, state.roadsDone ?? []);
+    if (!next) return undefined;
+    job = { key: next.key, from: next.from, to: next.to, index: 0 };
+    state.plan.road = job;
+    logInfo(TAG, `Mulai membuat jalan ${next.key} (${Math.round(next.d ?? 0)} blok).`);
+  }
+  const steps = roadPlan(job.from, job.to);
+  if (job.index >= steps.length) {
+    state.plan.road = null;
+    state.roadsDone = [...(state.roadsDone ?? []), job.key].slice(-24);
+    logInfo(TAG, `Jalan ${job.key} selesai.`);
+    report(entity, "Jalan kampungnya sudah tersambung.");
+    return "jalan kampung selesai";
+  }
+
+  const step = steps[job.index];
+  const baseY = Math.floor(entity.location.y);
+  const ground = roadSurface(dimension, step.x, baseY, step.z);
+  if (!ground) {
+    job.index++;
+    return "melewati petak jalan yang tidak berpijakan";
+  }
+  const target = { x: step.x + 0.5, y: ground.y + 1, z: step.z + 0.5 };
+  if (dist2(entity.location, target) > REACH ** 2) {
+    steer(entity, target, 0.34);
+    return `menuju jalan kampung (${job.index + 1}/${steps.length})`;
+  }
+
+  if (step.role === "lamp") {
+    const lamp = blockAt(dimension, step.x, ground.y + 1, step.z);
+    if (lamp && isAir(lamp)) {
+      const lit = placeLight(entity, state, container, dimension, lamp, target);
+      if (lit === "wait") return "membuat obor untuk lampu jalan";
+      if (lit === "missing") return { missing: "obor" };
+    }
+    job.index++;
+    return `memasang lampu jalan (${job.index}/${steps.length})`;
+  }
+
+  if (ground.block.typeId === VILLAGE.road) {
+    job.index++;
+    return `merapikan jalan (${job.index}/${steps.length})`;
+  }
+  let wanted = VILLAGE.road;
+  if (!PATHABLE.includes(ground.block.typeId)) {
+    // Bukan tanah: butuh kerikil sungguhan dari peti.
+    if (countIn(container, VILLAGE.roadFallback) < 1) {
+      job.index++;
+      return `melewati petak jalan berbatu (${job.index}/${steps.length})`;
+    }
+    if (takeFrom(container, VILLAGE.roadFallback, 1) !== 1) {
+      job.index++;
+      return "kerikil jalannya keburu diambil";
+    }
+    wanted = VILLAGE.roadFallback;
+  }
+  try {
+    ground.block.setType(wanted);
+  } catch (e) {
+    logWarn(TAG, `Gagal memasang jalan di (${step.x}, ${ground.y}, ${step.z})`, e);
+    if (wanted === VILLAGE.roadFallback) putIn(container, makeItem(wanted, 1));
+    job.index++;
+    return "petak jalan itu tidak bisa diubah";
+  }
+  face(entity, target);
+  hold(entity, 8, { pose: POSE.build, reason: "build" });
+  sound(dimension, "step.gravel", target, { volume: 0.5 });
+  job.index++;
+  return `membuat jalan kampung (${job.index}/${steps.length})`;
+}
+
+/** Memasang satu obor; dibuat sendiri kalau petinya kosong. */
+function placeLight(entity, state, container, dimension, block, target) {
+  if (countIn(container, VILLAGE.lamp) < 1) {
+    const made = craftItemStep(entity, state, "torch", container);
+    if (made.status === "walking" || made.status === "crafting") return "wait";
+    if (made.status !== "done") return "missing";
+  }
+  if (takeFrom(container, VILLAGE.lamp, 1) !== 1) return "missing";
+  try {
+    block.setType(VILLAGE.lamp);
+  } catch (e) {
+    logWarn(TAG, `Gagal memasang obor di ${posStr(block.location)}`, e);
+    putIn(container, makeItem(VILLAGE.lamp, 1));
+    return "failed";
+  }
+  face(entity, target);
+  hold(entity, 10, { pose: POSE.build, reason: "build" });
+  sound(dimension, "random.wood_click", target, { volume: 0.5 });
+  particle(dimension, "minecraft:villager_happy", target);
+  return "placed";
+}
+
+/**
+ * Menerangi kampung: satu obor di titik gelap terdekat.
+ *
+ * Ini yang membuat kampung buatan companion bisa ditinggali semalaman.
+ * Kampung tanpa cahaya adalah kampung yang paginya berisi zombie di dalam
+ * rumah yang baru dibangun kemarin.
+ */
+function lightStep(entity, state, dimension, container, station) {
+  const center = station.chest ?? state.station ?? entity.location;
+  const now = system.currentTick;
+
+  // Titik gelapnya DIINGAT, bukan dicari ulang tiap denyut. Menyisir kampung
+  // itu ratusan pembacaan blok; melakukannya dua puluh kali sedetik membuat
+  // seluruh dunia tersendat justru gara-gara memasang obor.
+  let spot = state.darkSpot;
+  if (spot && lit(dimension, spot)) spot = undefined;
+  if (!spot) {
+    if (now - (state.darkAt ?? -VILLAGE.workEvery) < VILLAGE.workEvery) return undefined;
+    state.darkAt = now;
+    spot = darkSpot(dimension, center, VILLAGE.lightRadius);
+    state.darkSpot = spot ?? null;
+  }
+  if (!spot) return undefined;
+  const target = { x: spot.x + 0.5, y: spot.y, z: spot.z + 0.5 };
+  if (dist2(entity.location, target) > REACH ** 2) {
+    steer(entity, target, 0.34);
+    return "menuju titik gelap kampung";
+  }
+  const block = blockAt(dimension, spot.x, spot.y, spot.z);
+  if (!block) return undefined;
+  const done = placeLight(entity, state, container, dimension, block, target);
+  if (done === "wait") return "membuat obor untuk kampung";
+  if (done === "missing") return { missing: "obor" };
+  state.darkSpot = null;
+  logDebug(TAG, `Obor kampung dipasang di ${posStr(spot)}.`);
+  return "menerangi kampung";
+}
+
+/** Titik yang sudah kadung terpasang obor — entah oleh siapa. */
+function lit(dimension, spot) {
+  const block = blockAt(dimension, spot.x, spot.y, spot.z);
+  return Boolean(block) && LIGHT_IDS.includes(block.typeId);
+}
+
+/**
+ * Pekerjaan umum kampung: jalan dulu, baru penerangan.
+ *
+ * Urutannya bukan selera: lampu jalan menempel di ruas jalan, jadi jalannya
+ * harus ada dulu — kalau dibalik, obornya berdiri di rumput yang semenit
+ * kemudian diinjak jadi jalan.
+ */
+function publicWorks(entity, state, dimension, container, ownerId, station) {
+  const road = roadStep(entity, state, dimension, container, ownerId, station);
+  if (road) return road;
+  return lightStep(entity, state, dimension, container, station);
 }
 
 const OFFER_EVERY = 6000;   // ~5 menit antar tawaran, jangan mengganggu terus
@@ -578,6 +795,30 @@ export function tickBuild(entity, state, owner) {
   if (offerVillage(entity, state, resolveOwner(entity) ?? owner, ownerId, dimension)) {
     writeState(entity, state);
     return "mengajukan pembuatan kampung ke pemilik";
+  }
+
+  // Rumahnya sudah berdiri semua: sekarang jalannya, lalu penerangannya.
+  //
+  // Dua pagar pengaman, dan keduanya perlu:
+  //   * rancangan yang DIPILIH pemain selalu menang. Pembangun yang malah
+  //     memasang obor sementara menaranya belum berdiri adalah pembangun yang
+  //     mengabaikan perintah.
+  //   * tanpa satu pun rumah desa yang selesai, tidak ada "kampung" untuk
+  //     dilayani — dan menyisir halaman orang untuk mencari titik gelap bukan
+  //     pekerjaan yang diminta siapa pun.
+  if (ownerId && !state.plan?.build && !state.blueprint &&
+      readVillageHomes(ownerId).length) {
+    const works = publicWorks(entity, state, dimension, container, ownerId, station);
+    if (typeof works === "string") {
+      writeState(entity, state);
+      return works;
+    }
+    if (works?.missing) {
+      const own = ensureMaterial(entity, state, ownerId, "coal",
+                                 station.chest ?? state.station, container, { search: true });
+      writeState(entity, state);
+      return own ?? `menunggu ${works.missing} untuk penerangan kampung`;
+    }
   }
 
   if (!state.plan?.build) {

@@ -6,7 +6,7 @@ reconstructed afterwards, which is why the builder refuses to save without one.
 
 ## Unreleased
 
-### VBS Companions v1.7.0
+### VBS Companions v2.0.0
 
 Dua sesi bermain langsung, tiga belas keluhan, dan satu benang merah: companion
 terlihat **sibuk** tapi tidak ada yang **jadi**. Blok hilang seketika, gudang
@@ -17,6 +17,101 @@ satu bug itu menjelaskan "patok ladang tidak jalan", "patok desa tidak jalan"
 dan "petani diam saja" sekaligus. Sesi itu juga menambahkan tiga hal yang
 memang belum pernah ada — companion yang bisa berenang, yang bisa makan, dan
 yang menyapa pemain lain.
+
+Sesi ketiga menaikkan nomornya ke **2.0.0**, dan bukan karena angkanya sudah
+lama tidak berubah. Yang berubah lapisan paling bawahnya: cara companion
+**berjalan** ditulis ulang dari nol, mode Bertani dirombak total, dan tiga
+peran baru masuk — masing-masing menutup satu lubang di rantai kerja yang
+selama ini berhenti di peti.
+
+**Pathfinding sungguhan (`scripts/path.js`, baru):**
+
+- A* di atas voxel, dengan tumpukan biner, heuristik Chebyshev berbobot yang
+  admissible, dan cache blok per pencarian. Menggantikan langkah rakus yang
+  selama ini cuma "melangkah ke arah tujuan" — dan macet di tembok pertama.
+- Model biayanya menghitung air, bahaya, panjatan dan terjunan. Companion
+  memilih jalur kering meski lebih panjang, tapi tetap bisa disuruh menembus
+  air kalau memang itu yang diminta (`{ avoidWater: false }` dari `survival.js`
+  waktu badannya terbakar).
+- Jalur lurus tanpa halangan dilewatkan tanpa pencarian sama sekali, jadi
+  perjalanan pendek tidak membayar ongkos A*.
+- Kursor jalur maju dengan `reachedCell()` — jarak mendatar plus Y longgar.
+  Uji jarak 3D yang lama tidak pernah turun di bawah ambang saat menaiki
+  tanjakan dua blok, dan companion berdiri diam di kaki tanjakan selamanya.
+
+**Mode Bertani dirombak total (`scripts/farmplan.js` baru, `farming.js` ditulis ulang):**
+
+- Mesin fase diganti **antrean tugas**. Fase yang tidak bisa dikerjakan sekarang
+  dilewati, bukan menggantung — akar keluhan "petani diam doang" yang kedua.
+- Petaknya berjalur: kolom parit dihitung dari denah (`isChannelColumn`), tiap
+  jalur punya bibitnya sendiri, dan tiap petak tahu sendiri apa yang kurang.
+- `plotDone`, `hydrated`, `needAt` dan `roleAt` bisa diuji satuan tanpa dunia.
+
+**Dapur perajin (`scripts/kitchen.js`, baru):**
+
+- Perajin tidak cuma menempa alat. Daging dan ikan dipanggang di tungku, roti
+  dan masakan lain dirakit di meja kerja — bahannya benar-benar habis dari peti.
+- Companion yang paling terluka disuapi lebih dulu. Pemain ditawari sesudah
+  stoknya cukup, lalu diantar ke tangannya.
+
+**Peran baru — Pedagang (`scripts/trader.js`):**
+
+- Membawa kelebihan isi peti ke villager terdekat, menukarnya jadi emerald,
+  lalu membeli bahan yang sedang **diminta companion lain** di papan permintaan.
+- Batas simpan per barang membuatnya tidak pernah menjual yang masih dipakai.
+- Ditulis terus terang di berkasnya: script API Bedrock yang stabil tidak bisa
+  membuka layar dagang villager. Villager, jarak dan waktunya nyata; yang ditiru
+  cuma daftar harganya, dan barangnya benar-benar keluar dari peti.
+
+**Peran baru — Pemancing (`scripts/fisher.js`):**
+
+- Membuat joran sendiri, mencari perairan yang benar-benar besar (parit ladang
+  sendiri tidak lolos ambangnya), berdiri di **tepi** — bukan di dalam air —
+  lalu melempar kail dan **menunggu** 5 sampai 20 detik.
+- Menunggu itu inti perannya. Ikan yang langsung muncul bukan memancing.
+- Sesekali yang tersangkut rumput laut atau sepatu bot bekas.
+
+**Peran baru — Peternak (`scripts/rancher.js`):**
+
+- Memagari satu petak 9x9 di chunk berpatok desa, menggiring hewan liar masuk
+  dengan dorongan pelan dari belakang, memberi makan, membiakkan sampai batas
+  populasi, mencukur domba, memerah sapi, dan memungut telur.
+- Kelebihan populasi disembelih jadi daging — satu-satunya sumber daging di
+  add-on ini, dan yang memasok dapur perajin.
+- Batas per jenis itu rem sungguhan: kandang yang beranak tanpa henti adalah
+  cara tercepat membuat dunia Bedrock berhenti bernapas.
+- Jujur soal yang ditiru: love-mode vanilla tidak bisa dinyalakan dari script
+  stabil. Yang nyata — pakannya habis, induknya harus benar-benar berdekatan,
+  jedanya berjalan, anaknya lahir lewat `spawnEntity` + `minecraft:entity_born`.
+
+**Pembangun: kampung yang benar-benar jadi kampung (`scripts/village.js`, baru):**
+
+- **Rumah selesai sekarang BENAR-BENAR ditugaskan.** Ranjangnya ditulis ke
+  `state.bed` companion penghuninya — kolom yang sama persis yang dipakai
+  pemain waktu menunjuk ranjang sendiri — dan namanya dicatat di papan rumah
+  desa supaya companion berikutnya tidak diberi ranjang yang sama. Sebelum ini
+  "rumahmu sudah jadi" cuma satu baris chat yang tidak mengubah apa pun.
+- Ranjang yang **ditunjuk pemain** tidak pernah ditimpa penugasan kampung.
+- Sesudah rumah terakhir berdiri, pembangun meneruskan sendiri: **jalan**
+  selebar dua blok antar rumah dan balai kerja (pohon rentang, jadi sepuluh
+  rumah dapat sembilan ruas, bukan empat puluh lima), **lampu jalan** tiap enam
+  langkah di tepi jalan, dan **penerangan** titik gelap kampung.
+- Rumput yang diinjak jadi jalan tidak menghabiskan apa pun, persis seperti
+  sekop vanilla. Yang menghabiskan bahan cuma kerikil di petak yang tanahnya
+  memang bukan tanah.
+
+**Model Akito dan Toya diganti:**
+
+- Palet, siluet dan potongan pakaian keduanya ditulis ulang di
+  `tools/characters.json` dari piksel tekstur yang diunggah. Toya ikut naik ke
+  bentuk `detailed` seperti yang lain.
+- Catatan jujur: berkas FBX/PMX di dalam zip **tidak bisa** diubah jadi geometry
+  kubus Bedrock — dua format itu mesh segitiga, sementara `.geo.json` menuntut
+  kubus ber-UV per sisi. Yang bisa dipakai dari zip itu teksturnya, dan itu yang
+  dipakai.
+
+**Versi dinaikkan ke 2.0.0.** Manifest BP dan RP, dependensi silangnya,
+`build_mcaddon.py`, dan seluruh rujukan versi di README ikut naik.
 
 **Membongkar blok sekarang butuh waktu (`scripts/dig.js`, baru):**
 

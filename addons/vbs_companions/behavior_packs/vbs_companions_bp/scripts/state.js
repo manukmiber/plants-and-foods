@@ -159,6 +159,23 @@ export function readVillageHomes(ownerId) {
   }
 }
 
+/**
+ * Menulis ulang seluruh daftar rumah desa.
+ *
+ * Dipakai saat Pembangun MENUGASKAN satu rumah ke satu companion: catatannya
+ * berubah di tempat (`for` diisi), bukan ditambah. Tanpa ini, penugasan rumah
+ * cuma jadi kalimat di chat — persis keluhan "beneran jadi, bukan cuma chat".
+ */
+export function writeVillageHomes(ownerId, list) {
+  try {
+    world.setDynamicProperty(homeKey(ownerId), JSON.stringify(list));
+    return true;
+  } catch (e) {
+    logError(TAG, "Gagal menulis ulang daftar rumah desa", e);
+    return false;
+  }
+}
+
 export function addVillageHome(ownerId, home) {
   logInfo(TAG, `addVillageHome: ${ownerId} -> ${JSON.stringify(home)}`);
   const list = readVillageHomes(ownerId);

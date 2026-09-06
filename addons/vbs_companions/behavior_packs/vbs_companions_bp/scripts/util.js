@@ -8,6 +8,7 @@ import {
   ARMOR_POINTS, COMPANIONS, DEFAULT_MODE, FACE, LEAVES, MODES, POSE, PROP,
   SOFT_PATH,
 } from "./config.js";
+import { follow } from "./path.js";
 import { entStr, logDebug, logError, logInfo, logTrace, logWarn, posStr } from "./logger.js";
 
 const TAG = "UTIL";
@@ -531,15 +532,35 @@ function noteProgress(entity, row) {
   }
 }
 
-export function steer(entity, target, step = 0.32) {
+/**
+ * Berjalan ke satu titik. Ini satu-satunya cara seluruh mode kerja menyuruh
+ * companion berpindah tempat.
+ *
+ * Yang mengerjakan rutenya sekarang A* di path.js, bukan langkah rakus di
+ * berkas ini. Bedanya bukan kosmetik: langkah rakus tidak punya rencana, jadi
+ * pagar ladang buatan companion sendiri, tebing empat blok, danau kecil dan
+ * lubang tambang semuanya menghentikannya — dan tiap satu dari itu muncul
+ * sebagai keluhan "companion mentok" yang berbeda. A* melihat seluruh jalur
+ * sampai tujuan sebelum satu langkah pun diambil.
+ *
+ * stepDirect di bawah tetap ada dan tetap dipakai: itulah satu langkah kaki
+ * yang menjalani satu petak jalur, dan jaring pengaman kalau jalurnya memang
+ * tidak ada.
+ */
+export function steer(entity, target, step = 0.32, opts = {}) {
   const prev = walking.get(entity.id);
   const same = prev && prev.target.x === target.x && prev.target.z === target.z;
   const row = same ? prev : { target: { ...target }, step };
   row.target = { ...target };
   row.step = step;
+  // Pilihan rute ikut disimpan supaya denyut cepat (tickSteer) menjalani jalur
+  // yang sama. Tanpa ini, companion yang sengaja disuruh MASUK air — yang
+  // badannya terbakar — dituntun keluar lagi setengah detik kemudian oleh
+  // denyut yang memakai pilihan bawaan.
+  row.opts = opts;
   row.at = system.currentTick;
   walking.set(entity.id, row);
-  const done = stepToward(entity, target, step);
+  const done = follow(entity, target, { ...opts, step });
   noteProgress(entity, row);
   return done;
 }
@@ -551,7 +572,7 @@ export function tickSteer(entity) {
     walking.delete(entity.id);
     return false;
   }
-  const done = stepToward(entity, row.target, row.step);
+  const done = follow(entity, row.target, { ...(row.opts ?? {}), step: row.step });
   noteProgress(entity, row);
   return done;
 }
@@ -671,13 +692,23 @@ function tryStep(entity, nx, nz, a, target) {
   return landOn(entity, nx, wetY, nz, a, target);
 }
 
-function stepToward(entity, target, step) {
+/**
+ * Satu langkah kaki lurus ke arah target, tanpa rencana apa pun.
+ *
+ * Dipakai path.js untuk menjalani SATU petak jalur yang sudah dihitung — di
+ * situ jaraknya paling satu blok dan langkah rakus memang jawaban yang benar.
+ * Jangan panggil ini langsung dari mode kerja; pakai steer().
+ */
+export function stepDirect(entity, target, step) {
   unstick(entity);
   const a = entity.location;
   const dx = target.x - a.x;
   const dz = target.z - a.z;
   const flat = Math.hypot(dx, dz);
-  if (flat < 0.8 && Math.abs(target.y - a.y) < 2) return true;
+  // "Sudah sampai" harus menyebut tinggi juga. Ambang lama (dua blok) membuat
+  // langkah kaki menyerah tepat di kaki tanjakan: mendatar sudah dekat, tegak
+  // masih satu setengah blok, dan tidak ada satu langkah pun yang diambil.
+  if (flat < 0.6 && Math.abs(target.y - a.y) < 1.2) return true;
   if (flat < 0.001) return false;
 
   const move = Math.min(step, flat);

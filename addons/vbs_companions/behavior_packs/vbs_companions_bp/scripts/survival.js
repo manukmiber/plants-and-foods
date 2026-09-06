@@ -293,7 +293,14 @@ export function tickSurvival(entity, state, ownerId) {
         sayFrom(entity, "hurt");
       }
       setFace(entity, FACE.hurt);
-      steer(entity, water, 0.45);
+      // Dua pilihan rute yang dua-duanya wajib di sini, dan ini satu-satunya
+      // tempat keduanya dipakai:
+      //   avoidWater: false  air diberi biaya nol, bukan biaya tinggi
+      //   reach: 0.4         "sampai" berarti KAKI DI DALAM airnya
+      // Tanpa yang kedua, pathfinding menganggap tugasnya selesai satu setengah
+      // blok dari tepi kolam dan companion berdiri di situ sambil terus
+      // terbakar — persis kelakuan yang seharusnya diperbaiki.
+      steer(entity, water, 0.45, { avoidWater: false, reach: 0.4 });
       return "terbakar, lari ke air terdekat";
     }
     logDebug(TAG, `${entStr(entity)} terbakar tapi tidak ada air dalam ${SWIM.fireSearch} blok.`);

@@ -21,8 +21,12 @@ import { tickBuild } from "./builder.js";
 import { tickBeams } from "./claim.js";
 import { tickCrafter } from "./crafter.js";
 import { isNight, isSleeping, tickEnergy } from "./energy.js";
-import { tickFarm } from "./farming.js";
+import { forget as forgetFarm, tickFarm } from "./farming.js";
 import { forget as forgetLooter, tickLooter } from "./looter.js";
+import { tickTrader } from "./trader.js";
+import { tickFisher } from "./fisher.js";
+import { tickRancher } from "./rancher.js";
+import { forget as forgetPath } from "./path.js";
 import { forget as forgetHold, isHeld, reasonFor, tickHolds } from "./hold.js";
 import { forget as forgetLook, tickLook } from "./look.js";
 import { tickMine } from "./mining.js";
@@ -59,6 +63,7 @@ const WORK_HOLDS = new Set(["rest", "dig"]);
 const CHATTER_KEY = {
   farm: "farm", mine: "mine", wander: "wander", build: "build", attack: "attack",
   crafter: "crafter", looter: "looter", follow: "idle", stay: "idle",
+  trader: "trader", fisher: "fisher", rancher: "rancher",
 };
 
 let lastNight;
@@ -102,9 +107,11 @@ function forgetAll(id) {
   forgetBubble(id);
   forgetDig(id);
   forgetCombat(id);
+  forgetFarm(id);
   forgetHold(id);
   forgetLook(id);
   forgetLooter(id);
+  forgetPath(id);
   forgetSocial(id);
   forgetSurvival(id);
   forgetTaming(id);
@@ -287,6 +294,9 @@ function workOnce(entity) {
     case "build": status = tickBuild(entity, state, owner); break;
     case "crafter": status = tickCrafter(entity, state, owner); break;
     case "looter": status = tickLooter(entity, state, owner); break;
+    case "trader": status = tickTrader(entity, state, owner); break;
+    case "fisher": status = tickFisher(entity, state, owner); break;
+    case "rancher": status = tickRancher(entity, state, owner); break;
     case "attack": {
       const n = tickCombat(entity, meta?.damage ?? 5);
       status = n ? `bertarung (${n} musuh dekat)` : "berjaga, tidak ada musuh";

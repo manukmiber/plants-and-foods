@@ -15,6 +15,10 @@ import {
   sleepOf,
 } from "./energy.js";
 import { farmPhaseLabel, setExpand } from "./farming.js";
+import { fisherLines } from "./fisher.js";
+import { kitchenLines } from "./kitchen.js";
+import { rancherLines } from "./rancher.js";
+import { traderLines } from "./trader.js";
 import { displayName, refreshName } from "./nametag.js";
 import { requestLines } from "./requests.js";
 import { patchState, readSettings, readState, writeSettings } from "./state.js";
@@ -81,7 +85,11 @@ function statusBody(entity) {
     `§7Tugas     §f${mode.label}  §8${mode.hint}`,
     doing ? `§7Sekarang  §a${doing}` : "§7Sekarang  §8menunggu perintah",
   ];
-  if (getMode(entity) === "farm") lines.push(`§7Tahap     §f${farmPhaseLabel(state)}`);
+  // Baris rinci per mode: tiap peran punya satu hal yang paling ingin
+  // diketahui pemain, dan menyembunyikannya di balik menu lain berarti pemain
+  // tidak pernah tahu companionnya sedang menunggu apa.
+  const detail = modeDetail(entity, state);
+  for (const row of detail) lines.push(row);
   lines.push(
     "",
     `§cNyawa     §f${cur}§7/§f${max}`,
@@ -101,6 +109,29 @@ function statusBody(entity) {
     "§8Bisa juga diajak bicara: §7chat " + `${displayName(entity)} halo`,
   );
   return lines.join("\n");
+}
+
+
+/**
+ * Baris rinci sesuai mode: tahap ladang, isi dompet pedagang, tempat memancing,
+ * isi kandang, stok dapur perajin.
+ *
+ * Dibaca dari peti stasiun yang benar-benar ada; kalau petinya belum berdiri,
+ * barisnya dilewati saja alih-alih menampilkan nol yang menyesatkan.
+ */
+function modeDetail(entity, state) {
+  const mode = getMode(entity);
+  if (mode === "farm") return [`§7Tahap     §f${farmPhaseLabel(state)}`];
+  if (mode === "rancher") return rancherLines(state);
+  const container = stationContainer(entity, state);
+  try {
+    if (mode === "trader") return container ? traderLines(container) : [];
+    if (mode === "fisher") return container ? fisherLines(state, container) : [];
+    if (mode === "crafter") return container ? kitchenLines(container) : [];
+  } catch (e) {
+    logWarn(TAG, `Gagal menyusun baris rinci mode ${mode}`, e);
+  }
+  return [];
 }
 
 export async function openMenu(player, entity) {

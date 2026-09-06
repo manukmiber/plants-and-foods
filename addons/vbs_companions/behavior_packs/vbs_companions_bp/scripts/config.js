@@ -87,6 +87,30 @@ export const MODES = {
     icon: "textures/items/emerald",
     hat: 0,
   },
+  trader: {
+    label: "Berdagang",
+    button: "§dMode Berdagang",
+    hint: "Menjual kelebihan panen ke villager, membeli yang diminta companion lain",
+    event: "vbs:set_trader",
+    icon: "textures/items/emerald",
+    hat: 3,
+  },
+  fisher: {
+    label: "Memancing",
+    button: "§3Mode Memancing",
+    hint: "Membuat joran, mencari perairan, memancing ikan untuk dapur",
+    event: "vbs:set_fisher",
+    icon: "textures/items/fishing_rod",
+    hat: 3,
+  },
+  rancher: {
+    label: "Beternak",
+    button: "§aMode Beternak",
+    hint: "Menggiring hewan ke kandang, memberi makan, mencukur, memerah, memanen telur",
+    event: "vbs:set_rancher",
+    icon: "textures/items/wheat",
+    hat: 1,
+  },
 };
 
 export const DEFAULT_MODE = "follow";
@@ -385,14 +409,242 @@ export const PROTECTED = new Set([
   "minecraft:shulker_box", "minecraft:hopper", "minecraft:lodestone",
 ]);
 
+/**
+ * Dapur perajin (kitchen.js).
+ *
+ * MEALS dirakit di meja kerja; COOKABLE dibakar di tungku. Dua-duanya memakai
+ * bahan yang memang dihasilkan companion sendiri: gandum dari petani, daging
+ * dari peternak, ikan dari pemancing, kentang dan wortel dari ladang.
+ */
+export const MEALS = {
+  bread: {
+    id: "minecraft:bread", label: "Roti", makes: 1,
+    needs: [{ any: ["minecraft:wheat"], count: 3 }],
+  },
+  cookie: {
+    id: "minecraft:cookie", label: "Kukis", makes: 8,
+    needs: [{ any: ["minecraft:wheat"], count: 2 },
+            { any: ["minecraft:cocoa_beans"], count: 1 }],
+  },
+  beetroot_soup: {
+    id: "minecraft:beetroot_soup", label: "Sup Bit", makes: 1,
+    needs: [{ any: ["minecraft:beetroot"], count: 6 },
+            { any: ["minecraft:bowl"], count: 1 }],
+  },
+  rabbit_stew: {
+    id: "minecraft:mushroom_stew", label: "Sup Jamur", makes: 1,
+    needs: [{ any: ["minecraft:red_mushroom"], count: 1 },
+            { any: ["minecraft:brown_mushroom"], count: 1 },
+            { any: ["minecraft:bowl"], count: 1 }],
+  },
+  pumpkin_pie: {
+    id: "minecraft:pumpkin_pie", label: "Pai Labu", makes: 1,
+    needs: [{ any: ["minecraft:pumpkin"], count: 1 },
+            { any: ["minecraft:sugar"], count: 1 },
+            { any: ["minecraft:egg"], count: 1 }],
+  },
+  cake: {
+    id: "minecraft:cake", label: "Kue", makes: 1,
+    needs: [{ any: ["minecraft:milk_bucket"], count: 3 },
+            { any: ["minecraft:sugar"], count: 2 },
+            { any: ["minecraft:egg"], count: 1 },
+            { any: ["minecraft:wheat"], count: 3 }],
+  },
+};
+
+// Bahan mentah -> hasil bakarannya. Tungku yang mengerjakan.
+export const COOKABLE = {
+  "minecraft:beef": "minecraft:cooked_beef",
+  "minecraft:porkchop": "minecraft:cooked_porkchop",
+  "minecraft:chicken": "minecraft:cooked_chicken",
+  "minecraft:mutton": "minecraft:cooked_mutton",
+  "minecraft:rabbit": "minecraft:cooked_rabbit",
+  "minecraft:cod": "minecraft:cooked_cod",
+  "minecraft:salmon": "minecraft:cooked_salmon",
+  "minecraft:potato": "minecraft:baked_potato",
+};
+
+/**
+ * Mode Berdagang (trader.js).
+ *
+ * VILLAGERS: entity yang dianggap lawan dagang. Dunia lama memakai
+ * "minecraft:villager", yang baru "minecraft:villager_v2"; dua-duanya ditulis
+ * karena satu dunia bisa berisi keduanya sekaligus.
+ */
+export const VILLAGERS = [
+  "minecraft:villager_v2", "minecraft:villager", "minecraft:wandering_trader",
+];
+
+export const TRADE = {
+  searchRadius: 32,     // sejauh apa mencari villager
+  haggleTicks: 60,      // lama menawar sebelum barangnya berpindah
+  maxLots: 4,           // paling banyak sekian lot sekali transaksi
+  keepDefault: 32,      // simpanan bawaan sebelum sesuatu dianggap kelebihan
+  complainEvery: 6000,  // jeda mengeluh "tidak ada villager" (~5 menit)
+};
+
+/**
+ * Daftar harga add-on ini sendiri.
+ *
+ * BUKAN tawaran villager sungguhan: script API Bedrock yang stabil tidak bisa
+ * membaca maupun menjalankan perdagangan vanilla. Villager-nya nyata, jarak
+ * dan waktunya nyata; yang ditiru cuma daftar harganya. Angkanya sengaja
+ * dibuat tidak menguntungkan — berdagang harus lebih lambat daripada bekerja
+ * sendiri, kalau tidak seluruh mode kerja lain jadi tidak ada gunanya.
+ */
+export const PRICES = {
+  // Berapa banyak yang DISIMPAN sebelum sisanya dianggap kelebihan.
+  keep: {
+    "minecraft:wheat": 64,
+    "minecraft:wheat_seeds": 64,
+    "minecraft:cobblestone": 128,
+    "minecraft:dirt": 128,
+    "minecraft:oak_log": 64,
+    "minecraft:coal": 32,
+    "minecraft:iron_ingot": 16,
+  },
+  // Yang dijual: satu "lot" ditukar sekian emerald.
+  sell: {
+    "minecraft:wheat": { lot: 20, emeralds: 1 },
+    "minecraft:potato": { lot: 26, emeralds: 1 },
+    "minecraft:carrot": { lot: 22, emeralds: 1 },
+    "minecraft:beetroot": { lot: 15, emeralds: 1 },
+    "minecraft:pumpkin": { lot: 6, emeralds: 1 },
+    "minecraft:cobblestone": { lot: 32, emeralds: 1 },
+    "minecraft:coal": { lot: 15, emeralds: 1 },
+    "minecraft:iron_ingot": { lot: 4, emeralds: 1 },
+    "minecraft:leather": { lot: 6, emeralds: 1 },
+    "minecraft:wool": { lot: 8, emeralds: 1 },
+    "minecraft:cooked_beef": { lot: 10, emeralds: 1 },
+    "minecraft:cod": { lot: 12, emeralds: 1 },
+    "minecraft:salmon": { lot: 10, emeralds: 1 },
+  },
+  // Yang dibeli, memakai kunci permintaan bahan (MATERIAL_REQUESTS).
+  buy: {
+    iron: { id: "minecraft:iron_ingot", count: 4, emeralds: 3, label: "besi" },
+    coal: { id: "minecraft:coal", count: 12, emeralds: 2, label: "arang" },
+    seed: { id: "minecraft:wheat_seeds", count: 24, emeralds: 1, label: "bibit" },
+    wheat: { id: "minecraft:wheat", count: 18, emeralds: 2, label: "gandum" },
+    glass: { id: "minecraft:glass", count: 8, emeralds: 2, label: "kaca" },
+    stone: { id: "minecraft:cobblestone", count: 32, emeralds: 1, label: "batu" },
+    wood: { id: "minecraft:oak_log", count: 12, emeralds: 2, label: "kayu" },
+  },
+};
+
+/**
+ * Mode Memancing (fisher.js).
+ *
+ * `pondMin` yang membedakan danau dari genangan: petak periksa 9x9 (pondCheck
+ * 4) berisi 81 kolom, dan menuntut 24 di antaranya berair menyingkirkan parit
+ * irigasi ladang sendiri — yang lebarnya satu blok — tanpa menyingkirkan kolam
+ * kecil di halaman.
+ */
+export const FISH = {
+  searchRadius: 24,     // sejauh apa mencari perairan
+  pondCheck: 4,         // setengah lebar petak periksa
+  pondMin: 24,          // blok air minimum di petak itu
+  waitMin: 100,         // tunggu tersingkat sebelum kena (5 detik)
+  waitMax: 400,         // tunggu terlama (20 detik)
+  haulAt: 24,           // tangkapan sebanyak ini -> pulang menyetor
+  complainEvery: 6000,  // jeda mengeluh "tidak ada air" (~5 menit)
+  // Daftar tangkapan berbobot. Sampah ikut masuk dengan sengaja: memancing
+  // yang selalu menghasilkan ikan berhenti terasa seperti memancing.
+  loot: [
+    { id: "minecraft:cod", weight: 40, min: 1, max: 2 },
+    { id: "minecraft:salmon", weight: 22, min: 1, max: 2 },
+    { id: "minecraft:tropical_fish", weight: 6 },
+    { id: "minecraft:pufferfish", weight: 5 },
+    { id: "minecraft:kelp", weight: 8, min: 1, max: 3, junk: true },
+    { id: "minecraft:stick", weight: 7, min: 1, max: 2, junk: true },
+    { id: "minecraft:leather_boots", weight: 3, junk: true },
+    { id: "minecraft:string", weight: 6, min: 1, max: 2, junk: true },
+    { id: "minecraft:bone", weight: 5, min: 1, max: 2, junk: true },
+    { id: "minecraft:ink_sac", weight: 4, junk: true },
+  ],
+};
+
+/**
+ * Mode Beternak (rancher.js).
+ *
+ * Kandangnya memakai patok desa yang sama dengan pembangun: peternak tidak
+ * boleh memagari halaman orang, dan pemainlah yang memutuskan chunk mana yang
+ * jadi kandang. Di dalam chunk itu peternak memagari satu petak `pen` blok
+ * bersisi, menyisakan satu gerbang, lalu bekerja di dalamnya.
+ *
+ * `cap` per jenis hewan itu rem yang membuat mode ini tidak berubah jadi mesin
+ * lag: sepuluh sapi cukup untuk memberi makan satu halaman, dan seratus sapi
+ * membuat dunia berhenti. Begitu jumlahnya lewat `cap`, kelebihannya disembelih
+ * — itu yang memasok daging ke dapur perajin.
+ */
+export const RANCH = {
+  pen: 9,               // sisi petak kandang (blok)
+  searchRadius: 28,     // sejauh apa mencari hewan liar untuk digiring
+  herdReach: 2.4,       // sedekat apa harus berdiri sebelum bisa mendorong
+  nudge: 0.42,          // kuat dorongan menggiring (blok/denyut)
+  workReach: 2.6,       // jarak kerja: memberi makan, mencukur, memerah
+  feedEvery: 200,       // jeda memberi makan satu hewan
+  breedEvery: 1200,     // jeda beranak per jenis (~1 menit)
+  milkEvery: 2400,      // jeda memerah satu sapi (~2 menit)
+  shearEvery: 1200,     // jeda mencukur satu domba
+  eggRadius: 12,        // radius memungut telur yang tergeletak
+  cullBelow: 3,         // tidak pernah menyembelih sampai tersisa kurang dari ini
+  complainEvery: 6000,  // jeda mengeluh "belum ada patok desa" (~5 menit)
+  fence: "minecraft:oak_fence",
+  gate: "minecraft:oak_fence_gate",
+  // Hewan yang diurus. `feed` itu pakan yang benar-benar diambil dari peti,
+  // `cap` batas populasi per jenis di dalam kandang.
+  kinds: {
+    "minecraft:cow": {
+      label: "sapi", cap: 8,
+      feed: ["minecraft:wheat"], drops: ["minecraft:beef", "minecraft:leather"],
+      milk: true,
+    },
+    "minecraft:sheep": {
+      label: "domba", cap: 8,
+      feed: ["minecraft:wheat"], drops: ["minecraft:mutton", "minecraft:wool"],
+      shear: true,
+    },
+    "minecraft:pig": {
+      label: "babi", cap: 8,
+      feed: ["minecraft:carrot", "minecraft:potato", "minecraft:beetroot"],
+      drops: ["minecraft:porkchop"],
+    },
+    "minecraft:chicken": {
+      label: "ayam", cap: 10,
+      feed: ["minecraft:wheat_seeds", "minecraft:beetroot_seeds"],
+      drops: ["minecraft:chicken", "minecraft:feather"],
+      eggs: true,
+    },
+  },
+};
+
+export const KITCHEN = {
+  cookTicks: 40,        // lama merakit satu masakan di meja kerja
+  roastTicks: 60,       // lama membakar satu bahan di tungku
+  stock: 16,            // stok porsi yang dituju; lebih dari ini berhenti masak
+  offerAt: 6,           // sebanyak ini baru pemain diberi tahu
+  offerEvery: 6000,     // jeda memberi tahu pemain (~5 menit)
+  deliver: 4,           // porsi yang diantar sekali jalan ke pemain
+  feedBelow: 0.7,       // companion di bawah 70% nyawa dianggap butuh makan
+};
+
 export const FOOD_HEAL = {
-  "minecraft:bread": 6,
+  "minecraft:golden_apple": 20,
+  "minecraft:cake": 10,
   "minecraft:cooked_beef": 8,
   "minecraft:cooked_porkchop": 8,
-  "minecraft:golden_apple": 20,
+  "minecraft:cooked_mutton": 7,
+  "minecraft:cooked_salmon": 7,
+  "minecraft:cooked_chicken": 6,
+  "minecraft:cooked_rabbit": 6,
+  "minecraft:cooked_cod": 6,
+  "minecraft:bread": 6,
+  "minecraft:pumpkin_pie": 6,
+  "minecraft:baked_potato": 6,
+  "minecraft:beetroot_soup": 6,
+  "minecraft:mushroom_stew": 6,
   "minecraft:apple": 4,
   "minecraft:cookie": 3,
-  "minecraft:cake": 10,
   "minecraft:sweet_berries": 2,
 };
 
@@ -401,6 +653,23 @@ export const FOOD_HEAL = {
 // begitu saja dari udara — sekarang semuanya ditempa dari isi peti, dan kalau
 // bahannya tidak ada, permintaan bantuan dipasang ke perajin/pencari barang.
 export const ITEM_RECIPES = {
+  // Pagar dan gerbang kandang peternak. Dibuat sendiri dari papan dan stik,
+  // persis seperti resep vanilla-nya, supaya kandang tidak muncul dari udara.
+  fence: {
+    id: "minecraft:oak_fence", label: "Pagar", makes: 3, needsTable: true,
+    needs: [{ any: "planks", count: 4 }, { any: ["minecraft:stick"], count: 2 }],
+    ask: "wood",
+  },
+  fence_gate: {
+    id: "minecraft:oak_fence_gate", label: "Gerbang", makes: 1, needsTable: true,
+    needs: [{ any: "planks", count: 2 }, { any: ["minecraft:stick"], count: 4 }],
+    ask: "wood",
+  },
+  shears: {
+    id: "minecraft:shears", label: "Gunting", makes: 1, needsTable: true,
+    needs: [{ any: ["minecraft:iron_ingot"], count: 2 }],
+    ask: "iron",
+  },
   bucket: {
     id: "minecraft:bucket", label: "Ember", makes: 1, needsTable: true,
     needs: [{ any: ["minecraft:iron_ingot"], count: 3 }],
@@ -441,6 +710,12 @@ export const ITEM_RECIPES = {
   // sendiri, tidak perlu tungku, dan companion mana pun bisa memakannya
   // (FOOD_HEAL). Kalau di peti kebetulan sudah ada makanan lain, perajin
   // mengantar yang itu alih-alih menempa roti baru — lihat crafter.js.
+  fishing_rod: {
+    id: "minecraft:fishing_rod", label: "Joran", makes: 1, needsTable: true,
+    needs: [{ any: ["minecraft:stick"], count: 3 },
+            { any: ["minecraft:string"], count: 2 }],
+    ask: "string",
+  },
   bread: {
     id: "minecraft:bread", label: "Roti", makes: 1, needsTable: false,
     needs: [{ any: ["minecraft:wheat"], count: 3 }],
@@ -464,6 +739,13 @@ export const MATERIAL_REQUESTS = {
   // Permintaannya tetap sah supaya muncul di papan bantuan — dan pemainlah
   // yang membacanya lalu menaruh gandum di peti.
   wheat: { label: "gandum", ids: ["minecraft:wheat"], want: 6 },
+  // Kaca tidak tumbuh di ladang dan tidak ada di tambang: satu-satunya jalan
+  // adalah melebur pasir atau MEMBELINYA. Itu yang membuat Pedagang punya
+  // guna, bukan sekadar cara lain menghabiskan hasil panen.
+  glass: { label: "kaca", ids: ["minecraft:glass", "minecraft:glass_pane"], want: 8 },
+  // Benang datang dari laba-laba, dari memancing, atau dari sarang laba-laba
+  // yang dibabat pencari barang — tiga jalur yang semuanya sudah ada.
+  string: { label: "benang", ids: ["minecraft:string"], want: 4 },
 };
 
 export const CHEST_IDS = [
@@ -473,6 +755,32 @@ export const CHEST_IDS = [
 export const SIGN_IDS = [
   "minecraft:oak_sign", "minecraft:spruce_sign", "minecraft:birch_sign",
   "minecraft:jungle_sign", "minecraft:acacia_sign", "minecraft:dark_oak_sign",
+];
+
+/**
+ * Pekerjaan umum kampung (village.js).
+ *
+ * `lampEvery` dan `lightStep` yang menentukan padatnya obor. Angkanya dipilih
+ * dari jangkauan cahaya vanilla: obor menerangi sekitar tujuh blok sebelum
+ * gelap cukup untuk monster, jadi enam blok itu rapat yang masih aman tanpa
+ * berubah jadi lautan obor.
+ */
+export const VILLAGE = {
+  roadMax: 64,          // ruas jalan lebih panjang dari ini dilewati
+  lampEvery: 6,         // satu lampu tiap sekian langkah jalan
+  lightStep: 6,         // jarak antar obor saat menerangi kampung
+  lightRadius: 24,      // sejauh apa kampung diperiksa gelapnya
+  road: "minecraft:dirt_path",
+  roadFallback: "minecraft:gravel",
+  lamp: "minecraft:torch",
+  workEvery: 200,       // jeda antar pekerjaan umum, supaya tidak rakus denyut
+};
+
+export const LIGHT_IDS = [
+  "minecraft:torch", "minecraft:lantern", "minecraft:soul_torch",
+  "minecraft:soul_lantern", "minecraft:glowstone", "minecraft:sea_lantern",
+  "minecraft:shroomlight", "minecraft:jack_o_lantern", "minecraft:campfire",
+  "minecraft:redstone_torch",
 ];
 
 export const BED_IDS = [
@@ -555,6 +863,7 @@ export const ENERGY = {
 // diam saat disapa tidak menguras — companion cuma capek kalau benar bekerja.
 export const WORK_MODES = new Set([
   "farm", "mine", "wander", "build", "attack", "crafter", "looter",
+  "trader", "fisher", "rancher",
 ]);
 
 export const LOOK = {
@@ -599,10 +908,62 @@ export const DEPOT = {
 // sampai benar-benar jadi ladang, baru melebar. Menggarap 16x16 sekaligus itu
 // yang membuat petani terlihat "tidak bertindak": dia menghabiskan menit-menit
 // pertama meratakan sudut chunk yang jauh dari mana pun pemain melihat.
+/**
+ * Mode bertani (farmplan.js + farming.js).
+ *
+ * Angka pola parit yang harus dibaca bersama: air Minecraft mengalir tujuh
+ * blok dan membasahi farmland dalam radius empat blok mendatar. Parit tiap
+ * DELAPAN kolom dengan offset TIGA berarti tidak ada satu petak pun yang lebih
+ * dari empat blok dari paritnya — pas, tanpa parit yang mubazir.
+ */
+export const FARM = {
+  channelEvery: 8,      // satu kolom parit tiap sekian kolom
+  channelOffset: 3,     // letak paritnya di dalam pola itu
+  sourceEvery: 6,       // sumber air tiap sekian blok sepanjang parit
+  clearHeight: 12,      // setinggi apa di atas ladang yang harus dibersihkan
+  scanPerTick: 96,      // kolom yang diperiksa mencari tugas berikutnya
+  riverRadius: 20,      // sejauh apa mencari air untuk mengisi ember
+  plotStart: 7,         // sisi petak inti pertama
+  plotGrow: 4,          // pelebaran tiap kali petak sebelumnya tuntas
+  reach: 2.8,           // sedekat ini satu petak bisa dikerjakan
+  giveUpAfter: 3,       // gagal sekian kali -> petak itu ditandai mustahil
+  harvestTicks: 30,     // lama satu ayunan panen
+  tillPerTick: 3,       // petak yang boleh dicangkul dalam satu denyut
+  plantPerTick: 3,      // petak yang boleh ditanami dalam satu denyut
+};
+
 export const PLOT = {
   start: 7,      // sisi petak inti pertama
   grow: 4,       // pelebaran tiap kali petak sebelumnya tuntas
   clearHeight: 12,   // setinggi apa di atas ladang yang harus dibersihkan
+};
+
+/**
+ * Pathfinding (path.js). Angka jarak dalam blok, waktu dalam tick game.
+ *
+ * `budget` yang membuat "tidak ada jalan" jadi jawaban yang datang dalam satu
+ * denyut alih-alih satu detik penuh yang terasa: dunia Minecraft tidak
+ * berhingga, dan tujuan di seberang gunung tanpa jalan akan membuat A*
+ * memeriksa seluruh lereng sebelum menyerah.
+ */
+export const PATH = {
+  budget: 600,          // simpul maksimum yang diperiksa satu pencarian
+  range: 48,            // sejauh apa dari titik awal pencarian boleh melebar
+  straightMax: 24,      // sejauh apa jalan lurus diuji sebelum A* dijalankan
+  replanEvery: 400,     // umur jalur sebelum dihitung ulang (~20 detik)
+  stuckTicks: 30,       // tidak maju selama ini -> sibakkan / rencanakan ulang
+  reach: 1.6,           // sedekat ini dianggap sudah sampai
+  step: 0.32,           // panjang satu langkah kaki
+  waterCost: 6,         // air bisa dilewati, tapi mahal — memutar lebih murah
+  hazardCost: 40,       // lava, api, kaktus: praktis terlarang, bukan mustahil
+  climbCost: 2.5,       // memanjat lebih dari satu blok
+  dropCost: 1.2,        // turun lebih dari satu blok (naik lagi itu mahal)
+  hazards: new Set([
+    "minecraft:lava", "minecraft:flowing_lava", "minecraft:fire",
+    "minecraft:soul_fire", "minecraft:magma", "minecraft:cactus",
+    "minecraft:powder_snow", "minecraft:sweet_berry_bush", "minecraft:wither_rose",
+    "minecraft:campfire", "minecraft:soul_campfire",
+  ]),
 };
 
 export const TICKS = {

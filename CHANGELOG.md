@@ -8,9 +8,15 @@ reconstructed afterwards, which is why the builder refuses to save without one.
 
 ### VBS Companions v1.7.0
 
-Tujuh keluhan dari sesi bermain langsung, dan satu benang merah: companion
+Dua sesi bermain langsung, tiga belas keluhan, dan satu benang merah: companion
 terlihat **sibuk** tapi tidak ada yang **jadi**. Blok hilang seketika, gudang
 tersebar ke mana-mana, dan petani berdiri di tengah patok tanpa berbuat apa-apa.
+
+Sesi kedua menambahkan akarnya: **patok menyimpan ketinggian yang salah**, dan
+satu bug itu menjelaskan "patok ladang tidak jalan", "patok desa tidak jalan"
+dan "petani diam saja" sekaligus. Sesi itu juga menambahkan tiga hal yang
+memang belum pernah ada — companion yang bisa berenang, yang bisa makan, dan
+yang menyapa pemain lain.
 
 **Membongkar blok sekarang butuh waktu (`scripts/dig.js`, baru):**
 
@@ -96,6 +102,115 @@ tersebar ke mana-mana, dan petani berdiri di tengah patok tanpa berbuat apa-apa.
   tungku, papan nama, obor, hiasan dan penanda patok. Bukan daun, bukan setengah
   blok, bukan pasir/kerikil yang jatuh. Dipakai station, workshop, builder,
   claim, decorate, wander dan mining.
+
+**Patok akhirnya benar-benar jalan — dan patoknya bukan item lagi:**
+
+- Akar masalah "patok ladang dan desa masih belum berjalan": `toggleClaimAt`
+  menyimpan `floor(player.y) + 1` sebagai ketinggian patok. Kaki pemain sudah
+  berada satu angka di atas rumput, jadi yang tersimpan **dua blok terlalu
+  tinggi**. `farming.js` membaca angka itu sebagai `flattenY` — tinggi permukaan
+  yang akan dicangkul — sehingga **setiap** kolom petak terbaca "cekung":
+  petani menghabiskan seluruh waktunya meminta tanah timbun yang tidak pernah
+  cukup, dan dari luar dia terlihat cuma berdiri diam di samping petinya. Rumah
+  desa pun berdiri melayang dua blok di atas rumput. Itu satu bug yang
+  menjelaskan tiga keluhan sekaligus.
+- Sekarang yang disimpan adalah **tinggi tanahnya**, diambil dari median dua
+  puluh lima kolom contoh di dalam chunk — satu lubang atau satu gundukan di
+  tengah petak tidak boleh menentukan tinggi seluruh ladang.
+- Patok lama **dibetulkan sendiri** (`ensureClaimHeight`) begitu companion
+  pertama menggarapnya, sekali seumur patok. Patok yang sudah selesai digarap
+  dibiarkan apa adanya: permukaannya memang sudah terlanjur dibentuk ke situ.
+- **Item patoknya dihapus.** Dulu sebatang stik bernama, dan itu gagal dua arah:
+  stik bernama tenggelam di antara stik biasa yang memang dibuat perajin
+  berkarung-karung, dan chunk di seberang lembah tetap harus didatangi dulu.
+  `makeStake`, `ensureStake`, `wireStake` dan dua listener `itemUseOn`
+  dibuang; satu-satunya jalan sekarang **Buku Panduan » Peta Patok**, dan semua
+  tombol lama ("Beri Aku Patok (Stik Fisik)", "Minta Stik Fisik", tawaran
+  Pembangun) menunjuk ke halaman itu.
+- Penanda patok desa akhirnya bertuliskan **"Patok Desa"**. Sebelumnya keduanya
+  sama-sama "Patok Ladang", jadi chunk desa terbaca seperti ladang yang tidak
+  pernah digarap siapa pun.
+- Fase meratakan tidak lagi bisa mengunci seluruh ladang. Bahan timbun tetap
+  diminta, tapi sesudah dua sapuan penuh ladangnya dilanjutkan tanpa kolom yang
+  tidak bisa ditimbun — sama seperti petak yang tidak bisa diairi di fase
+  mencangkul. Ladang yang sedikit lebih kecil tapi jadi selalu lebih baik
+  daripada ladang sempurna yang tidak pernah ada.
+
+**Api, air, tenggelam, dan makan (`scripts/survival.js`, baru):**
+
+- Langkah kaki sekarang **selalu memilih pijakan kering** (`util.js` »
+  `tryStep`). `isStandable()` menghitung air sebagai lantai — itulah sebabnya
+  companion menyeberangi laut dengan santai lalu mengambang di tengahnya sampai
+  ditarik pulang. Langkah basah kini cuma cadangan, dipakai kalau memang tidak
+  ada satu pun jalan kering; menyeberangi parit irigasi selebar satu blok tetap
+  boleh, karena di situ lantainya tanah.
+- **Terbakar** — companion berhenti bekerja, lari ke air terdekat dalam 12 blok,
+  dan nyemplung. Api padam, kerja dilanjut dari titik yang sama.
+- **Terlanjur di air dalam** — dia berenang naik ke permukaan satu blok tiap
+  denyut (bukan meloncat keluar sekaligus; itu terlihat seperti sihir), lalu
+  menuju daratan terdekat dan naik ke sana. Kepala yang terlalu lama terbenam
+  benar-benar kehabisan napas, dan pemiliknya diberi tahu.
+- **Nyawa di bawah 60%** — dia makan sendiri dari peti atau kantongnya, sambil
+  jalan, tanpa berhenti bekerja. Tidak ada makanan? Satu pesanan **roti**
+  dipasang ke perajin lewat papan permintaan yang sama seperti pesanan alat
+  (`ITEM_RECIPES.bread`, tiga gandum, tanpa tungku). Perajin yang menerimanya
+  mengantar makanan **apa pun** yang kebetulan sudah ada di peti alih-alih
+  menunggu panen — companion yang hampir tenggelam tidak sedang memilih menu.
+- Keselamatan dijalankan di `workOnce` **sebelum** tenaga: companion yang
+  terbakar atau terbenam tidak boleh "beristirahat" di situ.
+
+**Penambang membawa pulang batu dan tanah:**
+
+- Hasil galian biasa dulu menguap seluruhnya. Satu terowongan lima puluh blok
+  berarti ratusan blok batu yang hilang dari dunia tanpa pernah masuk peti siapa
+  pun — sementara di permukaan petani menunggu **tanah timbun** dan pembangun
+  kehabisan **batu**.
+- Sekarang batu, tanah, kerikil, pasir, deepslate dan sebangsanya (`MINE_SPOIL`)
+  ikut disetor, sampai satu tumpuk per jenis. Muatan sekali jalan dinaikkan dari
+  96 ke 192 supaya penambang tidak berubah jadi kurir bolak-balik.
+- Saklarnya ada di **Buku Panduan » Apa yang Ditambang**; dimatikan, dia kembali
+  cuma membawa bijih.
+
+**Menyapa pemain lain yang menatap:**
+
+- Tatapan pemilik tetap seperti dulu (berhenti, pose menyapa, kalimat `greet`).
+  Tatapan **orang asing** sekarang dijawab: companion menyapa orang itu dengan
+  namanya lewat pool dialog baru `hail`, dan **memberi tahu pemiliknya** lewat
+  chat bahwa ada orang di dekat companionnya, lengkap dengan koordinat.
+- Sapaannya dijeda 30 detik per orang, laporan ke pemiliknya dua menit — pemain
+  yang berdiri lama di dekat ladang tidak berubah jadi banjir pesan.
+- `chat.js` » `fill()` sekarang bisa menyebut nama **pemain**, bukan cuma nama
+  companion; `{kamu}` yang berisi pemain dulu jadi "?".
+
+**Menunjuk ranjang:**
+
+- Ranjang di rumah buatan pemain sendiri dulu cuma kebetulan terpakai kalau
+  jaraknya di bawah 12 blok saat companion mengantuk. Sekarang pemain bisa
+  bilang "yang ini": berdiri di dekatnya, lihat ke ranjangnya, lalu tekan
+  **Tunjuk Ranjang** — di menu companion atau di Buku Panduan. Kalau tatapannya
+  meleset, ranjang terdekat dalam 12 blok yang dipakai.
+- Ranjang tertunjuk **menang atas segalanya**, termasuk rumah desa. Lewat buku,
+  yang ditunjuk adalah ranjang di dekat **pemain**, jadi rumah yang baru selesai
+  dibangun bisa langsung ditugaskan walau companionnya bekerja jauh.
+- Ranjang yang dibongkar dilewati diam-diam dan companion kembali ke urutan
+  biasa — tidak mogok, tidak berjalan ke titik yang sudah kosong.
+- `BED_IDS` sekarang juga menyebut `minecraft:bed`, id lawas Bedrock yang
+  warnanya berupa block state. Tanpa itu, dunia yang memakainya membuat
+  companion tidur di bawah pohon padahal ranjangnya jelas ada.
+
+**Dialog dan uji:**
+
+- Empat kunci suasana baru — `swim`, `burn`, `eat`, `hail` — lengkap untuk
+  kelima karakter, plus `FALLBACK` dan daftar kunci di `gen_dialogue.py` serta
+  `dialogue/README.md` (validator menolak kalau ketiganya melenceng).
+- Lima uji baru di `tools/sim/sim.mjs`: tinggi patok (baru, lama yang
+  dibetulkan, dan yang sudah jadi dibiarkan), menghindari air, berenang ke
+  darat, terbakar, makan sendiri dan memesan roti, penambang yang membawa pulang
+  batu, sapaan ke pemain lain, dan ranjang yang ditunjuk mengalahkan rumah desa.
+- Stub simulasi ikut tumbuh: nyawa yang bisa berubah, komponen `onfire`,
+  `extinguishFire`, dan mata pemain (`getHeadLocation`, `getViewDirection`,
+  `getBlockFromViewDirection`) — tanpa itu jalur-jalur baru tidak pernah sekali
+  pun benar-benar dijalankan uji.
 
 **Kinerja:**
 

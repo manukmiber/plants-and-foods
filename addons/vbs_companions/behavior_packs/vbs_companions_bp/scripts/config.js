@@ -245,6 +245,65 @@ export const MINE_TARGETS = {
   stone: { label: "Batu biasa", item: "minecraft:cobblestone", depth: 40, icon: "textures/items/stick" },
 };
 
+/**
+ * Apa yang TERSISA DI TANGAN sesudah satu blok galian biasa dipatahkan.
+ *
+ * Bukan bijih — ini batu, tanah, kerikil dan pasir yang mau tidak mau harus
+ * dibongkar supaya lorongnya lewat. Dulu semuanya menguap begitu saja: satu
+ * terowongan sepanjang lima puluh blok berarti ratusan blok batu yang lenyap
+ * dari dunia tanpa pernah masuk peti siapa pun, sementara di permukaan petani
+ * berdiri diam menunggu kiriman tanah timbun dan pembangun kehabisan batu.
+ * Sekarang hasil galian dibawa pulang seperti penambang sungguhan.
+ *
+ * Blok yang TIDAK ada di sini memang tidak meninggalkan apa-apa yang berguna
+ * (daun, rumput, sarang laba-laba) dan sengaja dibiarkan hilang.
+ */
+export const MINE_SPOIL = {
+  "minecraft:stone": "minecraft:cobblestone",
+  "minecraft:cobblestone": "minecraft:cobblestone",
+  "minecraft:mossy_cobblestone": "minecraft:mossy_cobblestone",
+  "minecraft:deepslate": "minecraft:cobbled_deepslate",
+  "minecraft:cobbled_deepslate": "minecraft:cobbled_deepslate",
+  "minecraft:andesite": "minecraft:andesite",
+  "minecraft:diorite": "minecraft:diorite",
+  "minecraft:granite": "minecraft:granite",
+  "minecraft:tuff": "minecraft:tuff",
+  "minecraft:calcite": "minecraft:calcite",
+  "minecraft:dripstone_block": "minecraft:dripstone_block",
+  "minecraft:smooth_basalt": "minecraft:smooth_basalt",
+  "minecraft:basalt": "minecraft:basalt",
+  "minecraft:blackstone": "minecraft:blackstone",
+  "minecraft:netherrack": "minecraft:netherrack",
+  "minecraft:end_stone": "minecraft:end_stone",
+  "minecraft:sandstone": "minecraft:sandstone",
+  "minecraft:red_sandstone": "minecraft:red_sandstone",
+  "minecraft:terracotta": "minecraft:terracotta",
+  "minecraft:stone_bricks": "minecraft:stone_bricks",
+  "minecraft:dirt": "minecraft:dirt",
+  "minecraft:coarse_dirt": "minecraft:coarse_dirt",
+  "minecraft:rooted_dirt": "minecraft:rooted_dirt",
+  "minecraft:grass_block": "minecraft:dirt",
+  "minecraft:podzol": "minecraft:podzol",
+  "minecraft:mycelium": "minecraft:mycelium",
+  "minecraft:mud": "minecraft:mud",
+  "minecraft:clay": "minecraft:clay",
+  "minecraft:gravel": "minecraft:gravel",
+  "minecraft:sand": "minecraft:sand",
+  "minecraft:red_sand": "minecraft:red_sand",
+  "minecraft:soul_sand": "minecraft:soul_sand",
+  "minecraft:soul_soil": "minecraft:soul_soil",
+  "minecraft:moss_block": "minecraft:moss_block",
+  "minecraft:snow": "minecraft:snowball",
+  "minecraft:packed_ice": "minecraft:packed_ice",
+  "minecraft:blue_ice": "minecraft:blue_ice",
+  "minecraft:amethyst_block": "minecraft:amethyst_block",
+};
+
+// Berapa banyak tiap JENIS hasil galian biasa yang mau dibawa pulang. Satu
+// tumpuk sudah cukup: lebih dari itu, penambang menghabiskan waktunya
+// bolak-balik ke peti alih-alih menggali.
+export const MINE_SPOIL_CAP = 64;
+
 // Kebalikan MINE_TARGETS: dari barang hasil tambang ke kunci pilihannya.
 export const MINE_KEY_OF = Object.fromEntries(
   Object.entries(MINE_TARGETS).map(([key, meta]) => [meta.item, key]));
@@ -377,6 +436,16 @@ export const ITEM_RECIPES = {
     needs: [{ any: "cobble", count: 8 }],
     ask: "stone",
   },
+  // Companion yang baru tersedak air atau baru pulang dari perkelahian
+  // memesan ini ke perajin. Roti sengaja dipilih: tiga gandum dari ladang
+  // sendiri, tidak perlu tungku, dan companion mana pun bisa memakannya
+  // (FOOD_HEAL). Kalau di peti kebetulan sudah ada makanan lain, perajin
+  // mengantar yang itu alih-alih menempa roti baru — lihat crafter.js.
+  bread: {
+    id: "minecraft:bread", label: "Roti", makes: 1, needsTable: false,
+    needs: [{ any: ["minecraft:wheat"], count: 3 }],
+    ask: "wheat",
+  },
 };
 
 // Bahan mentah yang boleh diminta ke pencari barang (looter). Nilainya adalah
@@ -389,6 +458,12 @@ export const MATERIAL_REQUESTS = {
   dirt: { label: "tanah timbun", ids: ["minecraft:dirt", "minecraft:coarse_dirt"], want: 32 },
   coal: { label: "arang", ids: ["minecraft:coal", "minecraft:charcoal"], want: 8 },
   seed: { label: "bibit", ids: ["minecraft:wheat_seeds", "minecraft:carrot", "minecraft:potato", "minecraft:beetroot_seeds"], want: 16 },
+  // Gandum tidak ada di HUNT (gather.js) dengan sengaja: satu-satunya gandum
+  // di dunia ini tumbuh di ladang companion sendiri, dan pencari barang yang
+  // "mencarikan gandum" berarti pencari barang yang membabat panen kawannya.
+  // Permintaannya tetap sah supaya muncul di papan bantuan — dan pemainlah
+  // yang membacanya lalu menaruh gandum di peti.
+  wheat: { label: "gandum", ids: ["minecraft:wheat"], want: 6 },
 };
 
 export const CHEST_IDS = [
@@ -401,6 +476,12 @@ export const SIGN_IDS = [
 ];
 
 export const BED_IDS = [
+  // Bedrock lama memakai satu id "minecraft:bed" dengan warna sebagai state,
+  // yang baru memecahnya per warna. Dua-duanya ditulis: daftar ini dipakai
+  // untuk MENGENALI ranjang di dunia (energy.js) sekaligus untuk MENCARI
+  // ranjang di peti (builder.js), dan dunia yang salah satunya tidak dikenali
+  // berarti companion tidur di bawah pohon padahal ranjangnya ada.
+  "minecraft:bed",
   "minecraft:red_bed", "minecraft:white_bed", "minecraft:blue_bed",
   "minecraft:green_bed", "minecraft:brown_bed", "minecraft:black_bed",
   "minecraft:gray_bed", "minecraft:light_gray_bed", "minecraft:cyan_bed",
@@ -409,11 +490,17 @@ export const BED_IDS = [
   "minecraft:light_blue_bed",
 ];
 
+// Patok ladang dan patok desa TIDAK lagi berbentuk item.
+//
+// Dulu keduanya sebatang stik yang diberi nama, dan itu dua masalah sekaligus:
+// stik bernama tercampur dengan stik biasa yang memang dibawa companion ke
+// mana-mana (perajin membuatnya berkarung-karung), dan mematok satu chunk
+// berarti berjalan ke chunk itu sambil memegang stik yang benar. Sekarang
+// satu-satunya jalan memasang patok adalah Peta Patok di Buku Panduan —
+// claim.js » toggleClaimAt, yang tidak butuh item apa pun dan bisa menunjuk
+// petak di seberang lembah.
 export const STAKE_NAME = "§ePatok Ladang";
-export const STAKE_ITEM = "minecraft:stick";
-
 export const VILLAGE_STAKE_NAME = "§2Patok Desa";
-export const VILLAGE_STAKE_ITEM = "minecraft:stick";
 
 // Bunga apa saja bisa dipakai untuk menjinakkan companion — secara default dia
 // liar (untamed) begitu muncul, dan baru menempel ke pemain sesudah diberi satu
@@ -538,6 +625,18 @@ export const COBBLE = TOOL_TIERS[1].accepts;
 // karena WAKTU berjalan dan memuncak di malam hari. Companion yang mengantuk
 // akan mencari ranjang di rumah desa; kalau tidak ada ranjang, dia tidur di
 // bawah pohon atau di stasiunnya sendiri.
+// Api, air, dan tenggelam. Angka waktunya dalam DENYUT KERJA (TICKS.brain =
+// 10 tick game = setengah detik), kecuali yang jelas-jelas jarak dalam blok.
+export const SWIM = {
+  fireSearch: 12,     // sejauh apa mencari air waktu badan terbakar
+  shoreSearch: 16,    // sejauh apa mencari daratan waktu berenang
+  shoreEvery: 100,    // jeda sebelum daratan tujuan dipilih ulang (tick)
+  riseStep: 1,        // berapa blok naik ke permukaan tiap denyut kerja
+  drownAfter: 20,     // ~10 detik terbenam sebelum dianggap tenggelam
+  eatBelow: 0.6,      // makan kalau nyawa tinggal di bawah 60%
+  askEvery: 600,      // jeda memesan makanan ke perajin (tick)
+};
+
 export const SLEEP = {
   max: 100,
   gainPerTick: 0.06,        // per denyut kerja (TICKS.brain)

@@ -159,7 +159,20 @@ export function makeContainer(size = 27) {
 
 export function makeCompanion(dimension, typeId, at) {
   const props = new Map();
+  // Nyawa harus bisa BERUBAH: sejak companion makan sendiri waktu terluka
+  // (survival.js), komponen nyawa yang nilainya beku 20/20 berarti jalur itu
+  // tidak pernah sekali pun dijalankan uji.
+  let hp = 20;
+  const health = {
+    get currentValue() { return hp; },
+    effectiveMax: 20,
+    defaultValue: 20,
+    setCurrentValue(value) { hp = value; },
+  };
   const entity = {
+    // Berapa tick lagi badannya terbakar. Uji api menyalakannya sendiri.
+    __fireTicks: 0,
+    __setHealth(value) { hp = value; },
     id: `test-${typeId}`,
     typeId,
     __families: ["vbs_companion", "mob"],
@@ -176,10 +189,18 @@ export function makeCompanion(dimension, typeId, at) {
     getProperty: () => 0,
     setProperty: () => {},
     getComponent(id) {
-      if (id === "minecraft:health") return { currentValue: 20, effectiveMax: 20 };
+      if (id === "minecraft:health") return health;
+      if (id === "minecraft:onfire") {
+        return entity.__fireTicks > 0
+          ? { onFireTicksRemaining: entity.__fireTicks } : undefined;
+      }
       if (id === "minecraft:is_tamed") return entity.__tamed ? {} : undefined;
       if (id === "minecraft:tameable") return { isTamed: entity.__tamed };
       return undefined;
+    },
+    extinguishFire() {
+      entity.__fireTicks = 0;
+      return true;
     },
     triggerEvent(event) {
       if (event === "vbs:on_tamed") entity.__tamed = true;
@@ -227,6 +248,14 @@ export function makePlayer(dimension, { id = "P1", name = "Pemain", at = { x: 0,
     sendMessage(text) { messages.push(text); },
     playSound() {},
     teleport(pos) { player.location = { x: pos.x, y: pos.y, z: pos.z }; },
+    // Mata pemain: dipakai look.js untuk tahu siapa yang sedang ditatap, dan
+    // energy.js untuk tahu ranjang mana yang sedang ditunjuk.
+    __view: { x: 0, y: 0, z: 1 },
+    getHeadLocation() {
+      return { x: player.location.x, y: player.location.y + 1.62, z: player.location.z };
+    },
+    getViewDirection() { return { ...player.__view }; },
+    getBlockFromViewDirection() { return player.__lookingAt; },
   };
   return player;
 }

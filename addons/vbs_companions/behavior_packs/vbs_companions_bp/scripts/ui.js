@@ -6,11 +6,14 @@ import { ActionFormData, MessageFormData, ModalFormData } from "@minecraft/serve
 import { ENERGY, FAMILY, FOOD_HEAL, MODES, SLEEP } from "./config.js";
 import { getActivity } from "./activity.js";
 import { BLUEPRINTS, startBlueprint } from "./builder.js";
-import { claimsNear, ensureStake } from "./claim.js";
+import { claimsNear } from "./claim.js";
 import { openStakeMap } from "./bookui.js";
 import { syncWeapon } from "./combat.js";
 import { bestTier, tierName, toolRank } from "./crafting.js";
-import { energyOf, isResting, isSleeping, needsLabel, sleepOf } from "./energy.js";
+import {
+  bedLabel, clearBed, energyOf, isResting, isSleeping, needsLabel, pointBed,
+  sleepOf,
+} from "./energy.js";
 import { farmPhaseLabel, setExpand } from "./farming.js";
 import { displayName, refreshName } from "./nametag.js";
 import { requestLines } from "./requests.js";
@@ -140,7 +143,7 @@ export function applyMode(player, entity, key) {
   player.sendMessage(`${meta.color}${displayName(entity)} §7» §f${MODES[key].label}`);
   player.playSound("random.orb", { location: player.location });
   if (key === "farm") {
-    player.sendMessage("§7Tip: Buka §6Buku Panduan §7» §2Peta Patok§7 untuk mematok ladang tanpa stik.");
+    player.sendMessage("§7Tip: Buka §6Buku Panduan §7» §2Peta Patok§7 untuk mematok ladangnya.");
   } else if (key === "build") {
     player.sendMessage("§7Tip: Buka §6Buku Panduan §7» §2Peta Patok Desa§7 untuk menandai chunk desa.");
   }
@@ -163,6 +166,7 @@ async function openSettings(player, entity) {
     .button("§2Ladang & Patok\n§8Peta patok dan batas garapan", "textures/items/wheat")
     .button("§eRancangan Bangunan\n§8Pilih yang akan dibangun & patok desa", "textures/items/brick")
     .button("§bCatatan Pengembara\n§8Temuan beserta koordinatnya", "textures/items/map_filled")
+    .button("§dTunjuk Ranjang\n§8Lihat ke ranjangnya, lalu tekan ini", "textures/items/bed_red")
     .button(`§7Celoteh: ${state.quiet ? "§cmati" : "§ahidup"}\n§8Gelembung teks dan obrolan`, "textures/items/book_normal")
     .button(`§7Nama pemilik (dia saja): ${state.hideOwner ? "§csembunyi" : "§aterlihat"}\n§8Berlaku untuk companion ini saja`, "textures/items/paper")
     .button(`§7Nama pemilik (SEMUA milikku): ${global.hideOwner ? "§csembunyi" : "§aterlihat"}\n§8Sembunyikan pemilik seluruh companion`, "textures/items/paper")
@@ -183,16 +187,66 @@ async function openSettings(player, entity) {
     case 3: await openFarm(player, entity); break;
     case 4: await openBlueprints(player, entity); break;
     case 5: await openWaypoints(player, entity); break;
-    case 6: toggleQuiet(player, entity); break;
-    case 7: toggleHideOwner(player, entity); break;
-    case 8: toggleHideOwnerAll(player, entity); break;
-    case 9: await openRequests(player, entity); break;
-    case 10: await openLogs(player, entity); break;
-    case 11: await rename(player, entity); break;
-    case 12: recall(player, entity); break;
-    case 13: await dismiss(player, entity); break;
+    case 6: await openBed(player, entity); break;
+    case 7: toggleQuiet(player, entity); break;
+    case 8: toggleHideOwner(player, entity); break;
+    case 9: toggleHideOwnerAll(player, entity); break;
+    case 10: await openRequests(player, entity); break;
+    case 11: await openLogs(player, entity); break;
+    case 12: await rename(player, entity); break;
+    case 13: recall(player, entity); break;
+    case 14: await dismiss(player, entity); break;
     default: await openMenu(player, entity); return;
   }
+}
+
+/**
+ * Menunjuk ranjang tempat companion ini tidur.
+ *
+ * Sebelum ini satu-satunya ranjang yang benar-benar dituju adalah ranjang
+ * rumah desa buatan Pembangun; ranjang di rumah yang dibangun PEMAIN cuma
+ * kebetulan terpakai kalau jaraknya di bawah dua belas blok saat dia
+ * mengantuk. Sekarang pemain bisa bilang "yang ini", dan itu yang dipakai.
+ */
+async function openBed(player, entity) {
+  const bed = bedLabel(entity, readState(entity));
+  const form = new ActionFormData()
+    .title("§l§dRanjang Companion")
+    .body([
+      "§7Berdiri di dekat ranjangnya, §flihat ke ranjang itu§7, lalu tekan",
+      "§7tombol di bawah. Kalau tatapanmu meleset, ranjang terdekat dalam",
+      "§712 blok yang dipakai.",
+      "",
+      bed
+        ? (bed.gone
+          ? `§cRanjang tertunjuk di (${bed.x}, ${bed.y}, ${bed.z}) sudah tidak ada.`
+          : `§aRanjangnya: §f(${bed.x}, ${bed.y}, ${bed.z})§a.`)
+        : "§8Belum ada ranjang yang ditunjuk.",
+      "",
+      "§8Urutan tempat tidur: ranjang yang kamu tunjuk, lalu ranjang rumah desa",
+      "§8buatan Pembangun, lalu ranjang mana pun di sekitarnya, lalu bawah pohon.",
+    ].join("\n"))
+    .button("§aTunjuk Ranjang yang Kulihat\n§8Atau ranjang terdekat dalam 12 blok", "textures/items/bed_red")
+    .button(bed ? "§cLupakan Ranjang Ini\n§8Kembali ke urutan biasa" : "§8Belum ada yang bisa dilupakan")
+    .button("§8« Kembali");
+
+  const res = await forceShow(player, form);
+  if (!res || res.canceled || res.selection === undefined) return;
+  if (res.selection === 0) {
+    const spot = pointBed(player, entity);
+    player.sendMessage(spot
+      ? `§a${displayName(entity)} akan tidur di ranjang (${spot.x}, ${spot.y}, ${spot.z}).`
+      : "§cTidak ada ranjang yang terlihat maupun dalam 12 blok dari tempatmu berdiri.");
+    await openBed(player, entity);
+    return;
+  }
+  if (res.selection === 1 && bed) {
+    clearBed(entity);
+    player.sendMessage(`§7${displayName(entity)} kembali memakai urutan tempat tidur biasa.`);
+    await openBed(player, entity);
+    return;
+  }
+  await openSettings(player, entity);
 }
 
 async function openRequests(player, entity) {
@@ -253,7 +307,8 @@ async function openFarm(player, entity) {
     .title("§l§6Ladang & Patok")
     .body([
       "§7Patok menentukan sampai mana companion boleh menggarap.",
-      "§7Tunjuk petak langsung di §fPeta Patok Ladang§7 tanpa perlu stik fisik.",
+      "§7Petaknya ditunjuk langsung di §fPeta Patok Ladang§7 — tidak ada item",
+      "§7yang perlu dibawa, dan chunk di seberang lembah pun bisa dipatok.",
       "§8Merah = dipatok tapi belum digarap. Hijau = sudah jadi ladang.",
       "",
       ...lines,
@@ -264,7 +319,6 @@ async function openFarm(player, entity) {
     ].join("\n"))
     .button("§2Buka Peta Patok Ladang\n§8Pilih dan patok chunk langsung dari peta", "textures/items/map_filled")
     .button(state.allowExpand ? "§cMatikan izin melebar" : "§aIzinkan melebar 1 chunk lagi", "textures/items/wheat")
-    .button("§8Minta Stik Fisik\n§8Alternatif lama: klik tanah dengan item", "textures/items/stick")
     .button("§8« Kembali");
 
   const res = await forceShow(player, form);
@@ -278,8 +332,6 @@ async function openFarm(player, entity) {
     player.sendMessage(state.allowExpand
       ? "§7Izin melebar dimatikan."
       : "§aIzin melebar dihidupkan. Patok satu chunk lagi supaya ada tujuannya.");
-  } else if (res.selection === 2) {
-    if (!ensureStake(player)) player.sendMessage("§7Patok Ladang sudah ada di kantongmu.");
   }
   await openSettings(player, entity);
 }

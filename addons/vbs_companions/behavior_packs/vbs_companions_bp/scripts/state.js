@@ -42,6 +42,8 @@ const EMPTY = {
   // atau belum dijawab, dan selama itu companion memakai perilaku bawaannya.
   seedSelf: null,      // "ya" = cari bibit sendiri, "tidak" = pemilik yang carikan
   mineWants: null,     // larik kunci MINE_TARGETS; null = tambang apa saja
+  mineHaul: true,      // bawa pulang hasil galian biasa (batu, tanah, kerikil)
+  bed: null,           // ranjang yang DITUNJUK pemain; dipakai energy.js
   villageOfferAt: 0,
   nick: null,
 };

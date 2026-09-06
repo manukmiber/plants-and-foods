@@ -18,7 +18,7 @@ import { sayFrom } from "./chat.js";
 import { forget as forgetCombat, syncWeapon, tickCombat } from "./combat.js";
 import { DEFAULT_MODE, FAMILY, LOOK, MODES, TICKS } from "./config.js";
 import { tickBuild } from "./builder.js";
-import { tickBeams, wireStake } from "./claim.js";
+import { tickBeams } from "./claim.js";
 import { tickCrafter } from "./crafter.js";
 import { isNight, isSleeping, tickEnergy } from "./energy.js";
 import { tickFarm } from "./farming.js";
@@ -29,6 +29,7 @@ import { tickMine } from "./mining.js";
 import { forget as forgetBubble, refreshName, tickBubbles } from "./nametag.js";
 import { forget as forgetSocial, tickSocial } from "./social.js";
 import { readSettings, readState, writeState } from "./state.js";
+import { forget as forgetSurvival, tickSurvival } from "./survival.js";
 import {
   forget as forgetTaming, offerFlower, tickTaming,
 } from "./taming.js";
@@ -105,6 +106,7 @@ function forgetAll(id) {
   forgetLook(id);
   forgetLooter(id);
   forgetSocial(id);
+  forgetSurvival(id);
   forgetTaming(id);
   stopWalking(id);
   chatterAt.delete(id);
@@ -195,7 +197,6 @@ subscribe(world.afterEvents.playerLeave, "playerLeave", (ev) => {
   hintCooldown.delete(ev.playerId);
 });
 
-wireStake();
 wireUserTalk();
 wireBook();
 
@@ -259,6 +260,15 @@ function workOnce(entity) {
 
   if (!getOwnerId(entity)) {
     logDebug(TAG, `workOnce: ${entStr(entity)} masih liar; belum bekerja.`);
+    return;
+  }
+
+  // Keselamatan mendahului segalanya, termasuk istirahat: companion yang
+  // sedang terbakar atau terbenam di air tidak boleh "beristirahat" di situ.
+  const rescue = tickSurvival(entity, state, getOwnerId(entity));
+  if (rescue) {
+    writeState(entity, state);
+    setActivity(entity, rescue);
     return;
   }
 

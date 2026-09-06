@@ -3,7 +3,7 @@ import { system, world, __harness, __setPlayers, __setDimension } from "@minecra
 import { makeWorld, makeContainer, makeCompanion, makePlayer } from "./world.mjs";
 import { LOG_CONFIG, LogLevel, logStats } from "./scripts/logger.js";
 import { readState, writeState, patchState } from "./scripts/state.js";
-import { setClaim } from "./scripts/state.js";
+import { addVillageHome, readClaims, setClaim } from "./scripts/state.js";
 import { tickFarm, plotOf, workArea } from "./scripts/farming.js";
 import { tickMine } from "./scripts/mining.js";
 import { tickCrafter } from "./scripts/crafter.js";
@@ -24,12 +24,15 @@ import { hasHelper, gatherOwn } from "./scripts/selfhelp.js";
 import { findMaterial, forget as forgetGather } from "./scripts/gather.js";
 import { pickSmelt } from "./scripts/smelting.js";
 import {
-  chunkMap, nearestClaimHint, toggleClaimAt, claimsNear,
+  chunkMap, ensureClaimHeight, nearestClaimHint, toggleClaimAt, claimsNear,
 } from "./scripts/claim.js";
 import { askOwner, pendingAsks, answerAsk, answerLatestYesNo } from "./scripts/ask.js";
 import { openBook } from "./scripts/bookui.js";
 import { getActivity, setActivity } from "./scripts/activity.js";
-import { summarize, setGear, makeItem, stopWalking } from "./scripts/util.js";
+import { tickSurvival } from "./scripts/survival.js";
+import { tickLook } from "./scripts/look.js";
+import { pointBed } from "./scripts/energy.js";
+import { steer, summarize, setGear, makeItem, stopWalking } from "./scripts/util.js";
 import { bagCount } from "./scripts/bag.js";
 
 LOG_CONFIG.minLevel = LogLevel.WARN;   // simulasi: cuma tampilkan yang penting
@@ -1083,6 +1086,311 @@ console.log("\n== Uji buku: isi peti, aktivitas, dan halaman companion ==");
     threw = err;
   }
   check(!threw, "buku panduan terbuka tanpa melempar", threw ? String(threw) : "");
+  __setPlayers([]);
+  __setDimension(undefined);
+}
+
+/* -------- Uji 13: tinggi patok, dan patok lama yang dibetulkan ----------- */
+console.log("\n== Uji patok: tinggi tanah, bukan tinggi kaki pemain ==");
+{
+  const W = makeWorld({ groundY: 64 });
+  __setDimension(W.dimension);
+  // Chunk (20, 20) sengaja: chunk-chunk kecil di sekitar nol sudah dipatok uji
+  // lain, dan papan klaim itu satu untuk seluruh simulasi.
+  const player = makePlayer(W.dimension, { id: "H1", name: "Patok", at: { x: 328, y: 65, z: 328 } });
+  __setPlayers([player]);
+
+  toggleClaimAt(player, 20, 20, "farm", player.location);
+  const fresh = readClaims()["minecraft:overworld|20,20"];
+  check(fresh?.y === 64,
+        "patok baru menyimpan tinggi TANAH (blok padat teratas), bukan tinggi kaki",
+        `y=${fresh?.y} (harusnya 64)`);
+
+  // Patok versi lama: tersimpan dua blok terlalu tinggi dan tanpa penanda
+  // versi. Inilah yang ada di dunia pemain sekarang, dan yang membuat petani
+  // menganggap seluruh petak cekung lalu berdiri diam minta tanah timbun.
+  setClaim("minecraft:overworld", 25, 25, { by: "H1", worked: false, kind: "farm", y: 66 });
+  const healed = ensureClaimHeight(W.dimension, 25, 25);
+  check(healed?.y === 64, "patok lama yang dua blok terlalu tinggi dibetulkan sendiri",
+        `y=${healed?.y} (semula 66)`);
+  check(healed?.v === 2, "patok yang sudah dibetulkan ditandai supaya tidak dihitung ulang");
+
+  // Patok yang SUDAH selesai digarap tidak diutak-atik: permukaannya memang
+  // sudah dibentuk ke ketinggian itu.
+  setClaim("minecraft:overworld", 27, 27, { by: "H1", worked: true, kind: "farm", y: 66 });
+  const done = ensureClaimHeight(W.dimension, 27, 27);
+  check(done?.y === 66, "patok yang sudah jadi ladang dibiarkan apa adanya", `y=${done?.y}`);
+
+  // Dan yang paling penting: petani yang menggarap patok DARI PETA benar-benar
+  // maju melewati fase meratakan, bukan mentok minta tanah timbun.
+  const farmer = makeCompanion(W.dimension, "vbs:kohane", { x: 328, y: 65, z: 328 });
+  farmer.setDynamicProperty("vbs:owner", "H1");
+  farmer.setDynamicProperty("vbs:mode", "farm");
+  W.put(330, 65, 330, "minecraft:chest");
+  patchState(farmer, { station: { x: 330, y: 65, z: 330 } });
+  const box = W.dimension.getBlock({ x: 330, y: 65, z: 330 }).getComponent("minecraft:inventory").container;
+  box.fill("minecraft:oak_planks", 64);
+  box.fill("minecraft:stick", 64);
+  box.fill("minecraft:bucket", 1);
+  box.fill("minecraft:dirt", 64);
+  for (let z = 320; z < 336; z++) for (let x = 314; x < 317; x++) W.put(x, 64, z, "minecraft:water");
+
+  const phases = new Set();
+  let farmStatus = "";
+  for (let i = 0; i < 400; i++) {
+    const st = readState(farmer);
+    farmStatus = tickFarm(farmer, st, undefined);
+    writeState(farmer, st);
+    phases.add(st.plan?.farm?.phase);
+    advance(10);
+  }
+  check(phases.has("water") || phases.has("till") || phases.has("plant") ||
+        phases.has("tend"),
+        "petani melewati fase meratakan pada patok yang dipasang dari peta",
+        [...phases].join(" -> "));
+  check(!phases.has("tend") || phases.has("water"),
+        "dan sampai ke sana lewat menggali parit, bukan lewat 'tidak ada patok'",
+        [...phases].join(" -> "));
+  check(!/tanah timbun/.test(farmStatus),
+        "petani tidak lagi mentok di 'butuh tanah timbun'", farmStatus);
+  __setPlayers([]);
+  __setDimension(undefined);
+}
+
+/* -------- Uji 14: air, api, dan makan ----------------------------------- */
+console.log("\n== Uji keselamatan: hindari air, berenang, terbakar, makan ==");
+{
+  const W = makeWorld({ groundY: 64 });
+  __setDimension(W.dimension);
+
+  // Danau sedalam tiga blok di sebelah timur, daratan tetap ada di barat.
+  for (let x = 10; x <= 24; x++) {
+    for (let z = -4; z <= 12; z++) {
+      for (let y = 62; y <= 64; y++) W.put(x, y, z, "minecraft:water");
+    }
+  }
+
+  // 14a. Langkah kaki memilih jalan kering: tujuan di seberang danau, tapi
+  //      companion tidak boleh berdiri di atas permukaan air.
+  const walker = makeCompanion(W.dimension, "vbs:an", { x: 8, y: 65, z: 4 });
+  for (let i = 0; i < 60; i++) {
+    steer(walker, { x: 30, y: 65, z: 4 });
+    advance(4);
+  }
+  const under = W.dimension.getBlock({
+    x: Math.floor(walker.location.x),
+    y: Math.floor(walker.location.y) - 1,
+    z: Math.floor(walker.location.z),
+  });
+  check(under.typeId !== "minecraft:water",
+        "companion tidak berjalan di atas permukaan danau",
+        `berdiri di atas ${under.typeId} pada x=${walker.location.x.toFixed(1)}`);
+  stopWalking(walker.id);
+
+  // 14b. Yang SUDAH terlanjur di tengah danau berenang naik lalu ke darat.
+  const swimmer = makeCompanion(W.dimension, "vbs:toya", { x: 18, y: 62, z: 4 });
+  swimmer.setDynamicProperty("vbs:owner", "S1");
+  const startX = swimmer.location.x;
+  let sawSwim = false;
+  let rose = false;
+  for (let i = 0; i < 300; i++) {
+    const st = readState(swimmer);
+    const line = tickSurvival(swimmer, st, "S1") ?? "";
+    if (/berenang/.test(line)) sawSwim = true;
+    if (swimmer.location.y >= 64) rose = true;
+    writeState(swimmer, st);
+    advance(10);
+  }
+  check(rose, "companion yang terbenam berenang naik ke permukaan",
+        `y ${swimmer.location.y.toFixed(1)}`);
+  check(sawSwim, "keselamatan mengambil alih denyut kerjanya selama dia di air");
+  const standing = W.dimension.getBlock({
+    x: Math.floor(swimmer.location.x),
+    y: Math.floor(swimmer.location.y) - 1,
+    z: Math.floor(swimmer.location.z),
+  });
+  check(standing.typeId !== "minecraft:water",
+        "dan berakhir berdiri di darat, bukan mengambang di tengah danau",
+        `x ${startX} -> ${swimmer.location.x.toFixed(1)}, di atas ${standing.typeId}`);
+  stopWalking(swimmer.id);
+
+  // 14c. Badan terbakar: kerja ditinggal, air dituju.
+  const burning = makeCompanion(W.dimension, "vbs:akito", { x: 4, y: 65, z: 4 });
+  burning.setDynamicProperty("vbs:owner", "S1");
+  burning.__fireTicks = 100;
+  const beforeX = burning.location.x;
+  let sawFire = false;
+  for (let i = 0; i < 60; i++) {
+    const st = readState(burning);
+    const line = tickSurvival(burning, st, "S1") ?? "";
+    if (/terbakar|api/.test(line)) sawFire = true;
+    writeState(burning, st);
+    advance(10);
+  }
+  check(sawFire, "companion yang terbakar berhenti bekerja dan mencari air");
+  check(burning.location.x > beforeX, "dan benar-benar bergerak ke arah air",
+        `x ${beforeX} -> ${burning.location.x.toFixed(1)}`);
+  check(burning.__fireTicks === 0, "apinya padam begitu dia nyemplung",
+        `sisa ${burning.__fireTicks} tick`);
+  stopWalking(burning.id);
+
+  // 14d. Nyawa tinggal sedikit: makan sendiri dari peti.
+  const hurt = makeCompanion(W.dimension, "vbs:flins", { x: 2, y: 65, z: 2 });
+  hurt.setDynamicProperty("vbs:owner", "S1");
+  W.put(3, 65, 3, "minecraft:chest");
+  patchState(hurt, { station: { x: 3, y: 65, z: 3 } });
+  const pantryBox = W.dimension.getBlock({ x: 3, y: 65, z: 3 }).getComponent("minecraft:inventory").container;
+  pantryBox.fill("minecraft:bread", 4);
+  hurt.__setHealth(6);
+  const st = readState(hurt);
+  const meal = tickSurvival(hurt, st, "S1");
+  writeState(hurt, st);
+  check(/makan/.test(meal ?? ""), "companion terluka makan sendiri dari petinya", meal ?? "(tidak makan)");
+  check(hurt.getComponent("minecraft:health").currentValue > 6,
+        "dan nyawanya benar-benar naik",
+        String(hurt.getComponent("minecraft:health").currentValue));
+
+  // 14e. Tidak ada makanan sama sekali: pesanan roti dipasang ke perajin.
+  const starving = makeCompanion(W.dimension, "vbs:kohane", { x: 2, y: 65, z: 6 });
+  starving.setDynamicProperty("vbs:owner", "S2");
+  W.put(4, 65, 6, "minecraft:chest");
+  patchState(starving, { station: { x: 4, y: 65, z: 6 } });
+  starving.__setHealth(5);
+  const hungry = readState(starving);
+  tickSurvival(starving, hungry, "S2");
+  writeState(starving, hungry);
+  const orders = readRequests("S2");
+  check(orders.some((r) => r.type === "item" && r.kind === "bread"),
+        "tanpa makanan, dia memesan roti ke perajin",
+        orders.map((r) => `${r.type}/${r.kind}`).join(", ") || "(papan kosong)");
+  __setDimension(undefined);
+}
+
+/* -------- Uji 15: penambang membawa pulang batu dan tanah ---------------- */
+console.log("\n== Uji penambang: hasil galian biasa ikut dibawa pulang ==");
+{
+  const W = makeWorld({ groundY: 64 });
+  const miner = makeCompanion(W.dimension, "vbs:akito", { x: 4, y: 65, z: 4 });
+  miner.setDynamicProperty("vbs:owner", "M9");
+  miner.setDynamicProperty("vbs:mode", "mine");
+  W.put(6, 65, 6, "minecraft:chest");
+  patchState(miner, { station: { x: 6, y: 65, z: 6 }, mineWants: ["diamond"] });
+  const box = W.dimension.getBlock({ x: 6, y: 65, z: 6 }).getComponent("minecraft:inventory").container;
+  box.fill("minecraft:oak_planks", 64);
+  box.fill("minecraft:stick", 32);
+  box.fill("minecraft:cobblestone", 64);
+  for (let i = 0; i < 6000; i++) {
+    const st = readState(miner);
+    tickMine(miner, st, undefined);
+    writeState(miner, st);
+    advance(10);
+  }
+  // Batu bulat yang ditaruh uji ini di peti sejak awal tidak boleh ikut
+  // terhitung, jadi yang dilihat cuma KANTONG penambang.
+  const haul = readState(miner).bag;
+  const spoil = Object.keys(haul).filter((id) =>
+    id.includes("cobble") || id.includes("dirt") || id.includes("gravel") ||
+    id.includes("deepslate") || id.includes("andesite"));
+  check(spoil.length > 0,
+        "batu/tanah galian benar-benar dibawa pulang, bukan menguap",
+        spoil.map((id) => `${id} x${haul[id]}`).join(", ") || JSON.stringify(haul));
+
+  // Dan saklarnya benar-benar mematikannya.
+  const picky = makeCompanion(W.dimension, "vbs:toya", { x: 40, y: 65, z: 40 });
+  picky.setDynamicProperty("vbs:owner", "M8");
+  picky.setDynamicProperty("vbs:mode", "mine");
+  W.put(42, 65, 42, "minecraft:chest");
+  patchState(picky, { station: { x: 42, y: 65, z: 42 }, mineWants: ["diamond"], mineHaul: false });
+  const pickyBox = W.dimension.getBlock({ x: 42, y: 65, z: 42 })
+    .getComponent("minecraft:inventory").container;
+  pickyBox.fill("minecraft:oak_planks", 64);
+  pickyBox.fill("minecraft:stick", 32);
+  pickyBox.fill("minecraft:cobblestone", 64);
+  for (let i = 0; i < 6000; i++) {
+    const st = readState(picky);
+    tickMine(picky, st, undefined);
+    writeState(picky, st);
+    advance(10);
+  }
+  const pickyBag = readState(picky).bag;
+  check(!Object.keys(pickyBag).some((id) => id.includes("cobble") || id === "minecraft:dirt"),
+        "saklar 'jangan bawa pulang' benar-benar dipatuhi", JSON.stringify(pickyBag));
+}
+
+/* -------- Uji 16: menyapa pemain lain yang menatap ----------------------- */
+console.log("\n== Uji sapaan: pemain lain menatap companion ==");
+{
+  const W = makeWorld({ groundY: 64 });
+  __setDimension(W.dimension);
+  // Pemiliknya jauh (di luar radius gelembung), orang asingnya tepat di depan.
+  const owner = makePlayer(W.dimension, { id: "O1", name: "Pemilik", at: { x: 200, y: 65, z: 0 } });
+  const stranger = makePlayer(W.dimension, { id: "X1", name: "Bagas", at: { x: 0, y: 65, z: 0 } });
+  stranger.__view = { x: 0, y: 0, z: 1 };
+  __setPlayers([owner, stranger]);
+
+  const guard = makeCompanion(W.dimension, "vbs:an", { x: 0, y: 65, z: 6 });
+  guard.setDynamicProperty("vbs:owner", "O1");
+  guard.setDynamicProperty("vbs:owner_name", "Pemilik");
+  guard.setDynamicProperty("vbs:mode", "stay");
+
+  tickLook([guard]);
+  check(/Bagas|halo|Halo|Yo/.test(guard.nameTag),
+        "companion menyapa pemain lain yang menatapnya", guard.nameTag.replace(/\n/g, " | "));
+  check(owner.messages.some((m) => m.includes("Bagas")),
+        "dan pemiliknya diberi tahu ada orang lain di dekat companionnya",
+        owner.messages.join(" / ") || "(tidak ada pesan)");
+
+  // Pemiliknya sendiri yang menatap tidak memicu sapaan orang asing.
+  const before = owner.messages.length;
+  owner.location = { x: 0, y: 65, z: 0 };
+  advance(1200);
+  tickLook([guard]);
+  check(!owner.messages.slice(before).some((m) => m.includes("Ada Pemilik")),
+        "pemiliknya sendiri tidak dilaporkan sebagai orang asing");
+  __setPlayers([]);
+  __setDimension(undefined);
+}
+
+/* -------- Uji 17: menunjuk ranjang -------------------------------------- */
+console.log("\n== Uji ranjang: pemain menunjuk, companion tidur di situ ==");
+{
+  const W = makeWorld({ groundY: 64 });
+  __setDimension(W.dimension);
+  const player = makePlayer(W.dimension, { id: "R1", name: "Tuan", at: { x: 0, y: 65, z: 0 } });
+  __setPlayers([player]);
+
+  const sleeper = makeCompanion(W.dimension, "vbs:kohane", { x: 1, y: 65, z: 1 });
+  sleeper.setDynamicProperty("vbs:owner", "R1");
+  sleeper.setDynamicProperty("vbs:mode", "farm");
+
+  check(!pointBed(player, sleeper), "tanpa ranjang di sekitar, menunjuk memang gagal");
+
+  W.put(3, 65, 3, "minecraft:red_bed");
+  const spot = pointBed(player, sleeper);
+  check(Boolean(spot) && spot.x === 3 && spot.z === 3,
+        "ranjang terdekat ditunjuk dan tercatat", JSON.stringify(spot));
+  check(readState(sleeper).bed?.x === 3, "tersimpan di state companion, bukan di ingatan sesaat");
+
+  // Ranjang yang ditunjuk harus MENANG atas rumah desa yang jauh.
+  addVillageHome("R1", { x: 80, y: 65, z: 80, dim: "minecraft:overworld" });
+  W.put(80, 65, 80, "minecraft:red_bed");
+  const tired = readState(sleeper);
+  tired.sleepiness = 99;
+  tickEnergy(sleeper, tired, "farm");
+  writeState(sleeper, tired);
+  check(tired.sleeping?.spot?.label === "ranjang yang kamu tunjuk",
+        "companion mengantuk tidur di ranjang yang ditunjuk, bukan di rumah desa jauh",
+        tired.sleeping?.spot?.label ?? "(tidak tidur)");
+
+  // Ranjangnya dibongkar: companion kembali ke urutan biasa tanpa mogok.
+  W.put(3, 65, 3, "minecraft:air");
+  const again = readState(sleeper);
+  again.sleeping = null;
+  again.sleepiness = 99;
+  tickEnergy(sleeper, again, "farm");
+  check(again.sleeping?.spot?.label !== "ranjang yang kamu tunjuk",
+        "ranjang yang sudah dibongkar tidak dipakai lagi",
+        again.sleeping?.spot?.label ?? "(tidak tidur)");
   __setPlayers([]);
   __setDimension(undefined);
 }

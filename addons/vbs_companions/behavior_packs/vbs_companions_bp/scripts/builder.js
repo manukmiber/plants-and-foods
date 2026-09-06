@@ -6,7 +6,7 @@ import { system } from "@minecraft/server";
 import { BED_IDS, CHEST_IDS, POSE, PROTECTED } from "./config.js";
 import { report, sayFrom } from "./chat.js";
 import { dataBlueprints } from "./blueprints.js";
-import { claimsNear, ensureVillageStake, markWorked } from "./claim.js";
+import { claimsNear, ensureClaimHeight, markWorked } from "./claim.js";
 import { workArea } from "./farming.js";
 import { hold } from "./hold.js";
 import { isGreeting } from "./look.js";
@@ -462,7 +462,11 @@ function villageStep(entity, state, dimension, container, claim, ownerId) {
   let job = state.plan.village;
   if (!job || job.cx !== claim.cx || job.cz !== claim.cz) {
     const center = chunkCenter(claim.cx, claim.cz);
-    const y = claim.entry.y ?? Math.floor(entity.location.y);
+    // Lantai rumah berdiri TEPAT di permukaan tanah chunk itu. Patok versi lama
+    // menyimpan dua blok lebih tinggi, dan rumah desanya berdiri melayang di
+    // atas rumput — "patok desa tidak jalan". ensureClaimHeight membetulkannya.
+    const fixed = ensureClaimHeight(dimension, claim.cx, claim.cz);
+    const y = fixed?.y ?? claim.entry.y ?? Math.floor(entity.location.y);
     job = { cx: claim.cx, cz: claim.cz, index: 0, origin: { x: center.x, y, z: center.z } };
     state.plan.village = job;
     logInfo(TAG, `Mulai membangun rumah desa di chunk (${claim.cx}, ${claim.cz}), origin=${posStr(job.origin)}`);
@@ -500,9 +504,9 @@ const OFFER_EVERY = 6000;   // ~5 menit antar tawaran, jangan mengganggu terus
  * Pembangun MENGAJUKAN pembuatan kampung ke pemiliknya sendiri.
  *
  * Kalau pemilik sedang online, belum punya satu pun chunk berpatok desa, dan
- * belum lama ditawari, Pembangun menyapa lewat chat lalu langsung menaruh
- * Patok Desa di kantong pemain — itulah "stick penanda chunk" yang diminta.
- * Pemain tinggal mematok chunk mana saja, dan rumah akan dibangun di situ.
+ * belum lama ditawari, Pembangun menyapa lewat chat dan menunjuk ke Peta Patok
+ * Desa di Buku Panduan. Tidak ada item yang diberikan: patoknya memang bukan
+ * benda, dan menunjuk petak dari peta tidak menuntut pemain berjalan ke sana.
  */
 function offerVillage(entity, state, owner, ownerId, dimension) {
   if (!owner || !ownerId) return false;

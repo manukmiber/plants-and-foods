@@ -1,17 +1,62 @@
 /**
  * Berhenti dan tersenyum saat dilihat pemain.
+ *
+ * Dua hal terjadi di sini, dan keduanya dipicu tatapan yang sama:
+ *
+ *   PEMILIKNYA menatap  companion berhenti, berpose menyapa, dan melempar
+ *                       kalimat pool "greet" — seperti dari dulu.
+ *   PEMAIN LAIN menatap companion menyapa ORANG ITU dengan namanya (pool
+ *                       "hail"), lalu memberi tahu pemiliknya bahwa ada orang
+ *                       di dekat companionnya, lengkap dengan koordinat.
+ *
+ * Yang kedua itu untuk server. Companion yang bekerja jauh dari pemiliknya
+ * dulu diam saja saat dihampiri orang; sekarang dia menegur, dan pemiliknya
+ * tahu ada yang datang tanpa harus kebetulan sedang melihat ke sana.
  */
 
 import { system, world } from "@minecraft/server";
 import { FACE, LOOK, POSE } from "./config.js";
-import { sayFrom } from "./chat.js";
+import { report, sayFrom } from "./chat.js";
 import { hold, isHeld, reasonFor } from "./hold.js";
-import { getMode, setFace } from "./util.js";
+import { displayName } from "./nametag.js";
+import { getMode, getOwnerId, setFace } from "./util.js";
 import { entStr, logDebug, logInfo, logWarn } from "./logger.js";
 
 const TAG = "LOOK";
 const REASON = "greet";
+// Jeda menyapa satu orang asing yang sama, dan jeda memberitahu pemiliknya.
+// Yang kedua jauh lebih panjang: pemain yang berdiri lama di dekat ladang
+// tidak boleh berubah jadi banjir pesan di chat pemiliknya.
+const HAIL_EVERY = 600;
+const TELL_OWNER_EVERY = 2400;
 const lastWave = new Map();
+const lastHail = new Map();
+const lastTold = new Map();
+
+function pairKey(entity, player) {
+  return `${entity.id}|${player.id}`;
+}
+
+/**
+ * Menyapa pemain yang BUKAN pemiliknya, dan mengabari pemiliknya.
+ * Balikan true kalau memang ada yang diucapkan tick ini.
+ */
+function hailStranger(entity, player) {
+  const now = system.currentTick;
+  const key = pairKey(entity, player);
+  if (now - (lastHail.get(key) ?? -HAIL_EVERY) < HAIL_EVERY) return false;
+  lastHail.set(key, now);
+  logInfo(TAG, `${entStr(entity)} menyapa pemain lain: ${player.name}.`);
+  sayFrom(entity, "hail", { other: player });
+
+  if (now - (lastTold.get(key) ?? -TELL_OWNER_EVERY) >= TELL_OWNER_EVERY) {
+    lastTold.set(key, now);
+    const at = entity.location;
+    report(entity, `Ada ${player.name} di dekatku, di (${Math.round(at.x)}, ${Math.round(at.z)}).`);
+    logInfo(TAG, `Pemilik ${displayName(entity)} diberi tahu soal ${player.name}.`);
+  }
+  return true;
+}
 
 function lookedAt(player, companions) {
   let head;
@@ -66,6 +111,14 @@ export function tickLook(companions) {
     logInfo(TAG, `${entStr(entity)} ditatap oleh ${player.name}. Menahan companion & menyapa.`);
     hold(entity, LOOK.holdTicks, { pose: POSE.greet, face: FACE.happy, reason: REASON });
 
+    // Orang asing disapa dengan namanya, bukan dengan sapaan untuk pemilik —
+    // dan sapaan itu punya jedanya sendiri, terpisah dari jeda "greet".
+    const ownerId = getOwnerId(entity);
+    if (ownerId && ownerId !== player.id) {
+      hailStranger(entity, player);
+      continue;
+    }
+
     const last = lastWave.get(entity.id) ?? -9999;
     if (system.currentTick - last > LOOK.waveEvery) {
       lastWave.set(entity.id, system.currentTick);
@@ -85,6 +138,11 @@ export function tickLook(companions) {
 export function forget(id) {
   logInfo(TAG, `forget look data untuk entity ID: ${id}`);
   lastWave.delete(id);
+  for (const map of [lastHail, lastTold]) {
+    for (const key of [...map.keys()]) {
+      if (key.startsWith(`${id}|`)) map.delete(key);
+    }
+  }
 }
 
 export function isGreeting(entity) {

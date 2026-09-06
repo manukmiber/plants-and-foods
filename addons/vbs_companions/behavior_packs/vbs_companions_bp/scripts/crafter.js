@@ -16,7 +16,7 @@
 
 import { system } from "@minecraft/server";
 
-import { FAMILY, ITEM_RECIPES, TOOL_TIERS } from "./config.js";
+import { FAMILY, FOOD_HEAL, ITEM_RECIPES, TOOL_TIERS } from "./config.js";
 import { report, sayFrom } from "./chat.js";
 import {
   askForTier, bestTier, craftDeliverStep, craftItemStep, ensureFurnace,
@@ -33,7 +33,7 @@ import { readState, writeState } from "./state.js";
 import { ensureStation, stationTravel } from "./station.js";
 import {
   alive, allCompanions, containerAt, countIn, dist2, face, getGear, getMode,
-  getOwnerId, makeItem, putIn, sound, steer, takeFrom,
+  getOwnerId, makeItem, prettyItem, putIn, sound, steer, takeFrom,
 } from "./util.js";
 import { entStr, logDebug, logInfo, logWarn, posStr } from "./logger.js";
 
@@ -124,13 +124,42 @@ function serveTool(entity, state, container, req, ownerId, station) {
   return `${labelOf(req.kind)} selesai, mengantar ke ${req.fromName}`;
 }
 
-/** Pesanan barang jadi (ember, peti, papan nama, meja kerja, obor). */
+/**
+ * Pesanan makanan boleh dipenuhi makanan APA PUN yang ada di peti.
+ *
+ * Yang memesan roti (survival.js) sebenarnya sedang meminta "sesuatu untuk
+ * dimakan" — companion yang baru hampir tenggelam tidak sedang memilih menu.
+ * Kalau di peti sudah ada daging matang atau apel, mengantar itu jauh lebih
+ * cepat daripada menunggu tiga gandum dari ladang yang belum panen.
+ */
+function readyFood(container) {
+  if (!container) return undefined;
+  return Object.keys(FOOD_HEAL).find((id) => countIn(container, id) > 0);
+}
+
+/** Pesanan barang jadi (ember, peti, papan nama, meja kerja, obor, roti). */
 function serveItem(entity, state, container, req, ownerId, station) {
   const recipe = ITEM_RECIPES[req.kind];
   if (!recipe) {
     logWarn(TAG, `Pesanan barang "${req.kind}" tidak dikenal; dibuang dari papan.`);
     clearRequest(ownerId, req.id);
     return "pesanan tidak dikenal, dibuang";
+  }
+
+  if (req.kind === "bread") {
+    const food = readyFood(container);
+    if (food && food !== recipe.id && takeFrom(container, food, 1) === 1) {
+      state.delivering = {
+        item: { id: food, amount: 1 },
+        to: req.stationPos, forName: req.fromName, kind: req.kind,
+        label: prettyItem(food),
+      };
+      clearRequest(ownerId, req.id);
+      writeState(entity, state);
+      logInfo(TAG, `Pesanan makanan ${req.fromName} dipenuhi ${food} yang sudah ada di peti.`);
+      report(entity, `${prettyItem(food)} untuk ${req.fromName} sudah kuambil dari peti.`);
+      return `mengantar ${prettyItem(food)} ke ${req.fromName}`;
+    }
   }
 
   // Kalau barangnya sudah ada di peti perajin, tidak perlu menempa lagi.

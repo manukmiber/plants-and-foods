@@ -364,6 +364,16 @@ export function isPassable(block) {
 // dihitung padat, jadi tidak ada satu pun langkah yang sah untuk menyeberang.
 const WADEABLE = new Set(["minecraft:water", "minecraft:flowing_water"]);
 
+/** Blok ini air? Dipakai langkah kaki untuk memilih jalur kering. */
+export function isWaterBlock(block) {
+  if (!block) return false;
+  try {
+    return WADEABLE.has(block.typeId);
+  } catch {
+    return false;
+  }
+}
+
 /** Blok yang boleh ditempati badan companion (udara, tanaman, atau air). */
 export function canOccupy(block) {
   if (!block) return false;
@@ -602,8 +612,38 @@ export function unstick(entity) {
   return false;
 }
 
+function landOn(entity, nx, ny, nz, a, target) {
+  try {
+    entity.teleport({ x: nx, y: Math.floor(ny) + 0.02, z: nz }, {
+      dimension: entity.dimension,
+      rotation: { x: 0, y: yawTo(a, target) },
+    });
+  } catch {
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Satu langkah kaki, dan langkah yang KERING selalu menang.
+ *
+ * "Berpijak di air" berarti lantai di bawah kaki itu sendiri air — bukan kaki
+ * yang basah. Menyeberangi parit irigasi selebar satu blok tetap boleh (di
+ * situ lantainya tanah, cuma kakinya yang tercelup), dan memang harus boleh:
+ * companion yang panik tiap kali menyeberangi paritnya sendiri tidak akan
+ * pernah menyelesaikan satu ladang pun.
+ *
+ * Yang tidak boleh adalah berjalan ke tengah danau seolah permukaannya lantai.
+ * Itulah yang selama ini terjadi — isStandable menghitung air sebagai lantai,
+ * jadi companion menyeberangi laut dengan santai lalu mengambang di tengahnya
+ * sampai pemiliknya menariknya pulang. Sekarang langkah basah cuma dipakai
+ * sebagai CADANGAN: kalau memang tidak ada satu pun langkah kering ke arah
+ * yang dituju, barulah air diinjak — supaya companion yang sudah terlanjur
+ * berada di tengah air tetap bisa berenang keluar (survival.js).
+ */
 function tryStep(entity, nx, nz, a, target) {
   const dim = entity.dimension;
+  let wetY;
   // Urutannya sengaja dari perubahan tinggi TERKECIL dulu: datar, lalu turun
   // satu, lalu naik satu. Kalau naik didahulukan, penambang memanjat keluar
   // dari tangganya sendiri tiap langkah dan tidak pernah sampai ke dasar.
@@ -620,17 +660,15 @@ function tryStep(entity, nx, nz, a, target) {
     if (!canOccupy(feet)) clearWay(entity, feet);
     if (!canOccupy(head)) clearWay(entity, head);
     if (!canOccupy(feet) || !canOccupy(head) || !isStandable(floor)) continue;
-    try {
-      entity.teleport({ x: nx, y: Math.floor(a.y + dy) + 0.02, z: nz }, {
-        dimension: dim,
-        rotation: { x: 0, y: yawTo(a, target) },
-      });
-    } catch {
-      return false;
+    if (isWaterBlock(floor)) {
+      if (wetY === undefined) wetY = a.y + dy;
+      continue;
     }
-    return true;
+    return landOn(entity, nx, a.y + dy, nz, a, target);
   }
-  return false;
+  if (wetY === undefined) return false;
+  logDebug(TAG, `${entStr(entity)} tidak punya langkah kering ke (${nx.toFixed(1)}, ${nz.toFixed(1)}); menginjak air.`);
+  return landOn(entity, nx, wetY, nz, a, target);
 }
 
 function stepToward(entity, target, step) {

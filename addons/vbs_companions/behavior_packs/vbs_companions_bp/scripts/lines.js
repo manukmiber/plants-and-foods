@@ -35,6 +35,10 @@ export const LINES = {
     morning: ["Pagi. Jangan telat.", "Matahari sudah naik, ayo."],
     night: ["Gelap. Hati-hati kalau keluar.", "Malam begini monster keluar."],
     alone: ["Sepi juga tanpa yang lain.", "Yang lain ke mana, ya."],
+    swim: ["Airnya dalam! Aku ke tepi dulu.", "Basah semua. Menyebalkan.", "Jangan ketawa. Aku bisa berenang."],
+    burn: ["Panas! Mana airnya?!", "Kebakar aku. Minggir."],
+    eat: ["Lumayan. Aku lanjut kerja.", "Sudah kenyang. Puas?"],
+    hail: ["Oi. Kamu siapa?", "Ngapain ngeliatin? Aku punya {owner}.", "Kalau butuh sesuatu, bilang ke {owner}."],
   },
   kohane: {
     greet: ["A-ada apa?", "Ehm... halo, {owner}.", "Aku... aku baik-baik saja.", "Ma-mau kubantu?", "A-aku di sini kok.", "Se-selamat datang..."],
@@ -62,6 +66,10 @@ export const LINES = {
     morning: ["Selamat pagi...", "Pagi ini cerah ya."],
     night: ["Sudah malam... hati-hati.", "Aku takut gelap sedikit."],
     alone: ["Sendirian ya...", "Semoga yang lain baik-baik saja."],
+    swim: ["A-airnya dalam... aku ke pinggir dulu ya.", "Aku... aku bisa berenang kok. Sedikit.", "Dingin... tapi tidak apa-apa."],
+    burn: ["Pa-panas! Aku cari air!", "Aduh, aku kebakar..."],
+    eat: ["Terima kasih makanannya...", "Sudah agak enakan sekarang."],
+    hail: ["E-eh... halo. Aku companion-nya {owner}.", "Ha-halo... ada perlu?", "Ma-mau kupanggilkan {owner}?"],
   },
   an: {
     greet: ["Yo.", "Kenapa? Ada kerjaan?", "Santai aja, {owner}.", "Lagi ngeliatin siapa nih.", "Yo, apa kabar.", "Butuh sesuatu?"],
@@ -88,6 +96,10 @@ export const LINES = {
     morning: ["Pagi! Udah sarapan belum?", "Cerah nih hari ini."],
     night: ["Udah malem, jangan jauh-jauh.", "Malam-malam gini enaknya tidur."],
     alone: ["Sepi amat.", "Yang lain pada ke mana sih."],
+    swim: ["Wih, dalam juga! Aku ke darat dulu ya.", "Berenang dikit gapapa lah.", "Basah kuyup nih."],
+    burn: ["Panas panas panas! Air mana air!", "Aduh kebakar, minggir dulu!"],
+    eat: ["Nyam. Mantap.", "Udah kenyang, gas lagi!"],
+    hail: ["Yo! Kenal {owner}, gak?", "Halo! Aku companion-nya {owner}.", "Eh, ada orang baru. Halo!"],
   },
   toya: {
     greet: ["Ada yang bisa kubantu?", "Selamat datang kembali, {owner}.", "Aku mendengarkan.", "Silakan.", "Ada yang perlu dicatat?", "Aku siap menerima perintah."],
@@ -118,6 +130,10 @@ export const LINES = {
     morning: ["Pagi. Jadwal hari ini sudah kususun.", "Waktu mulai kerja."],
     night: ["Malam. Bahaya meningkat di luar.", "Sudah waktunya beristirahat."],
     alone: ["Tidak ada orang lain di sekitar.", "Aku bekerja sendiri untuk sementara."],
+    swim: ["Kedalamannya di luar perkiraan. Aku menuju tepi.", "Berenang lebih lambat daripada berjalan. Aku segera naik."],
+    burn: ["Api. Air terdekat sudah kutentukan.", "Aku terbakar. Menuju air."],
+    eat: ["Nyawaku kembali normal.", "Cukup. Aku lanjutkan pekerjaan."],
+    hail: ["Selamat datang. Aku milik {owner}.", "Ada yang bisa kucatat untukmu?", "Kau bukan {owner}, tapi silakan."],
   },
   flins: {
     greet: ["Selamat bertemu.", "Ada perintah, Tuan {owner}?", "Aku siap.", "Silakan bicara.", "Salam.", "Aku menunggu perintahmu."],
@@ -144,6 +160,10 @@ export const LINES = {
     morning: ["Selamat pagi.", "Fajar sudah tiba."],
     night: ["Malam turun. Berhati-hatilah.", "Gelap bukan musuh, tapi jangan lengah."],
     alone: ["Sendiri pun aku tetap bekerja.", "Sunyi. Tidak apa-apa."],
+    swim: ["Laut kampungku lebih dalam dari ini. Aku ke tepi.", "Air tidak menakutkanku. Tapi tugasku di darat."],
+    burn: ["Api di badanku. Air, cepat.", "Bahkan penjaga mercusuar takut api."],
+    eat: ["Sepiring cukup untuk melanjutkan.", "Terima kasih. Aku pulih."],
+    hail: ["Salam. Aku menjaga milik {owner}.", "Kau bukan tuanku, tapi kau kusambut.", "Selamat datang, orang asing."],
   },
 };
 
@@ -171,6 +191,10 @@ export const FALLBACK = {
   morning: ["Selamat pagi."],
   night: ["Sudah malam."],
   alone: ["Sepi di sini."],
+  swim: ["Airnya dalam. Aku ke tepi dulu."],
+  burn: ["Panas! Aku cari air."],
+  eat: ["Sudah kenyang. Aku lanjut."],
+  hail: ["Halo. Aku companion milik {owner}."],
 };
 
 export const TOPICS = [

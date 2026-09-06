@@ -29,7 +29,9 @@ import { demandMove } from "./depot.js";
 import { chipAway } from "./dig.js";
 import { hold } from "./hold.js";
 import { isGreeting } from "./look.js";
-import { claimAt, chunkBounds, claimsNear, getClaim, markWorked } from "./claim.js";
+import {
+  claimAt, chunkBounds, claimsNear, ensureClaimHeight, markWorked,
+} from "./claim.js";
 import { requestItem, requestMaterial, requestTool } from "./requests.js";
 import { askOwner } from "./ask.js";
 import { ensureMaterial, gatherOwn } from "./selfhelp.js";
@@ -143,8 +145,12 @@ export function workArea(entity, state, ownerId) {
     x0 = Math.min(x0, b.x0); x1 = Math.max(x1, b.x1);
     z0 = Math.min(z0, b.z0); z1 = Math.max(z1, b.z1);
   }
+  // ensureClaimHeight, bukan getClaim: patok yang dipasang versi lama menyimpan
+  // tinggi kaki pemain, dua blok di atas tanahnya. Dibaca apa adanya, seluruh
+  // petak terbaca cekung dan petani cuma berdiri meminta tanah timbun. Di sini
+  // angkanya dibetulkan sekali, lalu dipakai.
   const ys = chunks
-    .map((c) => getClaim(entity.dimension.id, c.cx, c.cz)?.y)
+    .map((c) => ensureClaimHeight(entity.dimension, c.cx, c.cz)?.y)
     .filter((y) => typeof y === "number");
   const flattenY = ys.length
     ? Math.round(ys.reduce((a, b) => a + b, 0) / ys.length)
@@ -727,15 +733,36 @@ function phaseLevel(entity, state, area, container, farm, ownerId, station) {
     if (status) return status;
   }
 
+  // Petak cekung yang tidak ada bahan timbunnya TIDAK boleh menghentikan
+  // seluruh ladang. Dulu begitu: selama satu kolom saja kurang tanah, fase ini
+  // pulang membawa "butuh tanah timbun" tiap denyut dan tidak pernah sampai ke
+  // pemeriksaan di bawahnya — petani berdiri diam selamanya menunggu kiriman
+  // yang mungkin memang tidak pernah datang. Sekarang bahannya tetap diminta,
+  // tapi sesudah dua sapuan penuh ladang dilanjutkan tanpa kolom itu. Sama
+  // seperti petak yang tidak bisa diairi di fase mencangkul: ladang yang
+  // sedikit lebih kecil tapi jadi selalu lebih baik daripada ladang sempurna
+  // yang tidak pernah ada.
+  if (farm.swept >= total) {
+    if (needFill && (farm.fillWait ?? 0) < 2) {
+      farm.fillWait = (farm.fillWait ?? 0) + 1;
+      farm.cursor = 0;
+      farm.swept = 0;
+      const own = ensureMaterial(entity, state, ownerId, "dirt",
+                                 station.chest ?? state.station, container);
+      return own ?? "butuh tanah timbun di peti untuk meratakan petak yang cekung";
+    }
+    if (needFill) {
+      logInfo(TAG, "Masih ada petak cekung tanpa bahan timbun; ladang dilanjutkan tanpa petak itu.");
+    }
+    farm.fillWait = 0;
+    toPhase(entity, farm, "water", "seluruh petak sudah rata");
+    report(entity, "Lahannya sudah rata semua. Sekarang aku gali paritnya.");
+    return "lahan sudah rata, lanjut menggali parit";
+  }
   if (needFill) {
     const own = ensureMaterial(entity, state, ownerId, "dirt",
                                station.chest ?? state.station, container);
     return own ?? "butuh tanah timbun di peti untuk meratakan petak yang cekung";
-  }
-  if (farm.swept >= total) {
-    toPhase(entity, farm, "water", "seluruh petak sudah rata");
-    report(entity, "Lahannya sudah rata semua. Sekarang aku gali paritnya.");
-    return "lahan sudah rata, lanjut menggali parit";
   }
   logDebug(TAG, `Fase ratakan: ${farm.swept}/${total} kolom diperiksa, tidak ada yang perlu diratakan.`);
   return `memeriksa kerataan lahan (${farm.swept}/${total})`;

@@ -204,6 +204,14 @@ export function refreshMarker(dimension, cx, cz, entry) {
   return marker;
 }
 
+// Penanda patok adalah entity, dan entity hilang bersama chunk yang tidak
+// dimuat — jadi sesudah dunia ditutup dan dibuka lagi, patok yang kemarin
+// terlihat jelas bisa tidak ada penandanya sama sekali. Selama pemain berdiri
+// cukup dekat, penandanya dipasang ulang. Percobaannya dijeda karena chunk
+// yang belum dimuat akan gagal terus dan tidak ada gunanya dicoba tiap denyut.
+const markerTry = new Map();
+const MARKER_RETRY = 200;
+
 export function tickBeams() {
   const players = world.getAllPlayers();
   if (!players.length) return;
@@ -226,7 +234,12 @@ export function tickBeams() {
       dist2(p.location, { x, y: p.location.y, z }) < 64 * 64);
     if (!watcher) continue;
 
-    const marker = findMarker(dimension, cx, cz);
+    let marker = findMarker(dimension, cx, cz);
+    if (!marker && system.currentTick - (markerTry.get(key) ?? -MARKER_RETRY) >= MARKER_RETRY) {
+      markerTry.set(key, system.currentTick);
+      logDebug(TAG, `Penanda chunk (${cx}, ${cz}) hilang padahal patoknya masih ada; dipasang ulang.`);
+      marker = refreshMarker(dimension, cx, cz, entry);
+    }
     const base = marker ? marker.location.y : groundAt(dimension, x, z, 64);
     const id = entry.worked ? BEAM.claimed : BEAM.free;
     for (let dy = 1; dy <= BEAM_HEIGHT; dy += BEAM_STEP) {
@@ -235,12 +248,29 @@ export function tickBeams() {
   }
 }
 
-export function toggleClaim(player, block, kind = "farm") {
-  const { cx, cz } = chunkOf(block.location);
+/**
+ * Memasang atau mencabut patok pada satu chunk, ditunjuk dengan koordinat
+ * chunk-nya langsung.
+ *
+ * Ini yang sebenarnya mengerjakan pekerjaannya. Mengklik tanah dengan item
+ * patok cuma salah satu jalan masuk; jalan yang satu lagi adalah Peta Patok di
+ * Buku Panduan, yang tidak butuh item apa pun dan tidak butuh pemainnya
+ * berjalan ke chunk itu dulu.
+ *
+ * `at` adalah titik acuan ketinggian — blok yang diklik, atau posisi pemain
+ * kalau patoknya dipasang dari peta.
+ */
+export function toggleClaimAt(player, cx, cz, kind = "farm", at) {
   const dimId = player.dimension.id;
-  logInfo(TAG, `Pemain ${player.name} toggleClaim (${kind}) pada blok ${posStr(block.location)} di chunk (${cx}, ${cz})`);
+  logInfo(TAG, `Pemain ${player.name} toggleClaim (${kind}) di chunk (${cx}, ${cz})`);
   const existing = getClaim(dimId, cx, cz);
   if (existing) {
+    // Patok orang lain bukan milikmu. Tanpa penjagaan ini, siapa pun di server
+    // bisa mencabut ladang pemain lain hanya dengan sebatang stik.
+    if (existing.by && existing.by !== player.id) {
+      logInfo(TAG, `toggleClaim ditolak: chunk (${cx}, ${cz}) milik ${existing.name ?? existing.by}.`);
+      return `§cChunk itu dipatok §f${existing.name ?? "pemain lain"}§c, bukan kamu.`;
+    }
     if ((existing.kind ?? "farm") !== kind) {
       logInfo(TAG, `toggleClaim ditolak: chunk (${cx}, ${cz}) sudah dipatok untuk "${existing.kind ?? "farm"}", bukan "${kind}".`);
       const already = existing.kind === "village" ? "desa" : "ladang";
@@ -249,23 +279,96 @@ export function toggleClaim(player, block, kind = "farm") {
     logInfo(TAG, `Mencabut patok di chunk (${cx}, ${cz})`);
     clearClaim(dimId, cx, cz);
     refreshMarker(player.dimension, cx, cz, undefined);
-    sound(player.dimension, "random.break", block.location);
+    sound(player.dimension, "random.break", at ?? player.location);
     return `§7Patok chunk §f(${cx}, ${cz})§7 dicabut.`;
   }
+  const center = chunkCenter(cx, cz);
+  const base = Math.floor((at ?? player.location).y);
   const entry = {
     by: player.id, name: player.name, worked: false, kind,
-    y: Math.floor(block.location.y) + 1,
+    y: at ? base + 1 : groundAt(player.dimension, center.x, center.z, base),
   };
   logInfo(TAG, `Memasang patok baru (${kind}) di chunk (${cx}, ${cz}) oleh ${player.name}`);
   setClaim(dimId, cx, cz, entry);
   refreshMarker(player.dimension, cx, cz, entry);
-  sound(player.dimension, "random.orb", block.location);
+  sound(player.dimension, "random.orb", at ?? player.location);
   if (kind === "village") {
     return `§2Chunk (${cx}, ${cz}) dipatok untuk desa§7 — belum dibangun. ` +
       "§7Suruh Pembangun ke Mode Membangun, dia yang akan membuatkan rumah di sana.";
   }
   return `§cChunk (${cx}, ${cz}) dipatok§7 — belum digarap. ` +
     "§7Suruh companionmu ke mode bertani, dia yang akan menggarapnya.";
+}
+
+/** Jalan masuk lama: mengklik tanah dengan item patok. */
+export function toggleClaim(player, block, kind = "farm") {
+  const { cx, cz } = chunkOf(block.location);
+  return toggleClaimAt(player, cx, cz, kind, block.location);
+}
+
+/**
+ * Peta chunk di sekitar pemain, untuk halaman Peta Patok di Buku Panduan.
+ *
+ * Alasan halaman itu ada: patok berbentuk ITEM yang harus dibawa dan diklikkan
+ * ke tanah chunk yang dituju. Kalau itemnya terselip di antara isi kantong,
+ * atau kalau chunk yang mau dipatok ada di seberang lembah, memasang satu
+ * patok jadi pekerjaan tersendiri. Peta ini menggantikan keduanya: seluruh
+ * petak di sekitar tergambar sekaligus, dan tinggal ditunjuk.
+ *
+ * Seluruh papan klaim dibaca SEKALI di sini — versi per-petak berarti
+ * enam puluh empat kali membaca dan mem-parse dynamic property yang sama.
+ */
+export function chunkMap(player, size = 8) {
+  const here = chunkOf(player.location);
+  const half = Math.floor(size / 2);
+  const cx0 = here.cx - half;
+  const cz0 = here.cz - half;
+  const dimId = player.dimension.id;
+  const claims = readClaims();
+  const rows = [];
+  for (let rz = 0; rz < size; rz++) {
+    const row = [];
+    for (let rx = 0; rx < size; rx++) {
+      const cx = cx0 + rx;
+      const cz = cz0 + rz;
+      const entry = claims[claimKey(dimId, cx, cz)];
+      const center = chunkCenter(cx, cz);
+      row.push({
+        cx, cz,
+        kind: entry ? (entry.kind ?? "farm") : undefined,
+        worked: Boolean(entry?.worked),
+        mine: Boolean(entry) && entry.by === player.id,
+        byName: entry?.name,
+        here: cx === here.cx && cz === here.cz,
+        dist: Math.round(Math.hypot(center.x - player.location.x, center.z - player.location.z)),
+      });
+    }
+    rows.push(row);
+  }
+  logDebug(TAG, `chunkMap untuk ${player.name}: ${size}x${size} mulai (${cx0}, ${cz0}), berdiri di (${here.cx}, ${here.cz}).`);
+  return { size, cx0, cz0, here, rows };
+}
+
+const COMPASS = ["utara", "timur laut", "timur", "tenggara",
+                 "selatan", "barat daya", "barat", "barat laut"];
+
+/**
+ * Patok terdekat milik pemain: arah dan jaraknya, atau undefined kalau memang
+ * belum punya satu pun. Inilah jawaban untuk "patokku yang kemarin di mana".
+ */
+export function nearestClaimHint(player, kind = "farm") {
+  const near = claimsNear(player.dimension, player.location, player.id, 1, kind);
+  if (!near.length) return undefined;
+  const { cx, cz, entry, d } = near[0];
+  const center = chunkCenter(cx, cz);
+  // Di Minecraft utara itu -Z dan timur +X; sudut dihitung dari utara searah
+  // jarum jam supaya cocok dengan kompas yang dilihat pemain.
+  const angle = Math.atan2(center.x - player.location.x, player.location.z - center.z);
+  const idx = (Math.round((angle * 4) / Math.PI) + 8) % 8;
+  return {
+    cx, cz, entry, dist: Math.round(d), dir: COMPASS[idx],
+    worked: Boolean(entry?.worked),
+  };
 }
 
 export function markWorked(dimension, cx, cz) {

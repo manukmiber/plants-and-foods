@@ -14,26 +14,40 @@
  * petani/penambang/pembangun.
  */
 
-import { ITEM_RECIPES } from "./config.js";
+import { system } from "@minecraft/server";
+
+import { FAMILY, ITEM_RECIPES, TOOL_TIERS } from "./config.js";
 import { report, sayFrom } from "./chat.js";
 import {
-  askForTier, bestTier, craftDeliverStep, craftItemStep, ensureTable, labelOf,
-  nextTierFor, tierName,
+  askForTier, bestTier, craftDeliverStep, craftItemStep, ensureFurnace,
+  ensureTable, labelOf, nextTierFor, tierName, toolId, toolRank,
 } from "./crafting.js";
 import { hold } from "./hold.js";
 import { isGreeting } from "./look.js";
+import { displayName } from "./nametag.js";
 import { clearRequest, craftRequests } from "./requests.js";
 import { ensureMaterial } from "./selfhelp.js";
-import { writeState } from "./state.js";
+import { pickSmelt, smeltStep } from "./smelting.js";
+import { readState, writeState } from "./state.js";
 import { ensureStation } from "./station.js";
 import {
-  alive, containerAt, countIn, dist2, face, getOwnerId, makeItem, putIn, sound,
-  steer, takeFrom,
+  alive, allCompanions, containerAt, countIn, dist2, face, getGear, getMode,
+  getOwnerId, makeItem, putIn, sound, steer, takeFrom,
 } from "./util.js";
 import { entStr, logDebug, logInfo, logWarn, posStr } from "./logger.js";
 
 const TAG = "CRAFTER";
 const REACH = 3.2;
+
+// Mode yang benar-benar MEMAKAI alat lewat craftStep. Cuma dua ini yang boleh
+// dibuatkan alat tanpa diminta: menempa kapak untuk companion yang tidak
+// pernah memakainya sama saja dengan membuang besi.
+const TOOL_FOR_MODE = { farm: "hoe", mine: "pickaxe" };
+
+// Menyapu blok mencari tungku itu mahal. Selama belum ada satu pun, percobaan
+// berikutnya ditahan sebentar supaya perajin yang menganggur tidak menyapu
+// halaman tiap denyut.
+const FURNACE_RETRY = 200;
 
 function continueDelivery(entity, state) {
   const job = state.delivering;
@@ -160,6 +174,100 @@ function serveItem(entity, state, container, req, ownerId, station) {
   return `${recipe.label} selesai, mengantar ke ${req.fromName}`;
 }
 
+/**
+ * Companion lain milik pemilik yang sama yang alatnya masih bisa dinaikkan
+ * satu tingkat — dipakai perajin yang sedang tidak punya pesanan.
+ *
+ * Papan permintaan tetap jalan seperti biasa; ini cuma menutup celahnya.
+ * Permintaan alat baru dipasang kalau petani/penambang KEBETULAN sedang
+ * memeriksa alatnya, punya jeda sepuluh detik, dan hangus sesudah dua puluh
+ * menit — jadi perajin sering berdiri menganggur di samping meja kerjanya
+ * sementara petani di seberang halaman masih menggaruk tanah dengan tangan.
+ */
+function nextToolOrder(entity, ownerId) {
+  for (const other of allCompanions(FAMILY)) {
+    if (!alive(other) || other.id === entity.id) continue;
+    if (getOwnerId(other) !== ownerId) continue;
+    const kind = TOOL_FOR_MODE[getMode(other)];
+    if (!kind) continue;
+    const rank = toolRank(getGear(other).mainhand, kind);
+    if (!nextTierFor(rank)) continue;          // sudah tingkat tertinggi
+    const station = readState(other).station;
+    if (!station) continue;                    // petinya belum ada, nanti saja
+
+    // Sudah ada alat yang menunggu diambil di petinya? Jangan menempa lagi.
+    // Tanpa penjagaan ini perajin menumpuk cangkul demi cangkul di peti yang
+    // sama selama pemiliknya belum sempat mengambil satu pun.
+    const box = containerAt(other.dimension, station);
+    if (box && TOOL_TIERS.some((t) => t.rank > rank && countIn(box, toolId(t.key, kind)) > 0)) {
+      logDebug(TAG, `${displayName(other)} sudah punya ${kind} menunggu di petinya; tidak ditempa lagi.`);
+      continue;
+    }
+    logDebug(TAG, `${displayName(other)} masih di tingkat ${rank} untuk ${kind}; dibuatkan tanpa diminta.`);
+    return {
+      id: `auto-${other.id}-${kind}`, type: "tool", kind,
+      neededRank: rank + 1, stationPos: station, fromName: displayName(other),
+    };
+  }
+  return undefined;
+}
+
+/**
+ * Yang dikerjakan perajin saat papan pesanan kosong.
+ *
+ * Urutannya sengaja begini: membakar dulu apa yang menumpuk (tanpa tungku,
+ * bijih besi berhenti jadi raw_iron dan tidak ada satu pun companion yang
+ * pernah naik ke alat besi), lalu menempa alat untuk companion lain, dan
+ * TERAKHIR menyiapkan tungku untuk nanti.
+ *
+ * Tungku sengaja paling belakang: kalau dipasang paling depan, perajin yang
+ * kebetulan tidak punya batu akan berdiri menunggu batu selamanya sambil
+ * membiarkan petani di seberang halaman menggaruk tanah dengan tangan.
+ */
+function idleWork(entity, state, container, ownerId, station) {
+  const near = state.station ?? entity.location;
+  const drop = station.chest ?? state.station;
+
+  // 1. Membakar. Tungkunya ikut dipasang di dalam smeltStep kalau belum ada.
+  const oven = pickSmelt(container);
+  if (oven) {
+    const burn = smeltStep(entity, state, container, near);
+    if (burn.status === "walking") return `menuju tungku untuk melebur ${oven.label}`;
+    if (burn.status === "smelting") return `melebur ${oven.label} di tungku`;
+    if (burn.status === "done") {
+      report(entity, `Satu ${oven.label} sudah jadi di tungku.`);
+      return `${oven.label} selesai dilebur`;
+    }
+    if (burn.status === "no-furnace" || burn.status === "no-fuel") {
+      const need = burn.status === "no-fuel" ? "coal" : (burn.missing ?? "stone");
+      const own = ensureMaterial(entity, state, ownerId, need, drop, container, { search: true });
+      if (own) return own;
+      // Ada pencari barang yang akan mengantarnya: jangan berdiri menunggu,
+      // masih ada alat yang bisa ditempa sementara menunggu kirimannya.
+    }
+  }
+
+  // 2. Menempa alat untuk companion lain, tanpa menunggu diminta.
+  const order = nextToolOrder(entity, ownerId);
+  if (order) return serveTool(entity, state, container, order, ownerId, station);
+
+  // 3. Benar-benar tidak ada pekerjaan: siapkan tungku untuk nanti.
+  const now = system.currentTick;
+  if (now - (state.furnaceTry ?? -FURNACE_RETRY) < FURNACE_RETRY) return undefined;
+  state.furnaceTry = now;
+  const furnace = ensureFurnace(entity, container, {
+    x: Math.floor(near.x), y: Math.floor(near.y), z: Math.floor(near.z),
+  });
+  if (furnace.at) return undefined;
+  if (furnace.why === "no-material") {
+    const own = ensureMaterial(entity, state, ownerId, furnace.missing ?? "stone",
+                               drop, container, { search: true });
+    return own ?? `menunggu ${furnace.missing ?? "batu"} untuk tungku`;
+  }
+  logDebug(TAG, `Tungku belum bisa dipasang (${furnace.why}); dicoba lagi nanti.`);
+  return undefined;
+}
+
 export function tickCrafter(entity, state, owner) {
   logDebug(TAG, `tickCrafter untuk ${entStr(entity)}`);
   if (!alive(entity)) return "hilang";
@@ -200,6 +308,11 @@ export function tickCrafter(entity, state, owner) {
 
   const pending = craftRequests(ownerId);
   if (!pending.length) {
+    const spare = idleWork(entity, state, container, ownerId, station);
+    // Ditulis walau tidak ada yang dikerjakan: idleWork mencatat kapan tungku
+    // terakhir dicoba, dan catatan itulah yang menahan sapuan blok berikutnya.
+    writeState(entity, state);
+    if (spare) return spare;
     logDebug(TAG, "Tidak ada pesanan; perajin berjaga di dekat meja kerjanya.");
     const spot = { x: table.at.x + 1.5, y: table.at.y, z: table.at.z + 0.5 };
     if (dist2(entity.location, spot) > 9) steer(entity, spot, 0.28);

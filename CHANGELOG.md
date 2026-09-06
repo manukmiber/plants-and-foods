@@ -90,6 +90,76 @@ bacaan menjadi alat**.
 - Hasilnya di simulasi, 300 denyut berdiri di hutan rapat: **25 kayu menjadi 275**.
   Ujinya ada di `tools/sim/sim.mjs` dan gagal pada kode lama.
 
+**Peta Patok: mematok chunk dari buku, tanpa item dan tanpa berjalan ke sana:**
+
+- Keluhannya: *"patok ladang belum jalan sempurna, sulit sekali mencari
+  patoknya"*. Memang: patok itu ITEM berbentuk sebatang stik yang harus dibawa
+  dan diklikkan ke tanah chunk yang dituju — gampang terselip di antara isi
+  kantong, dan chunk yang mau dipatok sering ada di seberang lembah.
+- Halaman baru **Buku Panduan » Peta Patok** menggambar **8×8 chunk** di
+  sekitar pemain (128×128 blok) sekaligus, lengkap dengan statusnya: kosong,
+  dipatok belum digarap, sudah jadi ladang, lahan desa, punya pemain lain, dan
+  petak tempat pemain berdiri sekarang. Pilih barisnya, tunjuk petaknya —
+  patok terpasang atau tercabut di tempat.
+- Satu ketukan untuk **mematok chunk tempat kamu berdiri**, dan satu tombol
+  untuk berganti antara **Patok Ladang** dan **Patok Desa** tanpa menukar item.
+  Item patoknya tetap ada dan tetap bekerja seperti dulu — ini jalan masuk
+  kedua, bukan penggantinya.
+- Di bawah peta ada **arah dan jarak ke patok terdekatmu** (mis. *"36 blok ke
+  timur laut, chunk (1, -2)"*), dihitung dengan kompas Minecraft yang benar
+  (utara = −Z). Itu jawaban langsung untuk "patokku yang kemarin di mana".
+- **Penanda chunk yang hilang dipasang ulang sendiri.** Penanda patok itu
+  entity, dan entity hilang bersama chunk yang tidak dimuat — jadi sesudah
+  dunia ditutup dan dibuka lagi, patok yang kemarin terlihat jelas bisa tidak
+  ada penandanya sama sekali. Sekarang selama pemain berdiri cukup dekat,
+  penandanya dipasang ulang (percobaannya dijeda supaya chunk yang memang belum
+  dimuat tidak dicoba tiap denyut).
+- **Patok pemain lain tidak bisa dicabut lagi**, lewat peta maupun lewat item.
+  Sebelum ini siapa pun di server bisa mencabut ladang pemain lain hanya dengan
+  sebatang stik.
+
+**Satu bengkel dipakai bersama, dan tungku yang membuka alat besi:**
+
+- Peti stasiun sudah dipakai bersama sejak v1.4.0, **meja kerja belum**. Dua
+  companion yang stasiunnya berjauhan dua puluh blok saja masing-masing
+  membelah empat papan untuk meja kerja sendiri — halaman penuh meja kerja,
+  sementara alat yang jadi tidak bertambah.
+- Modul baru `workshop.js` **mendaftarkan setiap meja kerja dan tungku** yang
+  dipasang companion ke tingkat dunia, persis seperti peti stasiun. Yang sudah
+  ada milik pemilik yang sama dalam **radius 32 blok** akan dipakai bersama.
+  Meja kerja **buatan pemain** juga ikut terpakai: begitu ketemu sekali lewat
+  sapuan blok, tempatnya ikut didaftarkan supaya tidak ada yang menyapu dua
+  kali. Yang bekerja di seberang bukit tetap punya bengkelnya sendiri.
+- **Tungku, dan alat besi yang akhirnya bisa dicapai.** Selama ini tidak ada
+  satu pun companion yang pernah memegang alat besi, berapa pun banyak bijih
+  yang digali. Sebabnya sepele dan tersembunyi: penambang menggali `iron_ore`,
+  yang jatuh `raw_iron`, dan `TOOL_TIERS` tingkat besi cuma menerima
+  `iron_ingot`. Bijihnya menumpuk di peti sampai dunia ditutup.
+- Modul baru `smelting.js` menutup mata rantai itu: bijih mentah jadi batangan,
+  daging dan ikan jadi masakan, dan batang pohon jadi **arang** — yang terakhir
+  hanya kalau memang tidak ada batu bara sama sekali dan kayunya berlebih.
+  Bahan bakarnya dipilih dari yang paling boleh dibakar: arang dan batu bara
+  dulu, kayu paling akhir. Kentang dan wortel sengaja TIDAK ikut dibakar
+  walaupun bisa — petani memakainya sebagai bibit.
+- Perajin yang mejanya sudah berdiri **memasang tungku sendiri** dari delapan
+  batu bulat tanpa perlu diminta, lalu membakar apa pun yang menumpuk. Companion
+  yang bekerja sendirian juga memakainya: kalau yang ditunggu besi dan di
+  petinya sudah ada bijih mentah, dia membakarnya alih-alih berkeliling mencari
+  bijih baru yang ujungnya sama-sama tidak terpakai.
+- **Perajin menempa untuk yang lain tanpa diminta.** Papan permintaan punya
+  celah: permintaan alat baru dipasang kalau petani/penambang kebetulan sedang
+  memeriksa alatnya, punya jeda sepuluh detik, dan hangus sesudah dua puluh
+  menit — jadi perajin sering menganggur di samping mejanya sementara petani di
+  seberang halaman masih menggaruk tanah dengan tangan. Sekarang perajin yang
+  papan pesanannya kosong memeriksa sendiri siapa yang alatnya bisa naik satu
+  tingkat, membuatkannya, dan mengantarnya. Urutan kayu → batu → besi tetap
+  berlaku, dan alat yang sudah menunggu di peti tidak ditempa dua kali.
+- Urutan kerja perajin yang menganggur disusun supaya tidak pernah mentok:
+  membakar dulu, lalu menempa alat untuk yang lain, dan tungku untuk persiapan
+  paling belakang. Versi pertama memasang tungku paling depan, dan perajin yang
+  kebetulan tidak punya batu berdiri menunggu batu selamanya sambil membiarkan
+  petani bekerja bertangan kosong.
+
 **Companion bertanya, pemain menjawab (`ask.js`):**
 
 - **Petani** yang petinya kehabisan bibit bertanya: *"Apakah aku mencari bibit

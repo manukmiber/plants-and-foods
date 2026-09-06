@@ -126,6 +126,7 @@ export const PROP = {
   requests: "vbs:requests",
   villageHomes: "vbs:village_homes",
   stations: "vbs:stations",
+  workshops: "vbs:workshops",
   settings: "vbs:settings",
   village: "vbs:village_offer",
 };
@@ -337,6 +338,15 @@ export const ITEM_RECIPES = {
             { any: ["minecraft:coal", "minecraft:charcoal"], count: 1 }],
     ask: "coal",
   },
+  // Tanpa tungku, bijih besi yang digali penambang berhenti sebagai
+  // "raw_iron" dan tingkat alat besi TIDAK PERNAH bisa dicapai — TOOL_TIERS
+  // besi cuma menerima iron_ingot. Tungku itu mata rantai yang hilang, bukan
+  // hiasan halaman.
+  furnace: {
+    id: "minecraft:furnace", label: "Tungku", makes: 1, needsTable: true,
+    needs: [{ any: "cobble", count: 8 }],
+    ask: "stone",
+  },
 };
 
 // Bahan mentah yang boleh diminta ke pencari barang (looter). Nilainya adalah
@@ -456,6 +466,10 @@ export const TICKS = {
 // Diambil dari tier pertama TOOL_TIERS supaya tidak ada dua daftar yang bisa
 // berbeda isi.
 export const PLANKS = TOOL_TIERS[0].accepts;
+
+// Batu bulat dan sebangsanya, dari tier kedua — bahan tungku. Alasannya
+// sama: satu daftar saja supaya tidak ada dua yang bisa berbeda isi.
+export const COBBLE = TOOL_TIERS[1].accepts;
 
 // Rasa kantuk terpisah dari energi. Energi habis karena BEKERJA; kantuk naik
 // karena WAKTU berjalan dan memuncak di malam hari. Companion yang mengantuk

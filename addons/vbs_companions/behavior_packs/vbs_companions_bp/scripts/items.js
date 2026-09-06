@@ -8,7 +8,7 @@
  * pencari barang.
  */
 
-import { ITEM_RECIPES, LOGS, MATERIAL_REQUESTS, PLANKS } from "./config.js";
+import { COBBLE, ITEM_RECIPES, LOGS, MATERIAL_REQUESTS, PLANKS } from "./config.js";
 import { countIn, makeItem, putIn, takeFrom } from "./util.js";
 import { entStr, logDebug, logInfo, logWarn } from "./logger.js";
 
@@ -19,6 +19,7 @@ const STICK = "minecraft:stick";
 export function idsOf(any) {
   if (any === "planks") return PLANKS;
   if (any === "logs") return LOGS;
+  if (any === "cobble") return COBBLE;
   return Array.isArray(any) ? any : [any];
 }
 

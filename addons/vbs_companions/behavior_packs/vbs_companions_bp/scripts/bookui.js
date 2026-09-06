@@ -23,6 +23,9 @@ import { FAMILY, MINE_TARGETS, MODES } from "./config.js";
 import { getActivity } from "./activity.js";
 import { answerAsk, askOf, pendingAsks } from "./ask.js";
 import { BLUEPRINTS } from "./builder.js";
+import {
+  chunkMap, ensureStake, ensureVillageStake, nearestClaimHint, toggleClaimAt,
+} from "./claim.js";
 import { betaLines } from "./beta.js";
 import { energyOf, isResting, isSleeping, needsLabel, sleepOf } from "./energy.js";
 import { bagCount } from "./bag.js";
@@ -77,6 +80,7 @@ export async function openBook(player) {
     ].join("\n"))
     .button("§aCara Pakai\n§8Dari menjinakkan sampai membangun kampung", "textures/items/book_normal")
     .button(`§bKendalikan Companion\n§8${mine.length} companion milikmu`, "textures/items/name_tag")
+    .button("§2Peta Patok\n§8Petak ladang & desa di sekitarmu, tinggal ditunjuk", "textures/items/map_filled")
     .button(asks.length
       ? `§6Pertanyaan Companion §c(${asks.length})\n§8Ada yang menunggu jawabanmu`
       : "§6Pertanyaan Companion\n§8Tidak ada yang menunggu jawaban", "textures/items/wheat")
@@ -89,11 +93,158 @@ export async function openBook(player) {
   switch (res.selection) {
     case 0: await openHowTo(player); break;
     case 1: await openControl(player); break;
-    case 2: await openAsks(player); break;
-    case 3: await openPrefs(player); break;
-    case 4: await openStatus(player); break;
+    case 2: await openStakeMap(player); break;
+    case 3: await openAsks(player); break;
+    case 4: await openPrefs(player); break;
+    case 5: await openStatus(player); break;
     default: break;
   }
+}
+
+/* ------------------------------------------------------------------ *
+ * 1b. Peta Patok
+ *
+ * Patok ladang berbentuk ITEM yang harus dibawa dan diklikkan ke tanah chunk
+ * yang dituju. Dua hal membuatnya menyusahkan: itemnya terselip di antara isi
+ * kantong (bentuknya cuma sebatang stik), dan chunk yang mau dipatok sering
+ * ada di seberang lembah — memasang satu patok jadi perjalanan tersendiri.
+ *
+ * Halaman ini menggantikan keduanya. Seluruh petak di sekitar tergambar
+ * sekaligus lengkap dengan statusnya, dan tinggal ditunjuk: pilih barisnya,
+ * pilih petaknya. Item patoknya tetap ada dan tetap bekerja seperti dulu —
+ * ini jalan masuk kedua, bukan penggantinya.
+ * ------------------------------------------------------------------ */
+
+const MAP_SIZE = 8;
+
+const STAKE_KINDS = {
+  farm: {
+    label: "Patok Ladang", short: "ladang", color: "§c",
+    give: ensureStake, icon: "textures/items/wheat",
+    hint: "§7Suruh companionmu ke Mode Bertani, dia yang akan menggarapnya.",
+  },
+  village: {
+    label: "Patok Desa", short: "desa", color: "§2",
+    give: ensureVillageStake, icon: "textures/items/bed_red",
+    hint: "§7Suruh Pembangun ke Mode Membangun, dia yang akan membuat rumahnya.",
+  },
+};
+
+/**
+ * Satu petak selalu DUA huruf supaya barisnya tetap lurus. Yang membedakan
+ * bukan bentuknya melainkan warnanya, dan huruf X menandai petak tempat pemain
+ * berdiri sekarang — tanpa itu peta 8x8 tidak ada titik acuannya.
+ */
+function cellGlyph(cell) {
+  const mark = cell.here ? "XX" : "##";
+  if (!cell.kind) return cell.here ? "§eXX" : "§8--";
+  if (!cell.mine) return `§8${mark}`;
+  if (cell.kind === "village") return `§2${mark}`;
+  return (cell.worked ? "§a" : "§c") + mark;
+}
+
+function cellStatus(cell) {
+  if (!cell.kind) return "§8belum dipatok";
+  if (!cell.mine) return `§8dipatok ${cell.byName ?? "pemain lain"}`;
+  if (cell.kind === "village") return "§2lahan desa";
+  return cell.worked ? "§asudah jadi ladang" : "§cdipatok, belum digarap";
+}
+
+function mapBody(player, map, kind) {
+  const spec = STAKE_KINDS[kind];
+  const hint = nearestClaimHint(player, kind);
+  return [
+    `§7Peta §f${MAP_SIZE}x${MAP_SIZE} chunk§7 di sekitarmu — ${MAP_SIZE * 16}x${MAP_SIZE * 16} blok.`,
+    "§8Baris atas = utara, bawah = selatan. Kiri = barat, kanan = timur.",
+    "",
+    `§8x §7${map.cx0} §8.. §7${map.cx0 + MAP_SIZE - 1}`,
+    ...map.rows.map((row, i) =>
+      `§8z §7${String(map.cz0 + i).padStart(4)}  ${row.map(cellGlyph).join(" ")}`),
+    "",
+    "§c## §7dipatok, belum digarap    §a## §7sudah jadi ladang",
+    "§2## §7lahan desa    §8## §7punya pemain lain    §8-- §7kosong",
+    "§eXX §7petak tempat kamu berdiri sekarang",
+    "",
+    hint
+      ? `§ePatok ${spec.short} terdekatmu: §f${hint.dist} blok §7ke §f${hint.dir}§7, chunk (${hint.cx}, ${hint.cz}).`
+      : `§8Kamu belum punya satu pun patok ${spec.short}.`,
+    "",
+    `§7Sedang memasang: ${spec.color}${spec.label}§7. Pilih satu baris, lalu tunjuk`,
+    "§7petaknya untuk memasang atau mencabut. Tidak perlu memegang item apa pun.",
+  ].join("\n");
+}
+
+async function openStakeMap(player, kind = "farm") {
+  const spec = STAKE_KINDS[kind] ? kind : "farm";
+  const info = STAKE_KINDS[spec];
+  const map = chunkMap(player, MAP_SIZE);
+  const here = map.rows.flat().find((c) => c.here);
+  const other = spec === "farm" ? "village" : "farm";
+
+  const form = new ActionFormData()
+    .title(`§l§2Peta Patok — ${info.label}`)
+    .body(mapBody(player, map, spec));
+  for (const [i, row] of map.rows.entries()) {
+    form.button(`§fBaris z = ${map.cz0 + i}\n${row.map(cellGlyph).join(" ")}`);
+  }
+  form.button(here?.kind && here.mine
+    ? `§eCabut patok tempat aku berdiri\n§8chunk (${here.cx}, ${here.cz})`
+    : `§aPatok chunk tempat aku berdiri\n§8chunk (${here?.cx ?? "?"}, ${here?.cz ?? "?"})`, info.icon);
+  form.button(`§7Ganti ke ${STAKE_KINDS[other].label}\n§8Peta yang sama, jenis patok yang lain`);
+  form.button(`§8Beri Aku ${info.label}\n§8Cara lama: klik tanah dengan itemnya`, "textures/items/stick");
+  form.button("§8« Kembali");
+
+  const res = await forceShow(player, form);
+  if (!res || res.canceled || res.selection === undefined) return;
+  const pick = res.selection;
+  if (pick < MAP_SIZE) {
+    await openStakeRow(player, spec, pick);
+    return;
+  }
+  if (pick === MAP_SIZE) {
+    if (here) player.sendMessage(toggleClaimAt(player, here.cx, here.cz, spec, player.location));
+    await openStakeMap(player, spec);
+    return;
+  }
+  if (pick === MAP_SIZE + 1) {
+    await openStakeMap(player, other);
+    return;
+  }
+  if (pick === MAP_SIZE + 2) {
+    if (!info.give(player)) player.sendMessage(`§7${info.label} sudah ada di kantongmu.`);
+    await openStakeMap(player, spec);
+    return;
+  }
+  await openBook(player);
+}
+
+async function openStakeRow(player, kind, rowIndex) {
+  const info = STAKE_KINDS[kind];
+  const map = chunkMap(player, MAP_SIZE);
+  const row = map.rows[rowIndex] ?? [];
+  const form = new ActionFormData()
+    .title(`§l§2Baris z = ${map.cz0 + rowIndex}`)
+    .body([
+      `§7Petak dari barat ke timur, §fz = ${map.cz0 + rowIndex}§7.`,
+      "",
+      `§8    ${row.map(cellGlyph).join(" ")}`,
+      "",
+      `§7Menunjuk satu petak akan memasang atau mencabut ${info.color}${info.label}§7.`,
+      info.hint,
+    ].join("\n"));
+  for (const cell of row) {
+    form.button(`§f(${cell.cx}, ${cell.cz})  ${cellGlyph(cell)}\n§8${cell.dist} blok — ${cellStatus(cell)}`);
+  }
+  form.button("§8« Kembali ke peta");
+
+  const res = await forceShow(player, form);
+  if (!res || res.canceled || res.selection === undefined) return;
+  if (res.selection < row.length) {
+    const cell = row[res.selection];
+    logInfo(TAG, `${player.name} menunjuk chunk (${cell.cx}, ${cell.cz}) dari Peta Patok.`);
+    player.sendMessage(toggleClaimAt(player, cell.cx, cell.cz, kind, player.location));
+  }
+  await openStakeMap(player, kind);
 }
 
 /* ------------------------------------------------------------------ *

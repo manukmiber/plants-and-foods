@@ -13,16 +13,16 @@
 import { system } from "@minecraft/server";
 import { ITEM_RECIPES, LOGS, PLANKS, POSE, TOOL_TIERS } from "./config.js";
 import { hold } from "./hold.js";
-import { canMake, spendFor, takeOrMake } from "./items.js";
+import { canMake, spendFor } from "./items.js";
+import { ensureWorkBlock, workBlockStillThere } from "./workshop.js";
 import {
-  alive, blockAt, countIn, dist2, isAir, isSolid, makeItem, particle, putIn,
+  alive, countIn, dist2, makeItem, particle, putIn,
   setGear, sound, steer, takeFrom,
 } from "./util.js";
 import { entStr, logDebug, logError, logInfo, logWarn, posStr } from "./logger.js";
 
 const TAG = "CRAFTING";
 const STICK = "minecraft:stick";
-const TABLE = "minecraft:crafting_table";
 const WORK_TICKS = 46;
 const TABLE_REACH = 3.2;
 
@@ -163,80 +163,20 @@ function consume(container, tier, kind) {
   return taken === recipe.material;
 }
 
-export function findTable(dimension, near, radius = 12) {
-  logDebug(TAG, `Mencari meja kerja di sekitar ${posStr(near)} radius ${radius}...`);
-  for (let r = 1; r <= radius; r++) {
-    for (let dx = -r; dx <= r; dx++) {
-      for (let dz = -r; dz <= r; dz++) {
-        if (Math.max(Math.abs(dx), Math.abs(dz)) !== r) continue;
-        for (let dy = -3; dy <= 3; dy++) {
-          const block = blockAt(dimension, near.x + dx, near.y + dy, near.z + dz);
-          if (block?.typeId === TABLE) {
-            logInfo(TAG, `Meja kerja ditemukan di: ${posStr(block)}`);
-            return { x: block.x, y: block.y, z: block.z };
-          }
-        }
-      }
-    }
-  }
-  logDebug(TAG, "Tidak ada meja kerja di sekitar.");
-  return undefined;
-}
-
-function freeSpotNear(dimension, near, radius = 4) {
-  for (let r = 1; r <= radius; r++) {
-    for (let dx = -r; dx <= r; dx++) {
-      for (let dz = -r; dz <= r; dz++) {
-        if (Math.max(Math.abs(dx), Math.abs(dz)) !== r) continue;
-        const spot = blockAt(dimension, near.x + dx, near.y, near.z + dz);
-        const above = blockAt(dimension, near.x + dx, near.y + 1, near.z + dz);
-        const floor = blockAt(dimension, near.x + dx, near.y - 1, near.z + dz);
-        if (isAir(spot) && isAir(above) && isSolid(floor)) return spot;
-      }
-    }
-  }
-  return undefined;
-}
-
 /**
- * Memasang meja kerja. Sekarang benar-benar butuh barangnya dulu: kalau di
- * peti sudah ada meja kerja jadi, itu yang dipakai; kalau belum, dia dirakit
- * dari empat papan (log ikut dibelah otomatis). Kalau kayunya juga tidak ada,
- * balikannya menyebut bahan yang kurang supaya pemanggil bisa minta tolong.
- */
-export function placeTable(dimension, near, container, entity) {
-  logInfo(TAG, `Mencoba memasang meja kerja baru di dekat ${posStr(near)}...`);
-  const spot = freeSpotNear(dimension, near);
-  if (!spot) {
-    logWarn(TAG, "Tidak ada lokasi kosong yang cocok untuk menaruh meja kerja.");
-    return { missing: undefined, why: "no-space" };
-  }
-  const got = takeOrMake(container, "crafting_table", entity, [TABLE]);
-  if (!got.got) {
-    logWarn(TAG, `Bahan meja kerja kurang: butuh ${got.missing ?? "kayu"}.`);
-    return { missing: got.missing ?? "wood", why: "no-material" };
-  }
-  try {
-    spot.setType(TABLE);
-    logInfo(TAG, `Meja kerja berhasil dipasang di: ${posStr(spot)} (${got.how})`);
-    return { at: { x: spot.x, y: spot.y, z: spot.z } };
-  } catch (e) {
-    logError(TAG, `Gagal setType meja kerja di ${posStr(spot)}`, e);
-    putIn(container, makeItem(TABLE, 1));
-    return { missing: undefined, why: "place-failed" };
-  }
-}
-
-/**
- * Pastikan ada meja kerja yang bisa dipakai — cari dulu, baru pasang kalau
- * tidak ketemu. Dipakai perajin, petani, penambang dan pembangun; siapa pun
- * yang pertama butuh, dia yang membuatkannya.
+ * Pastikan ada meja kerja yang bisa dipakai.
+ *
+ * Pencarian, pendaftaran dan pemasangannya ada di workshop.js supaya SEMUA
+ * companion melihat daftar yang sama: yang sudah berdiri milik pemilik yang
+ * sama akan dipakai bersama, dan kayunya tidak habis untuk meja kedua.
  */
 export function ensureTable(entity, container, near) {
-  const found = findTable(entity.dimension, near);
-  if (found) return { at: found };
-  logInfo(TAG, `${entStr(entity)} tidak menemukan meja kerja, mencoba membuat satu.`);
-  return placeTable(entity.dimension, near, container, entity);
+  return ensureWorkBlock(entity, container, near, "table");
+}
+
+/** Tungku, dengan aturan berbagi yang sama persis. */
+export function ensureFurnace(entity, container, near) {
+  return ensureWorkBlock(entity, container, near, "furnace");
 }
 
 /**
@@ -269,8 +209,7 @@ function walkToTable(entity, table) {
 }
 
 function tableStillThere(entity, table) {
-  const still = blockAt(entity.dimension, table.x, table.y, table.z);
-  return still?.typeId === TABLE;
+  return workBlockStillThere(entity, "table", table);
 }
 
 /**

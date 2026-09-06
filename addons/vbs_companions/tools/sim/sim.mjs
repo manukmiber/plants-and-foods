@@ -22,6 +22,10 @@ import { writeSettings } from "./scripts/state.js";
 import { offerFlower, tickTaming, isTamed, heldFlower } from "./scripts/taming.js";
 import { hasHelper, gatherOwn } from "./scripts/selfhelp.js";
 import { findMaterial, forget as forgetGather } from "./scripts/gather.js";
+import { pickSmelt } from "./scripts/smelting.js";
+import {
+  chunkMap, nearestClaimHint, toggleClaimAt, claimsNear,
+} from "./scripts/claim.js";
 import { askOwner, pendingAsks, answerAsk, answerLatestYesNo } from "./scripts/ask.js";
 import { openBook } from "./scripts/bookui.js";
 import { getActivity, setActivity } from "./scripts/activity.js";
@@ -658,6 +662,210 @@ console.log("\n== Uji kerja sendiri: menebang pohon pakai tangan ==");
     advance(10);
   }
   check(seeds > 0, "membabat rumput benar-benar menghasilkan bibit", `${seeds} bibit`);
+}
+
+/* ---- Uji 9a: Peta Patok — mematok chunk tanpa memegang item patok --------- */
+//
+// Keluhannya: "patok ladang belum jalan sempurna, sulit sekali mencari
+// patoknya". Sebabnya patok itu ITEM berbentuk stik yang harus dibawa dan
+// diklikkan ke tanah chunk yang dituju — terselip di kantong, dan chunk yang
+// mau dipatok sering ada di seberang lembah. Peta Patok di Buku Panduan
+// menggantikan keduanya. Formnya sendiri tidak bisa diuji di luar Minecraft,
+// jadi yang diuji di sini MODELNYA: peta, penunjuk arah, dan pematokannya.
+console.log("\n== Uji Peta Patok: peta 8x8, tunjuk petaknya, patok terpasang ==");
+{
+  const W = makeWorld({ groundY: 64 });
+  __setDimension(W.dimension);
+  const me = makePlayer(W.dimension, { id: "M1", name: "Bagas", at: { x: 8, y: 65, z: 8 } });
+
+  const map = chunkMap(me, 8);
+  const flat = map.rows.flat();
+  check(map.rows.length === 8 && map.rows.every((r) => r.length === 8),
+        "peta benar-benar 8x8 chunk", `${map.rows.length} baris`);
+  const standing = flat.filter((c) => c.here);
+  check(standing.length === 1 && standing[0].cx === 0 && standing[0].cz === 0,
+        "petak tempat pemain berdiri ditandai tepat satu kali",
+        standing.map((c) => `(${c.cx}, ${c.cz})`).join(" "));
+  check(map.rows[0][0].cz < map.rows[7][0].cz,
+        "baris atas lebih ke utara daripada baris bawah",
+        `z ${map.rows[0][0].cz} -> ${map.rows[7][0].cz}`);
+  check(flat.every((c) => !c.mine),
+        "pemain baru belum punya satu petak pun di petanya");
+
+  // Menunjuk satu petak dari peta: tidak memegang item apa pun.
+  const target = map.rows[2][5];
+  toggleClaimAt(me, target.cx, target.cz, "farm", me.location);
+  const after = chunkMap(me, 8).rows[2][5];
+  check(after.kind === "farm" && after.mine,
+        "menunjuk petak dari peta benar-benar memasang patok",
+        `(${after.cx}, ${after.cz}) -> ${after.kind}, milikku=${after.mine}`);
+  check(after.worked === false, "patok baru bertanda merah: belum digarap");
+
+  const hint = nearestClaimHint(me, "farm");
+  check(Boolean(hint) && hint.cx === target.cx && hint.cz === target.cz,
+        "patok terdekat ditunjukkan arah dan jaraknya",
+        hint ? `${hint.dist} blok ke ${hint.dir}` : "tidak ada");
+
+  // Chunk (1, -2) dari (0,0): +x = timur, -z = utara -> timur laut.
+  check(hint?.dir === "timur laut", "arahnya dihitung dengan kompas Minecraft (utara = -Z)",
+        `chunk (${hint?.cx}, ${hint?.cz}) -> ${hint?.dir}`);
+
+  // Menunjuk petak yang sama sekali lagi: patoknya dicabut.
+  toggleClaimAt(me, target.cx, target.cz, "farm", me.location);
+  check(!chunkMap(me, 8).rows[2][5].kind, "menunjuk petak yang sama lagi mencabut patoknya");
+
+  // Patok desa dan patok ladang tetap dua hal yang berbeda.
+  toggleClaimAt(me, 3, 3, "village", me.location);
+  const mixed = toggleClaimAt(me, 3, 3, "farm", me.location);
+  check(mixed.includes("desa"), "patok ladang menolak mencabut lahan desa", mixed);
+  check(claimsNear(W.dimension, me.location, "M1", 8, "village").length === 1,
+        "lahan desa tetap terdaftar sebagai desa");
+
+  // Patok orang lain bukan milikmu.
+  const other = makePlayer(W.dimension, { id: "M2", name: "Tamu", at: { x: 8, y: 65, z: 8 } });
+  toggleClaimAt(me, 2, 2, "farm", me.location);
+  const refused = toggleClaimAt(other, 2, 2, "farm", other.location);
+  check(refused.includes("Bagas"), "patok pemain lain tidak bisa dicabut sembarangan", refused);
+  const mineCell = (p) => chunkMap(p, 8).rows.flat().find((c) => c.cx === 2 && c.cz === 2);
+  check(mineCell(me)?.mine === true, "dan patoknya memang masih berdiri");
+  check(mineCell(other)?.kind === "farm" && mineCell(other)?.mine === false,
+        "di peta pemain lain petak itu tampil sebagai milik orang",
+        `pemiliknya: ${mineCell(other)?.byName}`);
+}
+
+/* ---- Uji 9b: meja kerja & tungku dipakai bersama, alat tanpa diminta ------ */
+//
+// Peti sudah dipakai bersama sejak v1.4.0, meja kerja belum: dua companion yang
+// stasiunnya berjauhan sedikit saja masing-masing membelah empat papan untuk
+// meja kerja sendiri. Dan tanpa tungku, bijih besi berhenti sebagai raw_iron —
+// TOOL_TIERS besi cuma menerima iron_ingot, jadi tingkat alat besi tidak pernah
+// tercapai berapa pun banyak bijih yang digali.
+console.log("\n== Uji bengkel bersama: satu meja kerja, tungku, alat tanpa diminta ==");
+{
+  const countBlocks = (W, id, x0, x1, z0, z1) => {
+    let n = 0;
+    for (let x = x0; x <= x1; x++) {
+      for (let z = z0; z <= z1; z++) {
+        for (let y = 62; y <= 68; y++) {
+          if (W.dimension.getBlock({ x, y, z }).typeId === id) n++;
+        }
+      }
+    }
+    return n;
+  };
+  const chestAt = (W, x, y, z) =>
+    W.dimension.getBlock({ x, y, z }).getComponent("minecraft:inventory").container;
+
+  /* --- Dua perajin sepemilik, satu meja kerja --- */
+  const W = makeWorld({ groundY: 64 });
+  __setDimension(W.dimension);
+  const spots = [{ x: 2, y: 65, z: 2 }, { x: 18, y: 65, z: 18 }];
+  const pair = [];
+  for (const [i, at] of spots.entries()) {
+    const c = makeCompanion(W.dimension, i ? "vbs:flins" : "vbs:an", { x: at.x, y: 65, z: at.z });
+    c.setDynamicProperty("vbs:owner", "W1");
+    c.setDynamicProperty("vbs:mode", "crafter");
+    W.put(at.x, at.y, at.z, "minecraft:chest");
+    patchState(c, { station: at });
+    const box = chestAt(W, at.x, at.y, at.z);
+    box.addItem({ typeId: "minecraft:oak_planks", amount: 64 });
+    box.addItem({ typeId: "minecraft:stick", amount: 64 });
+    pair.push(c);
+  }
+  for (let i = 0; i < 600; i++) {
+    for (const c of pair) {
+      const st = readState(c);
+      tickCrafter(c, st, undefined);
+      writeState(c, st);
+    }
+    advance(10);
+  }
+  const tables = countBlocks(W, "minecraft:crafting_table", -8, 30, -8, 30);
+  check(tables === 1, "dua perajin sepemilik memakai SATU meja kerja bersama",
+        `${tables} meja kerja berdiri`);
+
+  // Tapi berbagi itu punya JARAK: yang bekerja di seberang bukit tetap membuat
+  // mejanya sendiri, bukan berjalan pulang-pergi tujuh puluh blok tiap menempa.
+  const far = makeCompanion(W.dimension, "vbs:kohane", { x: 70, y: 65, z: 70 });
+  far.setDynamicProperty("vbs:owner", "W1");
+  far.setDynamicProperty("vbs:mode", "crafter");
+  W.put(70, 65, 70, "minecraft:chest");
+  patchState(far, { station: { x: 70, y: 65, z: 70 } });
+  const farBox = chestAt(W, 70, 65, 70);
+  farBox.addItem({ typeId: "minecraft:oak_planks", amount: 64 });
+  farBox.addItem({ typeId: "minecraft:stick", amount: 64 });
+  for (let i = 0; i < 400; i++) {
+    const st = readState(far);
+    tickCrafter(far, st, undefined);
+    writeState(far, st);
+    advance(10);
+  }
+  const farTables = countBlocks(W, "minecraft:crafting_table", 60, 80, 60, 80);
+  check(farTables === 1, "yang bekerja jauh tetap punya meja kerja sendiri",
+        `${farTables} meja kerja di sekitarnya`);
+
+  /* --- Tungku: bijih mentah benar-benar jadi batangan --- */
+  const F = makeWorld({ groundY: 64 });
+  __setDimension(F.dimension);
+  const smith = makeCompanion(F.dimension, "vbs:toya", { x: 0, y: 65, z: 0 });
+  smith.setDynamicProperty("vbs:owner", "W2");
+  smith.setDynamicProperty("vbs:mode", "crafter");
+  F.put(2, 65, 2, "minecraft:chest");
+  patchState(smith, { station: { x: 2, y: 65, z: 2 } });
+  const forge = chestAt(F, 2, 65, 2);
+  forge.addItem({ typeId: "minecraft:oak_planks", amount: 32 });
+  forge.addItem({ typeId: "minecraft:stick", amount: 32 });
+  forge.addItem({ typeId: "minecraft:cobblestone", amount: 32 });
+  forge.addItem({ typeId: "minecraft:coal", amount: 8 });
+  forge.addItem({ typeId: "minecraft:raw_iron", amount: 6 });
+  check(Boolean(pickSmelt(forge)), "bijih besi mentah di peti dikenali sebagai bahan tungku");
+
+  for (let i = 0; i < 1200; i++) {
+    const st = readState(smith);
+    tickCrafter(smith, st, undefined);
+    writeState(smith, st);
+    advance(10);
+  }
+  const furnaces = countBlocks(F, "minecraft:furnace", -8, 12, -8, 12);
+  check(furnaces >= 1, "perajin sadar diri memasang tungku tanpa diminta",
+        `${furnaces} tungku berdiri`);
+  const ingots = summarize(forge)["minecraft:iron_ingot"] ?? 0;
+  check(ingots > 0, "besi mentah benar-benar dilebur jadi iron_ingot",
+        `${ingots} batangan, sisa mentah ${summarize(forge)["minecraft:raw_iron"] ?? 0}`);
+
+  /* --- Alat untuk companion lain, tanpa satu pun permintaan dipasang --- */
+  const T = makeWorld({ groundY: 64 });
+  __setDimension(T.dimension);
+  const maker = makeCompanion(T.dimension, "vbs:kohane", { x: 0, y: 65, z: 0 });
+  maker.setDynamicProperty("vbs:owner", "W3");
+  maker.setDynamicProperty("vbs:mode", "crafter");
+  T.put(2, 65, 2, "minecraft:chest");
+  patchState(maker, { station: { x: 2, y: 65, z: 2 } });
+  const shop = chestAt(T, 2, 65, 2);
+  shop.addItem({ typeId: "minecraft:oak_planks", amount: 64 });
+  shop.addItem({ typeId: "minecraft:stick", amount: 64 });
+
+  // Petani ini TIDAK PERNAH di-tick, jadi dia tidak pernah memasang permintaan.
+  const idle = makeCompanion(T.dimension, "vbs:akito", { x: 24, y: 65, z: 24 });
+  idle.setDynamicProperty("vbs:owner", "W3");
+  idle.setDynamicProperty("vbs:mode", "farm");
+  T.put(26, 65, 26, "minecraft:chest");
+  patchState(idle, { station: { x: 26, y: 65, z: 26 } });
+  check(!readRequests("W3").length, "papan permintaan memang kosong sejak awal");
+
+  for (let i = 0; i < 1500; i++) {
+    const st = readState(maker);
+    tickCrafter(maker, st, undefined);
+    writeState(maker, st);
+    advance(10);
+  }
+  const got = summarize(chestAt(T, 26, 65, 26));
+  const hoes = Object.entries(got).filter(([id]) => id.includes("hoe"))
+    .reduce((a, [, n]) => a + n, 0);
+  check(hoes > 0, "perajin menempa cangkul untuk petani TANPA diminta",
+        `isi peti petani: ${JSON.stringify(got)}`);
+  check(!readRequests("W3").some((r) => r.type === "tool"),
+        "dan memang tidak ada permintaan alat yang pernah dipasang");
 }
 
 /* ------- Uji 10b: sasaran kayu yang terdekat, dan tidak berganti-ganti ------ */

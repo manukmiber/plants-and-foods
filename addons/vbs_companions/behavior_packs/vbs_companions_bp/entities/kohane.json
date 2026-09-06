@@ -207,7 +207,7 @@
       },
       "minecraft:tameable": {
         "probability": 1.0,
-        "tame_items": [],
+        "tame_items": "red_flower",
         "tame_event": {
           "event": "vbs:on_tamed",
           "target": "self"

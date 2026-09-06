@@ -20,6 +20,11 @@ export function hold(entity, ticks, { pose = POSE.normal, face = FACE.auto, reas
 
   if (current) {
     current.until = Math.max(current.until, until);
+    // Alasannya ikut diperbarui. Tanpa ini, hold lama yang alasannya
+    // "gather" menutupi hold baru yang alasannya "dig", dan main.js —
+    // yang sengaja MEMBIARKAN denyut kerja jalan untuk alasan "dig" —
+    // ikut menghentikan pekerjaan. Akibatnya pukulan tidak pernah maju.
+    if (reason) current.reason = reason;
     logDebug(TAG, `Memperpanjang hold ${entStr(entity)} (${reason}): sampai tick ${current.until} (+${ticks}t)`);
     if (current.pose !== pose) {
       current.pose = pose;

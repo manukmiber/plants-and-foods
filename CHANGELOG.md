@@ -6,6 +6,104 @@ reconstructed afterwards, which is why the builder refuses to save without one.
 
 ## Unreleased
 
+### VBS Companions v1.7.0
+
+Tujuh keluhan dari sesi bermain langsung, dan satu benang merah: companion
+terlihat **sibuk** tapi tidak ada yang **jadi**. Blok hilang seketika, gudang
+tersebar ke mana-mana, dan petani berdiri di tengah patok tanpa berbuat apa-apa.
+
+**Membongkar blok sekarang butuh waktu (`scripts/dig.js`, baru):**
+
+- Satu pohon tidak lagi lenyap dalam satu denyut. Tiap blok punya jamnya
+  sendiri, memakai rumus Minecraft asli:
+  `detik = kekerasan × (alatnya benar ? 1,5 : 5) ÷ kecepatan alat`.
+  Batang oak dengan tangan kosong tiga detik, dengan kapak kayu satu setengah;
+  batu dengan tangan kosong tujuh setengah detik, dengan beliung kayu satu detik.
+- Satu companion mengerjakan **satu blok** pada satu waktu. Penambang yang dulu
+  menembus enam blok batu tiap setengah detik sekarang mengayun sungguhan, dan
+  kecepatannya benar-benar bergantung pada tingkat beliung yang dipegangnya.
+- Kemajuan ayunan dihitung di denyut kerja, jadi `main.js` sengaja
+  **membiarkan** denyut kerja jalan untuk hold beralasan `"dig"`. Tanpa itu
+  companion mengayun selamanya di depan blok yang sama.
+- Menebang pohon, menggali terowongan, membuka ladang, dan mencari bahan
+  sendiri semuanya lewat jalur yang sama.
+
+**Balai kerja bersama (`scripts/depot.js`, baru):**
+
+- Keluhannya: "Builder butuh kayu, Miner tangan kosong." Rantai bahannya sudah
+  ada, tapi tiap companion memasang petinya di tempat kakinya berhenti — jadi
+  kiriman diantar ke peti yang tidak pernah dilihat siapa-siapa.
+- Sekarang seluruh companion satu pemilik **sepakat pada satu titik**: satu peti
+  gudang, satu meja kerja, satu tungku. Companion pertama yang butuh tempat
+  kerja yang memilihnya, dan titik itu disimpan di tingkat dunia.
+- Balai **tidak pernah** berdiri di dalam chunk berpatok. Kalau pemain mematok
+  chunk yang sudah ada gudangnya, petani menyuruh mereka pindah: peti, seluruh
+  isinya, papan nama, meja kerja dan tungku dibongkar dan dipasang lagi di balai
+  baru. Tidak ada satu barang pun yang hilang.
+- Tuntutannya dilonggarkan bertahap kalau tidak ada titik yang lolos, dan
+  companion yang tidak sampai-sampai ke balai (jurang, lautan) memasang petinya
+  di tempat. Balai itu kesepakatan, bukan penjara.
+- Koordinatnya ada di Buku Panduan » Kendalikan Companion » Perintah untuk
+  Semua, dan ada bab barunya di Cara Pakai.
+
+**Komunikasi antar peran:**
+
+- Pencari barang dan perajin dulu selalu mengerjakan pesanan **paling tua**.
+  Satu permintaan besi yang tidak ada bijihnya di permukaan mengunci mereka
+  selamanya sementara pembangun di sebelahnya kehabisan kayu. Sekarang ada
+  **giliran**: yang bahannya sudah ada didahulukan, sisanya bergantian tiap
+  enam puluh detik, dan yang bahannya benar-benar terlihat di sekitar menang.
+- Keberadaan satu pencari barang di dunia dulu cukup untuk membuat semua orang
+  menunggu selamanya. Sekarang permintaan yang menggantung lebih dari 45 detik
+  membuat pemesannya **mengerjakannya sendiri**.
+- Berkeliling mencari bahan dibatasi 64 blok dari rumah: yang ditemukan seratus
+  blok dari gudang tidak pernah benar-benar sampai ke pemesannya.
+
+**Petani akhirnya bertindak:**
+
+- Ladang tidak lagi digarap satu chunk (256 kolom) sekaligus. Petak inti 7×7 di
+  tengah patok dikerjakan sampai benar-benar jadi ladang, **baru melebar**.
+  Menggarap sudut chunk yang jauh dari mana pun pemain berdiri itulah yang
+  selama ini terlihat seperti "petani tidak bertindak".
+- Petani sekarang menggarap patok **terdekat** dalam jarak jalan kaki, bukan
+  cuma chunk tempat kakinya kebetulan berdiri. Sejak gudang pindah ke balai —
+  yang sengaja di luar patok — petani yang berdiri di depan petinya tidak lagi
+  berdiri di atas ladangnya sendiri, dan seluruh mode bertani jatuh ke jalur
+  "belum ada patok".
+- Pohon di tengah ladang **ditebang, bukan dihindari**, dan batangnya disimpan
+  ke peti — ladang yang dibuka di hutan menghasilkan belasan batang kayu yang
+  selama ini hilang begitu saja sementara pembangun memasang permintaan kayu.
+- Timbunan boleh dari tanah, tanah kasar, rumput, podzol atau tanah berakar —
+  semuanya bisa dicangkul. Dulu cuma `dirt`, dan petani mentok menunggu "tanah
+  timbun" padahal petinya penuh rumput.
+- Pola parit dipatok ke tepi klaim, bukan tepi petak yang sedang digarap, dan
+  petak inti dipaskan ke kolom paritnya. Tanpa keduanya, parit yang kemarin
+  berair berhenti dianggap parit hari ini dan ladangnya rusak sendiri.
+- Petak yang tetap kering sesudah paritnya dua kali diperiksa dilewati saja.
+  Dulu petani berputar antara "gali parit" dan "cangkul" tanpa pernah menanam.
+
+**Daun: tidak bisa dipijak, tidak bisa ditembus, tapi bisa disibakkan:**
+
+- Daun dulu tidak ada di daftar mana pun, jadi `isSolid()` menganggapnya lantai
+  yang sah sementara `isPassable()` menganggapnya dinding. Dua akibatnya persis
+  yang terlihat di dunia: peti, meja kerja, papan nama dan **penanda patok**
+  berdiri melayang di tajuk pohon, dan companion berdiri mendorong daun tanpa
+  pernah sampai ke tujuannya.
+- Sekarang daun punya namanya sendiri (`LEAVES`, `SOFT_PATH`). Tidak bisa
+  dipijak, tidak bisa ditembus — tapi daun yang berdiri persis di jalur langkah
+  **dibabat** (`clearWay`), begitu juga daun yang mengurung badan.
+- `isFooting()` baru: lantai yang benar-benar sanggup menopang peti, meja kerja,
+  tungku, papan nama, obor, hiasan dan penanda patok. Bukan daun, bukan setengah
+  blok, bukan pasir/kerikil yang jatuh. Dipakai station, workshop, builder,
+  claim, decorate, wander dan mining.
+
+**Kinerja:**
+
+- Papan klaim, daftar stasiun dan daftar bengkel di-cache. Sebelumnya JSON yang
+  sama di-parse ratusan kali per detik — pemilihan titik balai saja membacanya
+  sembilan kali per kandidat.
+
+
 ### VBS Companions v1.6.0
 
 Tiga hal: **menjinakkan yang benar-benar bekerja**, companion yang **tidak lagi

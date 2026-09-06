@@ -17,12 +17,14 @@
  * sudah ada (merakit meja kerja, peti, papan nama, alat) tinggal jalan.
  */
 
+import { system } from "@minecraft/server";
+
 import { FAMILY, MATERIAL_REQUESTS } from "./config.js";
 import { findMaterial, harvestBlock, roam } from "./gather.js";
-import { requestMaterial } from "./requests.js";
+import { pendingSince, requestMaterial } from "./requests.js";
 import { smeltableFor, smeltStep } from "./smelting.js";
 import {
-  alive, allCompanions, getMode, getOwnerId, makeItem, putIn,
+  alive, allCompanions, getGear, getMode, getOwnerId, makeItem, putIn,
 } from "./util.js";
 import { entStr, logDebug, logInfo } from "./logger.js";
 
@@ -30,6 +32,15 @@ const TAG = "SELFHELP";
 
 // Mode yang dianggap "ada yang bisa dimintai tolong".
 const HELPER_MODES = new Set(["crafter", "looter"]);
+
+// Sabar ada batasnya. Kalau permintaan bahan sudah menggantung selama ini dan
+// belum juga dilayani, companion berhenti menunggu dan mencarinya sendiri.
+//
+// Inilah yang membuat "pembangun butuh kayu, penambang bertangan kosong"
+// akhirnya bisa keluar dari kebuntuan: dulu keberadaan SATU pencari barang di
+// dunia sudah cukup untuk membuat semua orang menunggu selamanya, walaupun
+// pencari barang itu sedang sibuk di seberang peta dengan pesanan lain.
+const IMPATIENT = 900;    // ~45 detik
 
 /**
  * Adakah companion LAIN milik pemilik yang sama yang bertugas melayani
@@ -63,9 +74,13 @@ function labelOf(kind) {
  */
 export function gatherOwn(entity, state, ownerId, kind, container, { search = false } = {}) {
   if (!container) return undefined;
-  if (hasHelper(ownerId, entity)) {
-    logDebug(TAG, `${entStr(entity)} menunggu bahan ${kind}: ada penolong di dekat sini.`);
+  const waited = system.currentTick - (pendingSince(ownerId, entity, "material", kind) ?? system.currentTick);
+  if (hasHelper(ownerId, entity) && waited < IMPATIENT) {
+    logDebug(TAG, `${entStr(entity)} menunggu bahan ${kind}: ada penolong, baru ${waited} tick menunggu.`);
     return undefined;
+  }
+  if (waited >= IMPATIENT) {
+    logInfo(TAG, `${entStr(entity)} sudah menunggu ${kind} selama ${waited} tick; dikerjakan sendiri saja.`);
   }
 
   // Besi mentah tidak berubah jadi batangan dengan cara digali lebih banyak,
@@ -100,14 +115,17 @@ export function gatherOwn(entity, state, ownerId, kind, container, { search = fa
     // yang selalu berkeliling membuatnya berjalan ke arah acak tiap setengah
     // detik sambil "mencari arang" — terowongannya tidak pernah jadi.
     if (!search) return undefined;
-    roam(entity);
+    roam(entity, state.station);
     return `mencari ${labelOf(want)} sendiri (belum ada perajin/pencari barang)`;
   }
 
   const result = harvestBlock(entity, target, (id, amount) => {
     putIn(container, makeItem(id, amount), entity.dimension, entity.location);
-  });
+  }, getGear(entity).mainhand);
   if (result.walking) return `menuju ${labelOf(want)} untuk diambil sendiri`;
+  if (result.breaking) {
+    return `mengambil ${labelOf(want)} sendiri (${Math.round(result.progress * 100)}%)`;
+  }
   logInfo(TAG, `${entStr(entity)} mengambil ${labelOf(want)} sendiri di ${target.id}.`);
   return `mengambil ${labelOf(want)} sendiri (belum ada perajin/pencari barang)`;
 }

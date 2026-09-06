@@ -21,9 +21,10 @@
 
 import { world } from "@minecraft/server";
 import { PROP } from "./config.js";
+import { depotFor, insideOwnStake, insideStake } from "./depot.js";
 import { takeOrMake } from "./items.js";
 import {
-  blockAt, getOwnerId, isAir, isSolid, makeItem, putIn, sound,
+  blockAt, getOwnerId, isAir, isFooting, makeItem, putIn, sound,
 } from "./util.js";
 import { entStr, logDebug, logError, logInfo, logWarn, posStr } from "./logger.js";
 
@@ -56,20 +57,28 @@ export const WORK_BLOCKS = {
  * Daftar tingkat dunia
  * ------------------------------------------------------------------ */
 
+// Alasan cache-nya sama persis dengan daftar stasiun: dibaca tiap denyut,
+// ditulis sesekali.
+let shopCache;
+
 function readShops() {
+  if (shopCache) return shopCache;
   try {
     const raw = world.getDynamicProperty(PROP.workshops);
     const list = typeof raw === "string" ? JSON.parse(raw) : [];
-    return Array.isArray(list) ? list : [];
+    shopCache = Array.isArray(list) ? list : [];
   } catch (e) {
     logWarn(TAG, "Gagal membaca daftar meja kerja & tungku dunia", e);
-    return [];
+    shopCache = [];
   }
+  return shopCache;
 }
 
 function writeShops(list) {
+  const kept = list.slice(-64);
+  shopCache = kept;
   try {
-    world.setDynamicProperty(PROP.workshops, JSON.stringify(list.slice(-64)));
+    world.setDynamicProperty(PROP.workshops, JSON.stringify(kept));
     return true;
   } catch (e) {
     logError(TAG, "Gagal menyimpan daftar meja kerja & tungku (kuota limit?)", e);
@@ -124,6 +133,22 @@ export function workBlocksOf(kind, ownerId, dimensionId, near, radius = SHARE_RA
   return out;
 }
 
+/** Meja kerja / tungku milik pemilik ini yang berdiri di dalam satu petak. */
+export function workBlocksIn(ownerId, dimensionId, bounds) {
+  return readShops().filter((s) =>
+    s.dim === dimensionId &&
+    (!ownerId || !s.owner || s.owner === ownerId) &&
+    s.x >= bounds.x0 && s.x <= bounds.x1 &&
+    s.z >= bounds.z0 && s.z <= bounds.z1);
+}
+
+/** Ada balai di dimensi ini yang BUKAN di dalam patok untuk pindah ke sana? */
+function canRebuildElsewhere(entity) {
+  const depot = depotFor(entity);
+  return Boolean(depot) && depot.dim === entity.dimension.id &&
+    !insideOwnStake(depot.dim, depot, getOwnerId(entity));
+}
+
 function stillThere(dimension, pos, id) {
   return blockAt(dimension, pos.x, pos.y, pos.z)?.typeId === id;
 }
@@ -163,20 +188,52 @@ export function findWorkBlock(entity, kind, near) {
 
   for (const shop of workBlocksOf(kind, ownerId, dimension.id, near)) {
     const pos = { x: shop.x, y: shop.y, z: shop.z };
-    if (stillThere(dimension, pos, spec.id)) {
-      logDebug(TAG, `${entStr(entity)} memakai ${spec.label} bersama di ${posStr(pos)} (${shop.d.toFixed(1)}m).`);
-      return pos;
+    if (!stillThere(dimension, pos, spec.id)) {
+      unregisterWorkBlock(dimension.id, pos);
+      continue;
     }
-    unregisterWorkBlock(dimension.id, pos);
+    // Bengkel yang sekarang berdiri di dalam chunk berpatok harus pindah.
+    // Dibongkar di sini juga, supaya batu/kayunya kembali ke peti alih-alih
+    // hangus di tengah ladang orang.
+    // Dibongkar HANYA kalau ada tempat lain untuk berdiri: bengkel yang
+    // dibongkar tanpa pengganti sama saja dengan menghentikan seluruh kru.
+    if (insideOwnStake(dimension.id, pos, ownerId) && canRebuildElsewhere(entity)) {
+      logInfo(TAG, `${spec.label} di ${posStr(pos)} kena patok; dibongkar dan dipindahkan.`);
+      evictWorkBlock(entity, kind, pos);
+      continue;
+    }
+    logDebug(TAG, `${entStr(entity)} memakai ${spec.label} bersama di ${posStr(pos)} (${shop.d.toFixed(1)}m).`);
+    return pos;
   }
 
   const found = scanFor(dimension, near, spec.id);
-  if (found) {
+  if (found && !insideStake(dimension.id, found)) {
     logInfo(TAG, `${spec.label} tak terdaftar ditemukan di ${posStr(found)}; ikut didaftarkan.`);
     registerWorkBlock(kind, dimension.id, found, "");
     return found;
   }
   return undefined;
+}
+
+/**
+ * Membongkar satu blok kerja dan mengembalikan barangnya ke peti pembongkar.
+ * Dipakai kalau meja kerja atau tungku ternyata berdiri di dalam ladang.
+ */
+export function evictWorkBlock(entity, kind, pos, container) {
+  const spec = WORK_BLOCKS[kind];
+  const dimension = entity.dimension;
+  const block = blockAt(dimension, pos.x, pos.y, pos.z);
+  try {
+    if (block && spec && block.typeId === spec.id) {
+      block.setType("minecraft:air");
+      if (container) putIn(container, makeItem(spec.id, 1));
+      else dimension.spawnItem(makeItem(spec.id, 1), { x: pos.x + 0.5, y: pos.y + 1, z: pos.z + 0.5 });
+    }
+  } catch (e) {
+    logWarn(TAG, `Gagal membongkar ${spec?.label ?? kind} di ${posStr(pos)}`, e);
+  }
+  unregisterWorkBlock(dimension.id, pos);
+  return true;
 }
 
 function freeSpotNear(dimension, near, radius = 4) {
@@ -187,7 +244,8 @@ function freeSpotNear(dimension, near, radius = 4) {
         const spot = blockAt(dimension, near.x + dx, near.y, near.z + dz);
         const above = blockAt(dimension, near.x + dx, near.y + 1, near.z + dz);
         const floor = blockAt(dimension, near.x + dx, near.y - 1, near.z + dz);
-        if (isAir(spot) && isAir(above) && isSolid(floor)) return spot;
+        // isFooting: meja kerja di atas daun itu meja kerja melayang.
+        if (isAir(spot) && isAir(above) && isFooting(floor)) return spot;
       }
     }
   }
@@ -210,6 +268,14 @@ export function placeWorkBlock(entity, container, near, kind) {
   if (!spot) {
     logWarn(TAG, `Tidak ada lokasi kosong untuk ${spec.label} di dekat ${posStr(near)}.`);
     return { missing: undefined, why: "no-space" };
+  }
+  // Patok PEMILIKNYA SENDIRI yang dihormati di sini, dan cuma kalau memang
+  // ada alternatifnya. Patok pemain lain cukup dihindari saat memilih titik
+  // balai; menolak memasang meja kerja di samping peti sendiri karena
+  // tetangga memasang patok cuma membuat companion berhenti bekerja.
+  if (insideOwnStake(dimension.id, spot, getOwnerId(entity)) && canRebuildElsewhere(entity)) {
+    logWarn(TAG, `${spec.label} tidak dipasang di ${posStr(spot)}: itu di dalam chunk berpatok.`);
+    return { missing: undefined, why: "staked" };
   }
   const got = takeOrMake(container, spec.recipe, entity, [spec.id]);
   if (!got.got) {
@@ -235,6 +301,15 @@ export function placeWorkBlock(entity, container, near, kind) {
  * pasang kalau memang belum ada satu pun.
  */
 export function ensureWorkBlock(entity, container, near, kind) {
+  // Titik acuannya PETI yang benar-benar dipakai companion ini, bukan balai.
+  //
+  // Kelihatannya berlawanan dengan gagasan balai bersama, padahal justru itu
+  // yang membuatnya bekerja: peti sendiri sudah diarahkan ke balai
+  // (station.js), jadi dalam permainan biasa semua peti — dan karena itu semua
+  // meja kerja — memang berkumpul di satu halaman. Sementara companion yang
+  // petinya memang di tempat lain (peti buatan pemain, peti tambang di
+  // kedalaman) tetap punya meja kerjanya sendiri alih-alih berjalan tujuh
+  // puluh blok pulang-pergi tiap kali menempa satu cangkul.
   const found = findWorkBlock(entity, kind, near);
   if (found) return { at: found, shared: true };
   logInfo(TAG, `${entStr(entity)} tidak menemukan ${WORK_BLOCKS[kind]?.label ?? kind}, mencoba membuat satu.`);

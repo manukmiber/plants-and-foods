@@ -249,6 +249,10 @@ Companion memakai peti stasiun **miliknya sendiri** — atau peti stasiun compan
 lain milik pemilik yang sama. Peti pemain yang kebetulan ada di dekat situ tidak
 pernah diserobot, jadi hasil kerjanya tidak akan tercampur ke petimu.
 
+Petinya berdiri di **balai kerja bersama** (lihat babnya di bawah), bukan di
+tempat kakinya kebetulan berhenti — itulah yang membuat kiriman antar companion
+benar-benar sampai.
+
 Peti dan papan namanya **tidak muncul dari udara**: peti butuh **delapan papan**,
 papan nama butuh **enam papan dan satu stik**. Selama bahannya belum ada,
 companion tetap bekerja memakai **kantong pribadinya** — bentuknya sama persis
@@ -507,6 +511,55 @@ Dua contoh ikut di dalam folder itu: **Menara Pengawas** (bentuk `layers`) dan
 konversi schematic).
 
 ---
+
+## Balai kerja bersama
+
+Seluruh companion milik satu pemain sepakat memakai **satu halaman kerja**: satu
+peti gudang, satu meja kerja, satu tungku. Companion pertama yang butuh tempat
+kerja yang memilih titiknya, lalu titik itu disimpan di tingkat dunia dan dipakai
+semua orang.
+
+Itu bukan kerapian belaka — itu yang membuat rantai bahannya benar-benar
+tersambung. Sebelum ada balai, tiap companion memasang petinya di tempat kakinya
+kebetulan berhenti, jadi pencari barang mengantar kayu ke peti yang tidak pernah
+dilihat pembangun, dan yang terlihat pemain adalah semua orang sibuk tanpa satu
+pun pekerjaan yang selesai.
+
+Dua aturannya:
+
+- **Balai tidak pernah berdiri di dalam chunk berpatok.** Ladang milik petani,
+  lahan desa milik pembangun.
+- **Kalau kamu mematok chunk yang sudah ada gudangnya, petani menyuruh mereka
+  pindah.** Peti, seluruh isinya, papan nama, meja kerja dan tungku dibongkar dan
+  dipasang lagi di balai yang baru. Tidak ada satu barang pun yang hilang.
+
+Kalau tidak ada titik yang lolos syaratnya, syaratnya dilonggarkan bertahap; dan
+companion yang memang tidak bisa mencapai balainya (jurang, lautan, tambang di
+kedalaman) memasang petinya di tempat. Balai itu kesepakatan, bukan penjara.
+
+Koordinatnya ada di **Buku Panduan » Kendalikan Companion » Perintah untuk
+Semua**.
+
+## Membongkar blok butuh waktu
+
+Tidak ada blok yang hilang seketika. Tiap blok punya jamnya sendiri, memakai
+rumus Minecraft asli:
+
+```
+detik = kekerasan × (alatnya benar ? 1,5 : 5) ÷ kecepatan alat
+```
+
+| Blok | Tangan kosong | Alat kayu | Alat besi |
+|---|---|---|---|
+| Batang oak | 3,0 dtk | 1,5 dtk (kapak) | 0,5 dtk |
+| Batu | 7,5 dtk | 1,1 dtk (beliung) | 0,4 dtk |
+| Tanah | 0,75 dtk | 0,4 dtk (sekop) | 0,1 dtk |
+| Daun | 0,3 dtk | — | — |
+
+Satu companion mengerjakan **satu blok** pada satu waktu. Pohon ditebang sebatang
+demi sebatang dari bawah ke atas, terowongan tumbuh satu sel per ayunan, dan
+seberapa cepat semuanya berjalan benar-benar bergantung pada tingkat alat yang
+sedang dipegang — jadi menaikkan tingkat alat companion terasa hasilnya.
 
 ## Dua role bantuan: Merajin dan Mencari Barang
 

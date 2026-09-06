@@ -13,15 +13,16 @@
  *    selalu masuk ke peti mereka sendiri, bukan ke peti pemain.
  */
 
-import { world } from "@minecraft/server";
-import { CHEST_IDS, MODES, PROP, SIGN_IDS } from "./config.js";
+import { system, world } from "@minecraft/server";
+import { CHEST_IDS, DEPOT, MODES, PROP, SIGN_IDS } from "./config.js";
 import { bagContainer, emptyBagInto } from "./bag.js";
+import { depotFor, insideOwnStake, insideStake } from "./depot.js";
 import { takeOrMake } from "./items.js";
 import { displayName } from "./nametag.js";
 import { patchState, readSettings } from "./state.js";
 import {
-  blockAt, chunkOf, containerAt, getMode, getOwnerId, getOwnerName, isAir,
-  isSolid, makeItem, putIn, sound,
+  blockAt, chunkOf, containerAt, dist2, getMode, getOwnerId, getOwnerName,
+  isAir, isFooting, isStuck, makeItem, putIn, sound, steer,
 } from "./util.js";
 import { entStr, logDebug, logError, logInfo, logWarn, posStr } from "./logger.js";
 
@@ -37,19 +38,29 @@ const SHARE_RADIUS = 20;
  * peti stasiun.
  * ------------------------------------------------------------------ */
 
+// Daftarnya dibaca tiap denyut oleh tiap companion; mem-parse JSON yang sama
+// berkali-kali per detik itu pemborosan yang terasa. Disimpan, dan cuma dibaca
+// ulang kalau ada yang menulisnya (yang menulis cuma berkas ini).
+let stationCache;
+
 function readStations() {
+  if (stationCache) return stationCache;
   try {
     const raw = world.getDynamicProperty(PROP.stations);
-    return typeof raw === "string" ? JSON.parse(raw) : [];
+    const list = typeof raw === "string" ? JSON.parse(raw) : [];
+    stationCache = Array.isArray(list) ? list : [];
   } catch (e) {
     logWarn(TAG, "Gagal membaca daftar stasiun dunia", e);
-    return [];
+    stationCache = [];
   }
+  return stationCache;
 }
 
 function writeStations(list) {
+  const kept = list.slice(-64);
+  stationCache = kept;
   try {
-    world.setDynamicProperty(PROP.stations, JSON.stringify(list.slice(-64)));
+    world.setDynamicProperty(PROP.stations, JSON.stringify(kept));
     return true;
   } catch (e) {
     logError(TAG, "Gagal menyimpan daftar stasiun dunia (kuota limit?)", e);
@@ -85,10 +96,23 @@ export function stationsOf(ownerId, dimensionId, near, radius = SHARE_RADIUS) {
     if (ownerId && s.owner && s.owner !== ownerId) continue;
     const d = Math.hypot(s.x - near.x, s.z - near.z);
     if (d > radius) continue;
+    // Peti penambang di kedalaman -50 berdiri tepat di bawah balai kalau
+    // diukur mendatar saja. Tanpa syarat tinggi, petani di permukaan akan
+    // "berbagi" peti yang sebenarnya ada enam puluh blok di bawah kakinya.
+    if (typeof near.y === "number" && Math.abs(s.y - near.y) > 10) continue;
     out.push({ ...s, d });
   }
   out.sort((a, b) => a.d - b.d);
   return out;
+}
+
+/** Stasiun milik pemilik ini yang berdiri di dalam satu petak koordinat. */
+export function stationsIn(ownerId, dimensionId, bounds) {
+  return readStations().filter((s) =>
+    s.dim === dimensionId &&
+    (!ownerId || !s.owner || s.owner === ownerId) &&
+    s.x >= bounds.x0 && s.x <= bounds.x1 &&
+    s.z >= bounds.z0 && s.z <= bounds.z1);
 }
 
 /* ------------------------------------------------------------------ *
@@ -152,7 +176,10 @@ function freeSpot(dimension, origin, radius = 5) {
           const spot = blockAt(dimension, origin.x + dx, origin.y + dy, origin.z + dz);
           const above = blockAt(dimension, origin.x + dx, origin.y + dy + 1, origin.z + dz);
           const floor = blockAt(dimension, origin.x + dx, origin.y + dy - 1, origin.z + dz);
-          if (isAir(spot) && isAir(above) && isSolid(floor)) {
+          // isFooting, bukan isSolid: daun DAN setengah-blok sama-sama
+          // "padat" menurut isSolid, dan itulah sebabnya peti bisa berdiri
+          // melayang di tajuk pohon.
+          if (isAir(spot) && isAir(above) && isFooting(floor)) {
             return { x: spot.x, y: spot.y, z: spot.z };
           }
         }
@@ -179,7 +206,8 @@ function trySign(entity, state, container, spot) {
   for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
     const at = blockAt(entity.dimension, spot.x + dx, spot.y, spot.z + dz);
     const floor = blockAt(entity.dimension, spot.x + dx, spot.y - 1, spot.z + dz);
-    if (!isAir(at) || !isSolid(floor)) continue;
+    // Papan nama berdiri butuh blok penuh di bawahnya; daun tidak cukup.
+    if (!isAir(at) || !isFooting(floor)) continue;
     try {
       at.setType(SIGN);
       state.sign = { x: at.x, y: at.y, z: at.z };
@@ -196,12 +224,88 @@ function trySign(entity, state, container, spot) {
 }
 
 /**
+ * Membongkar stasiun yang berdiri di tempat yang salah.
+ *
+ * Terjadi kalau pemain mematok chunk yang sudah ada gudangnya. Isi peti dan
+ * peti serta papannya sendiri masuk ke kantong pribadi companion, lalu
+ * dipasang lagi di balai yang baru. Tidak ada satu pun barang yang hilang —
+ * itu syarat mutlak, karena yang dibongkar ini seluruh persediaan mereka.
+ */
+function evictStation(entity, state) {
+  const dimension = entity.dimension;
+  const pos = state.station;
+  if (!pos) return false;
+  const bag = bagContainer(entity, state);
+  const container = containerAt(dimension, pos);
+  let moved = 0;
+  if (container) {
+    for (let i = 0; i < container.size; i++) {
+      const stack = container.getItem(i);
+      if (!stack) continue;
+      const left = bag.addItem(stack);
+      container.setItem(i, undefined);
+      moved += stack.amount;
+      if (left) {
+        try {
+          dimension.spawnItem(left, { x: pos.x + 0.5, y: pos.y + 1, z: pos.z + 0.5 });
+        } catch { /* biar jatuh saja */ }
+      }
+    }
+  }
+  const block = blockAt(dimension, pos.x, pos.y, pos.z);
+  try {
+    if (block && CHESTS.has(block.typeId)) {
+      bag.addItem(makeItem(block.typeId, 1));
+      block.setType("minecraft:air");
+    }
+  } catch (e) {
+    logWarn(TAG, `Gagal membongkar peti stasiun di ${posStr(pos)}`, e);
+  }
+  if (state.sign) {
+    const signBlock = blockAt(dimension, state.sign.x, state.sign.y, state.sign.z);
+    try {
+      if (signBlock && !signBlock.isAir) {
+        bag.addItem(makeItem(SIGN_IDS[0], 1));
+        signBlock.setType("minecraft:air");
+      }
+    } catch (e) {
+      logWarn(TAG, `Gagal membongkar papan nama di ${posStr(state.sign)}`, e);
+    }
+  }
+  unregisterStation(dimension.id, pos);
+  logInfo(TAG, `Stasiun ${entStr(entity)} di ${posStr(pos)} dibongkar (${moved} barang diselamatkan ke kantong).`);
+  state.station = null;
+  state.sign = null;
+  patchState(entity, { station: null, sign: null });
+  return true;
+}
+
+/**
+ * Companion masih harus berjalan ke balai sebelum bisa memasang apa pun?
+ * Pemanggil (mode kerja) memakai ini di awal denyutnya: selama balikannya
+ * bukan undefined, itulah yang dikerjakan denyut ini.
+ */
+export function stationTravel(entity, station) {
+  const to = station?.goTo;
+  if (!to) return undefined;
+  const target = { x: to.x + 0.5, y: to.y, z: to.z + 0.5 };
+  if (dist2(entity.location, target) <= DEPOT.arrive ** 2) return undefined;
+  steer(entity, target, 0.4);
+  return `menuju balai kerja bersama (${to.x}, ${to.z})`;
+}
+
+/**
  * Menyiapkan tempat kerja companion.
  *
  * Balikan selalu punya `container` yang bisa dipakai — peti sungguhan kalau
  * sudah ada, kantong pribadi kalau belum. Field `chest` hanya terisi kalau
- * petinya benar-benar berdiri, dan `missing` menyebut bahan yang masih kurang
- * untuk membangunnya.
+ * petinya benar-benar berdiri, `missing` menyebut bahan yang masih kurang
+ * untuk membangunnya, dan `goTo` berisi titik balai kalau companion memang
+ * harus berjalan ke sana dulu.
+ *
+ * Sejak v1.7 titik pemasangannya BUKAN lagi tempat kaki companion kebetulan
+ * berhenti, melainkan balai kerja bersama (depot.js). Itulah yang membuat
+ * pencari barang, perajin dan pembangun akhirnya bertemu di peti yang sama.
  */
 export function ensureStation(entity, state) {
   const dimension = entity.dimension;
@@ -210,13 +314,27 @@ export function ensureStation(entity, state) {
     y: Math.floor(entity.location.y),
     z: Math.floor(entity.location.z),
   };
-  logDebug(TAG, `ensureStation untuk ${entStr(entity)} di ${posStr(here)}`);
+  const ownerId = getOwnerId(entity);
+  const depot = depotFor(entity, ownerId);
+  const local = depot && depot.dim === dimension.id ? depot : undefined;
+  logDebug(TAG, `ensureStation untuk ${entStr(entity)} di ${posStr(here)}` +
+    (local ? `, balai ${posStr(local)}` : ", belum ada balai"));
+
+  // 0. Peti yang sekarang berdiri di dalam chunk berpatok harus pindah —
+  //    ladang milik petani, gudang tidak boleh menumpang di atasnya. TAPI
+  //    cuma kalau memang ada tempat lain: membongkar gudang tanpa punya
+  //    tujuan pengganti berarti seluruh kru kehilangan persediaannya dan
+  //    berdiri diam. Lebih baik gudangnya mepet daripada tidak ada gudang.
+  if (state.station && insideOwnStake(dimension.id, state.station, ownerId) &&
+      local && !insideStake(dimension.id, local)) {
+    evictStation(entity, state);
+  }
 
   // 1. Peti yang sudah tercatat sebagai miliknya.
   if (state.station) {
     if (chestStillThere(dimension, state.station)) {
       const container = containerAt(dimension, state.station);
-      if (container) return { chest: state.station, container, sign: state.sign };
+      if (container) return { chest: state.station, container, sign: state.sign, depot: local };
       logWarn(TAG, `Peti stasiun di ${posStr(state.station)} ada tapi inventarinya tidak terbaca.`);
     } else {
       logWarn(TAG, `Peti stasiun lama di ${posStr(state.station)} hilang/hancur!`);
@@ -228,15 +346,19 @@ export function ensureStation(entity, state) {
   }
 
   // 2. Stasiun companion lain milik pemilik yang sama (peti bersama).
-  const ownerId = getOwnerId(entity);
-  for (const mate of stationsOf(ownerId, dimension.id, here)) {
-    if (!chestStillThere(dimension, mate)) {
-      unregisterStation(dimension.id, mate);
+  //    Dicari dari BALAI, bukan dari tempat companion berdiri: kalau dicari
+  //    dari tempat berdiri, dua companion yang kebetulan bekerja berjauhan
+  //    tidak akan pernah menemukan peti satu sama lain.
+  const near = local ?? here;
+  const radius = local ? DEPOT.radius * 2 : SHARE_RADIUS;
+  for (const mate of stationsOf(ownerId, dimension.id, near, radius)) {
+    const pos = { x: mate.x, y: mate.y, z: mate.z };
+    if (insideStake(dimension.id, pos) || !chestStillThere(dimension, pos)) {
+      unregisterStation(dimension.id, pos);
       continue;
     }
-    const container = containerAt(dimension, mate);
+    const container = containerAt(dimension, pos);
     if (!container) continue;
-    const pos = { x: mate.x, y: mate.y, z: mate.z };
     logInfo(TAG, `${entStr(entity)} memakai peti stasiun companion lain di ${posStr(pos)}.`);
     patchState(entity, { station: pos });
     state.station = pos;
@@ -245,20 +367,50 @@ export function ensureStation(entity, state) {
     if (Math.hypot(entity.location.x - pos.x, entity.location.z - pos.z) < 4) {
       emptyBagInto(entity, state, container, pos);
     }
-    return { chest: pos, container, sign: state.sign, shared: true };
+    return { chest: pos, container, sign: state.sign, shared: true, depot: local };
   }
 
-  // 3. Belum punya peti: kerja dulu pakai kantong, sambil mencoba merakit peti.
+  // 3. Belum ada peti sama sekali. Kalau balainya jauh, JALAN dulu ke sana —
+  //    memasang peti di tempat berdiri itulah yang dulu menyebarkan gudang ke
+  //    seluruh peta.
   const bag = bagContainer(entity, state);
-  const spot = freeSpot(dimension, here);
+  if (local) {
+    const flat = Math.hypot(entity.location.x - local.x, entity.location.z - local.z);
+    const drop = Math.abs(entity.location.y - local.y);
+    if (flat <= DEPOT.arrive && drop <= 8) {
+      state.depotTrip = null;          // sampai; perjalanan selesai
+    } else {
+      if (state.depotTrip === null || state.depotTrip === undefined) {
+        state.depotTrip = system.currentTick;
+      }
+      const trying = system.currentTick - state.depotTrip;
+      // Menyerah kalau perjalanannya memang tidak sampai-sampai: jurang,
+      // lautan, tebing yang tidak bisa dipanjat. Gudang di tempat yang kurang
+      // ideal masih jauh lebih baik daripada companion yang berjalan selamanya
+      // ke tujuan yang tidak bisa dicapai dan tidak pernah bekerja.
+      //
+      // Catatan penting: sesudah menyerah, `depotTrip` sengaja TIDAK direset.
+      // Kalau direset, jam perjalanannya mulai dari nol lagi tiap denyut dan
+      // companion menghabiskan sembilan puluh sembilan persen waktunya
+      // berjalan bolak-balik — persis bentuk kebuntuan yang mau dihindari.
+      if (trying < DEPOT.giveUp && !isStuck(entity)) {
+        logDebug(TAG, `${entStr(entity)} masih ${flat.toFixed(1)}m dari balai; berjalan ke sana dulu.`);
+        return { container: bag, virtual: true, goTo: local, depot: local, why: "to-depot" };
+      }
+      logDebug(TAG, `${entStr(entity)} tidak sampai ke balai ${posStr(local)}; petinya dipasang di tempat.`);
+    }
+  }
+
+  const origin = local ?? here;
+  const spot = freeSpot(dimension, origin);
   if (!spot) {
-    return { container: bag, virtual: true, missing: undefined, why: "no-space" };
+    return { container: bag, virtual: true, missing: undefined, why: "no-space", depot: local };
   }
 
   const got = takeOrMake(bag, "chest", entity, CHEST_IDS);
   if (!got.got) {
     logDebug(TAG, `${entStr(entity)} belum bisa memasang peti: butuh ${got.missing ?? "kayu"}.`);
-    return { container: bag, virtual: true, missing: got.missing ?? "wood" };
+    return { container: bag, virtual: true, missing: got.missing ?? "wood", depot: local };
   }
 
   const block = blockAt(dimension, spot.x, spot.y, spot.z);
@@ -267,7 +419,7 @@ export function ensureStation(entity, state) {
   } catch (e) {
     logError(TAG, `Gagal memasang peti di ${posStr(spot)}`, e);
     putIn(bag, makeItem(got.got, 1));
-    return { container: bag, virtual: true, missing: undefined, why: "place-failed" };
+    return { container: bag, virtual: true, missing: undefined, why: "place-failed", depot: local };
   }
   sound(dimension, "random.wood_click", spot);
   logInfo(TAG, `Peti stasiun baru berdiri di ${posStr(spot)} (${got.how}) untuk ${entStr(entity)}.`);
@@ -275,7 +427,7 @@ export function ensureStation(entity, state) {
   const container = containerAt(dimension, spot);
   if (!container) {
     logError(TAG, `Peti baru di ${posStr(spot)} tidak punya inventory component!`);
-    return { container: bag, virtual: true };
+    return { container: bag, virtual: true, depot: local };
   }
 
   state.station = spot;
@@ -285,7 +437,7 @@ export function ensureStation(entity, state) {
   trySign(entity, state, container, spot);
   patchState(entity, { station: spot, sign: state.sign ?? null });
 
-  return { chest: spot, container, sign: state.sign };
+  return { chest: spot, container, sign: state.sign, depot: local };
 }
 
 export function stationContainer(entity, state) {

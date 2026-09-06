@@ -13,6 +13,8 @@
  * bersama companion yang terpaksa mencari bahannya sendiri (selfhelp.js).
  */
 
+import { system } from "@minecraft/server";
+
 import { LOGS, MATERIAL_REQUESTS } from "./config.js";
 import { report, sayFrom } from "./chat.js";
 import {
@@ -24,9 +26,10 @@ import { idsOf } from "./items.js";
 import { isGreeting } from "./look.js";
 import { clearRequest, materialRequests } from "./requests.js";
 import { writeState } from "./state.js";
-import { ensureStation } from "./station.js";
+import { ensureStation, stationTravel } from "./station.js";
 import {
-  alive, containerAt, dist2, face, getOwnerId, makeItem, putIn, sound, steer,
+  alive, containerAt, dist2, face, getGear, getOwnerId, makeItem, putIn, sound,
+  steer,
 } from "./util.js";
 import { entStr, logDebug, logInfo, logWarn, posStr } from "./logger.js";
 
@@ -126,6 +129,52 @@ function deliverTo(entity, state, pos, ids, ownerId, req) {
   return "menyetor bahan";
 }
 
+// Berapa lama satu pesanan dipegang sebelum gilirannya diserahkan ke pesanan
+// berikutnya. Tanpa giliran, pesanan PALING TUA memenangkan segalanya: satu
+// permintaan "besi" yang tidak ada bijihnya di permukaan membuat pencari barang
+// berkeliling selamanya, sementara pembangun di sebelahnya kehabisan kayu dan
+// penambang berdiri bertangan kosong. Itu persis keluhan yang ada.
+const ORDER_TURN = 1200;   // ~60 detik per pesanan
+
+/**
+ * Pesanan mana yang dikerjakan sekarang.
+ *
+ * Urutannya: yang bahannya sudah cukup di kantong (tinggal diantar), lalu
+ * pesanan yang sedang dipegang selama gilirannya belum habis, lalu — saat
+ * giliran berganti — pesanan pertama yang bahannya BENAR-BENAR ada di sekitar
+ * sini. Kalau tidak satu pun ketemu, giliran tetap bergeser supaya tiap
+ * pemesan kebagian dicarikan.
+ */
+function chooseOrder(entity, state, orders) {
+  if (!orders.length) return undefined;
+  const now = system.currentTick;
+
+  for (const req of orders) {
+    const spec = MATERIAL_REQUESTS[req.kind];
+    if (bagHas(state, req.kind) >= (req.want ?? spec?.want ?? 16)) {
+      state.order = { id: req.id, since: now };
+      return req;
+    }
+  }
+
+  const held = orders.find((r) => r.id === state.order?.id);
+  if (held && now - (state.order.since ?? 0) < ORDER_TURN) return held;
+
+  const start = held ? orders.indexOf(held) + 1 : 0;
+  for (let n = 0; n < orders.length; n++) {
+    const req = orders[(start + n) % orders.length];
+    if (!findMaterial(entity, req.kind)) continue;
+    logInfo(TAG, `Giliran pesanan berpindah ke ${req.kind} milik ${req.fromName} (bahannya ada di sekitar).`);
+    state.order = { id: req.id, since: now };
+    return req;
+  }
+
+  const req = orders[start % orders.length];
+  logDebug(TAG, `Tidak ada bahan pesanan yang terlihat; giliran diberikan ke ${req.kind} milik ${req.fromName}.`);
+  state.order = { id: req.id, since: now };
+  return req;
+}
+
 export function tickLooter(entity, state, owner) {
   logDebug(TAG, `tickLooter untuk ${entStr(entity)}`);
   if (!alive(entity)) return "hilang";
@@ -135,11 +184,20 @@ export function tickLooter(entity, state, owner) {
   const station = ensureStation(entity, state);
   if (!state.bag) state.bag = {};
 
+  // Balai kerja bersama dulu: pencari barang yang mengantar ke peti yang
+  // tidak dilihat siapa-siapa sama saja dengan tidak mengantar.
+  const trip = stationTravel(entity, station);
+  if (trip) {
+    writeState(entity, state);
+    return trip;
+  }
+
+  const tool = getGear(entity).mainhand;
   pickUp(entity, state);
 
   // 1. Ada yang minta bahan? Itu yang dikerjakan lebih dulu.
   const orders = ownerId ? materialRequests(ownerId) : [];
-  const req = orders[0];
+  const req = chooseOrder(entity, state, orders);
   if (req) {
     const spec = MATERIAL_REQUESTS[req.kind];
     const want = req.want ?? spec?.want ?? 16;
@@ -154,14 +212,20 @@ export function tickLooter(entity, state, owner) {
 
     const target = findMaterial(entity, req.kind);
     if (target) {
-      const result = harvestBlock(entity, target, (id, n) => addToBag(state, id, n));
+      const result = harvestBlock(entity, target, (id, n) => addToBag(state, id, n), tool);
       writeState(entity, state);
       if (result.walking) return `menuju ${spec?.label ?? req.kind} untuk ${req.fromName}`;
+      if (result.breaking) {
+        return `mengambil ${spec?.label ?? req.kind} untuk ${req.fromName} ` +
+          `(${Math.round(result.progress * 100)}%)`;
+      }
       return `mengumpulkan ${spec?.label ?? req.kind} untuk ${req.fromName} (${have}/${want})`;
     }
 
-    // Tidak ketemu di sekitar: geser area pencarian.
-    roam(entity);
+    // Tidak ketemu di sekitar: geser area pencarian, tapi tetap dalam
+    // jangkauan balai — bahan yang ditemukan seratus blok dari gudang tidak
+    // pernah benar-benar sampai ke pemesannya.
+    roam(entity, station.chest ?? state.station);
     writeState(entity, state);
     return `mencari ${spec?.label ?? req.kind} untuk ${req.fromName}`;
   }
@@ -179,13 +243,14 @@ export function tickLooter(entity, state, owner) {
 
   const target = findBlock(entity, LOGS, "log") ?? findBlock(entity, STONE_LIKE, "stone");
   if (target) {
-    const result = harvestBlock(entity, target, (id, n) => addToBag(state, id, n));
+    const result = harvestBlock(entity, target, (id, n) => addToBag(state, id, n), tool);
     writeState(entity, state);
     if (result.walking) return "menuju kayu atau batu";
+    if (result.breaking) return `menebang/menggali (${Math.round(result.progress * 100)}%)`;
     return "mengumpulkan stok kayu dan batu";
   }
 
-  roam(entity);
+  roam(entity, station.chest ?? state.station);
   writeState(entity, state);
   return "berkeliling mencari kayu atau batu";
 }

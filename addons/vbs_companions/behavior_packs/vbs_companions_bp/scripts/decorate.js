@@ -5,7 +5,7 @@
 import { POSE, PROTECTED } from "./config.js";
 import { hold } from "./hold.js";
 import {
-  alive, blockAt, countIn, dist2, face, isAir, isSolid, particle, sound, steer,
+  alive, blockAt, countIn, dist2, face, isAir, isFooting, particle, sound, steer,
   takeFrom,
 } from "./util.js";
 import { entStr, logDebug, logInfo, logWarn } from "./logger.js";
@@ -48,7 +48,9 @@ function standingSpot(dimension, x, z, baseY) {
     const above = blockAt(dimension, x, y + 1, z);
     const above2 = blockAt(dimension, x, y + 2, z);
     if (!floor || !above) continue;
-    if (!isSolid(floor)) continue;
+    // Hiasan tidak boleh berdiri di atas daun: yang jadi bukan taman,
+    // melainkan pagar dan obor yang melayang di tajuk pohon.
+    if (!isFooting(floor)) continue;
     if (PROTECTED.has(floor.typeId)) return undefined;
     if (!isAir(above)) return undefined;
     return { floor, above, above2 };

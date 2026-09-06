@@ -17,7 +17,7 @@ import {
 // keluhan itu.
 export { getClaim };
 import {
-  blockAt, chunkCenter, chunkOf, dist2, give, isSolid, makeItem, particle, sound,
+  blockAt, chunkCenter, chunkOf, dist2, give, isFooting, makeItem, particle, sound,
 } from "./util.js";
 import { entStr, logDebug, logError, logInfo, logWarn, posStr } from "./logger.js";
 
@@ -157,7 +157,10 @@ function groundAt(dimension, x, z, from) {
     const here = blockAt(dimension, x, y, z);
     const below = blockAt(dimension, x, y - 1, z);
     if (!here || !below) continue;
-    if (here.isAir && isSolid(below)) {
+    // isFooting, bukan isSolid: daun dihitung "padat" oleh isSolid, dan
+    // itulah sebabnya penanda patok bisa melayang di tengah tajuk pohon
+    // alih-alih berdiri di tanah yang dipatok.
+    if (here.isAir && isFooting(below)) {
       logDebug(TAG, `groundAt: ditemukan Y=${y}`);
       return y;
     }

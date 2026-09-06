@@ -13,10 +13,10 @@ import { isGreeting } from "./look.js";
 import { takeOrMake } from "./items.js";
 import { ensureMaterial } from "./selfhelp.js";
 import { addVillageHome, writeState } from "./state.js";
-import { ensureStation } from "./station.js";
+import { ensureStation, stationTravel } from "./station.js";
 import {
   alive, blockAt, chunkCenter, countIn, dist2, face, getOwnerId, isAir,
-  isSolid, makeItem, particle, putIn, resolveOwner, sound, steer, takeFrom,
+  isFooting, makeItem, particle, putIn, resolveOwner, sound, steer, takeFrom,
 } from "./util.js";
 import { entStr, logDebug, logError, logInfo, logWarn, posStr } from "./logger.js";
 
@@ -289,7 +289,9 @@ function groundY(dimension, x, z, baseY) {
     const here = blockAt(dimension, x, y, z);
     const below = blockAt(dimension, x, y - 1, z);
     if (!here || !below) continue;
-    if (here.isAir && isSolid(below)) {
+    // isFooting, bukan isSolid: tanpa ini pembangun memakai daun sebagai
+    // "tanah" dan seluruh rumahnya berdiri melayang di tajuk pohon.
+    if (here.isAir && isFooting(below)) {
       logDebug(TAG, `Tanah ditemukan di Y=${y - 1} untuk col(${x},${z})`);
       return y - 1;
     }
@@ -542,6 +544,14 @@ export function tickBuild(entity, state, owner) {
   }
 
   const ownerId = getOwnerId(entity);
+  // Gudang bahan bangunan ada di balai kerja bersama — itulah tempat pencari
+  // barang mengantar kayu. Pembangun yang menunggu di tempat lain menunggu
+  // kiriman yang tidak akan pernah sampai.
+  const trip = stationTravel(entity, station);
+  if (trip) {
+    writeState(entity, state);
+    return trip;
+  }
   if (station.missing) {
     const own = ensureMaterial(entity, state, ownerId, station.missing,
                                station.chest ?? state.station, container);

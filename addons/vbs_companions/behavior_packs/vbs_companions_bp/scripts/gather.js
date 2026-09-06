@@ -19,9 +19,9 @@
 import { system } from "@minecraft/server";
 
 import { LOGS, PLANKS, POSE, SEED_SOURCES } from "./config.js";
-import { hold } from "./hold.js";
+import { chipAway } from "./dig.js";
 import { blockAt, dist2, face, isStuck, particle, sound, steer } from "./util.js";
-import { entStr, logDebug, logInfo, logWarn, posStr } from "./logger.js";
+import { entStr, logDebug, logInfo, posStr } from "./logger.js";
 
 const TAG = "GATHER";
 const REACH = 3.2;
@@ -246,9 +246,18 @@ export function findMaterial(entity, kind) {
  * Membongkar satu sasaran. `deposit(id, amount)` yang memutuskan hasilnya mau
  * ditaruh di mana — kantong pencari barang, atau langsung ke peti stasiun.
  *
- * Balikan: { walking: true } kalau masih berjalan ke sana, atau { got: n }.
+ * SATU blok sekali pukul, dan pukulannya butuh waktu (dig.js). Versi lama
+ * menghabiskan sepuluh batang pohon dalam satu denyut — pohonnya lenyap
+ * seketika di depan mata pemain, dan itu yang bikin add-on ini terasa curang
+ * alih-alih terasa hidup. Sekarang batang kedua baru dipilih sesudah batang
+ * pertama benar-benar patah: kuncinya (findBlock) melihat bloknya sudah jadi
+ * udara, melepas sasaran, dan menemukan batang di atasnya sebagai yang
+ * terdekat berikutnya.
+ *
+ * Balikan: { walking: true } kalau masih berjalan ke sana, { breaking, progress }
+ * kalau sedang mengayun, atau { got: n } begitu ada yang jatuh.
  */
-export function harvestBlock(entity, target, deposit) {
+export function harvestBlock(entity, target, deposit, toolId) {
   const dimension = entity.dimension;
   const at = { x: target.x + 0.5, y: target.y, z: target.z + 0.5 };
   if (dist2(entity.location, at) > REACH ** 2) {
@@ -256,40 +265,19 @@ export function harvestBlock(entity, target, deposit) {
     return { walking: true };
   }
   face(entity, at);
-  hold(entity, 14, { pose: POSE.mine, reason: "gather" });
 
-  // Batang pohon ditebang sampai atas, blok lain satu per satu.
-  if (LOGS.includes(target.id)) {
-    let felled = 0;
-    for (let dy = 0; dy < 10; dy++) {
-      const block = blockAt(dimension, target.x, target.y + dy, target.z);
-      if (!block || !LOGS.includes(block.typeId)) break;
-      try {
-        deposit(block.typeId, 1);
-        block.setType("minecraft:air");
-        felled++;
-      } catch (e) {
-        logWarn(TAG, `Gagal menebang log di ${posStr({ x: target.x, y: target.y + dy, z: target.z })}`, e);
-        break;
-      }
-    }
-    if (felled) {
-      logInfo(TAG, `${entStr(entity)} menebang ${felled} log di ${posStr(target)}`);
-      sound(dimension, "dig.wood", at);
-      particle(dimension, "minecraft:villager_happy", { x: at.x, y: at.y + 1, z: at.z });
-    }
-    return { got: felled };
-  }
+  const wood = LOGS.includes(target.id);
+  const swing = chipAway(entity, target, toolId, {
+    pose: wood ? POSE.harvest : POSE.mine,
+    reason: "dig",
+  });
 
-  const block = blockAt(dimension, target.x, target.y, target.z);
-  if (!block || block.isAir) return { got: 0 };
-  const id = block.typeId;
-  try {
-    block.setType("minecraft:air");
-  } catch (e) {
-    logWarn(TAG, `Gagal membongkar ${id} di ${posStr(target)}`, e);
-    return { got: 0 };
+  if (swing.status === "breaking") {
+    return { breaking: true, progress: swing.progress, id: target.id };
   }
+  if (swing.status !== "broke") return { got: 0 };
+
+  const id = swing.id;
 
   // Rumput hilang tanpa meninggalkan apa pun kalau sedang tidak beruntung —
   // itu bukan kegagalan, itu memang cara bibit didapat di Minecraft.
@@ -300,14 +288,15 @@ export function harvestBlock(entity, target, deposit) {
     }
     deposit(SEED_DROP, 1);
     logInfo(TAG, `${entStr(entity)} mendapat bibit dari rumput di ${posStr(target)}`);
-    sound(dimension, "dig.grass", at, { volume: 0.5 });
     return { got: 1 };
   }
 
-  deposit(YIELD[id] ?? id, 1);
-  logInfo(TAG, `${entStr(entity)} menggali ${id} di ${posStr(target)} -> ${YIELD[id] ?? id}`);
-  sound(dimension, "dig.stone", at, { volume: 0.5 });
-  return { got: 1 };
+  const drop = YIELD[id] ?? id;
+  deposit(drop, 1);
+  logInfo(TAG, `${entStr(entity)} membongkar ${id} di ${posStr(target)} -> ${drop}`);
+  particle(dimension, "minecraft:villager_happy", { x: at.x, y: at.y + 1, z: at.z });
+  if (wood) sound(dimension, "dig.wood", at, { volume: 0.6 });
+  return { got: 1, id: drop };
 }
 
 /** Berapa banyak bahan jenis ini yang sudah ada, log dihitung setara papan. */
@@ -332,9 +321,25 @@ const ROAM_TICKS = 100;   // ~5 detik ke satu arah sebelum arahnya ditimbang ula
  * jadi companion cuma bergetar di tempat: langkahnya 0,35 blok ke arah yang
  * selalu berubah, dan dia tidak pernah benar-benar sampai ke daerah baru.
  */
-export function roam(entity) {
+// Sejauh mana companion boleh menjauh dari rumahnya saat berkeliling. Tanpa
+// batas ini dia benar-benar bisa berjalan ratusan blok: tiap denyut yang tidak
+// menemukan sasaran menggeser arahnya sedikit lagi, dan yang terlihat pemain
+// adalah companion yang "kabur" dan tidak pernah kembali.
+const ROAM_LEASH = 64;
+
+export function roam(entity, home) {
   const at = entity.location;
   let trip = roams.get(entity.id);
+  const away = home ? Math.hypot(at.x - home.x, at.z - home.z) : 0;
+
+  if (home && away > ROAM_LEASH) {
+    // Sudah terlalu jauh: pulang dulu, cari lagi di jalan.
+    logDebug(TAG, `${entStr(entity)} sudah ${away.toFixed(0)}m dari rumahnya; berbalik pulang.`);
+    roams.delete(entity.id);
+    steer(entity, { x: home.x + 0.5, y: home.y ?? at.y, z: home.z + 0.5 }, 0.38);
+    return;
+  }
+
   if (!trip || system.currentTick - trip.since > ROAM_TICKS ||
       isStuck(entity) || dist2(at, trip.to) < 4) {
     const angle = Math.random() * Math.PI * 2;

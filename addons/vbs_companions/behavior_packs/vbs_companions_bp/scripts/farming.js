@@ -20,11 +20,13 @@
 
 import { system } from "@minecraft/server";
 import {
-  BAND_WIDTH, CROPS, POSE, PROTECTED, SEEDS, TILLABLE, WATER,
+  BAND_WIDTH, CROPS, LOGS, PLOT, POSE, PROTECTED, SEEDS, TILLABLE, WATER,
 } from "./config.js";
 import { report, sayFrom } from "./chat.js";
 import { craftItemStep, craftStep, labelOf } from "./crafting.js";
 import { decorateStep } from "./decorate.js";
+import { demandMove } from "./depot.js";
+import { chipAway } from "./dig.js";
 import { hold } from "./hold.js";
 import { isGreeting } from "./look.js";
 import { claimAt, chunkBounds, claimsNear, getClaim, markWorked } from "./claim.js";
@@ -32,7 +34,8 @@ import { requestItem, requestMaterial, requestTool } from "./requests.js";
 import { askOwner } from "./ask.js";
 import { ensureMaterial, gatherOwn } from "./selfhelp.js";
 import { patchState, writeState } from "./state.js";
-import { ensureStation, refreshSign } from "./station.js";
+import { ensureStation, refreshSign, stationsIn, stationTravel } from "./station.js";
+import { workBlocksIn } from "./workshop.js";
 import {
   alive, blockAt, countIn, dist2, face, getGear, getOwnerId, info, isAir,
   isStuck, makeItem, particle, putIn, randomBetween, sound, steer, takeFrom,
@@ -62,8 +65,15 @@ const SPOIL = {
   "minecraft:diorite": "minecraft:diorite",
   "minecraft:granite": "minecraft:granite",
 };
+// Bahan timbun yang boleh dipakai meratakan cekungan. Semuanya bisa dicangkul
+// jadi farmland, jadi petani tidak lagi mentok cuma karena yang ada di peti
+// "rumput" dan bukan "tanah" — dua-duanya sama saja untuk ladang.
+const FILLS = [
+  "minecraft:dirt", "minecraft:coarse_dirt", "minecraft:grass_block",
+  "minecraft:rooted_dirt", "minecraft:podzol",
+];
+
 const SCAN_PER_TICK = 64;
-const LEVEL_BUDGET = 6;
 const TILL_BUDGET = 4;
 const PLANT_BUDGET = 4;
 const HARVEST_TICKS = 36;
@@ -78,10 +88,37 @@ const RIVER_RADIUS = 20;
  * Area kerja
  * ------------------------------------------------------------------ */
 
+// Sejauh apa petani mau berjalan untuk menggarap patoknya. Lebih dari ini,
+// patok itu memang bukan urusannya.
+const FIELD_RANGE = 96;
+
+/**
+ * Patok yang digarap petani ini.
+ *
+ * Dulu cuma chunk tempat KAKINYA berdiri yang dihitung. Sejak gudang pindah
+ * ke balai kerja bersama — yang justru sengaja berdiri DI LUAR patok — petani
+ * yang sedang berdiri di depan petinya tidak lagi berdiri di atas ladangnya
+ * sendiri, dan seluruh mode bertani jatuh ke jalur "belum ada patok". Itu
+ * persis gejala "sudah kukasih ladang tapi petani tidak bertindak".
+ *
+ * Sekarang: chunk di bawah kaki dulu, dan kalau tidak ada, patok TERDEKAT
+ * milik pemilik yang sama dalam jarak jalan kaki.
+ */
+function fieldFor(entity, base, ownerId) {
+  const here = claimAt(entity.dimension, base, ownerId);
+  if (here) return here;
+  const near = claimsNear(entity.dimension, base, ownerId, 4, "farm")
+    .filter((c) => c.d <= FIELD_RANGE);
+  const pick = near.find((c) => !c.entry.worked) ?? near[0];
+  if (!pick) return undefined;
+  logDebug(TAG, `Patok terdekat untuk ${entStr(entity)}: chunk (${pick.cx}, ${pick.cz}), ${pick.d.toFixed(0)}m.`);
+  return { cx: pick.cx, cz: pick.cz, entry: pick.entry };
+}
+
 export function workArea(entity, state, ownerId) {
   const base = state.station ?? entity.location;
   const radius = info(entity)?.farmRadius ?? 6;
-  const mine = claimAt(entity.dimension, base, ownerId);
+  const mine = fieldFor(entity, base, ownerId);
   if (!mine) {
     const area = {
       x0: Math.floor(base.x) - radius, x1: Math.floor(base.x) + radius,
@@ -118,6 +155,51 @@ export function workArea(entity, state, ownerId) {
   return area;
 }
 
+/**
+ * Petak yang benar-benar dikerjakan sekarang.
+ *
+ * Satu chunk berpatok itu 16x16 = 256 kolom. Menggarapnya sekaligus berarti
+ * petani menghabiskan menit-menit pertamanya meratakan sudut chunk yang jauh
+ * dari mana pun pemain berdiri — dan dari luar itu terlihat persis seperti
+ * "petani tidak bertindak". Sekarang dia mulai dari petak inti di tengah
+ * patok (tempat penanda patok berdiri, jadi pemain melihatnya bekerja), dan
+ * petak itu MELEBAR sendiri begitu benar-benar jadi ladang.
+ */
+function snapToChannels(x0, x1, base) {
+  const col = (x) => {
+    const off = (((x - base) % CHANNEL_PERIOD) + CHANNEL_PERIOD) % CHANNEL_PERIOD;
+    return x - off + CHANNEL_OFFSET;
+  };
+  let lo = col(x0);
+  if (lo > x0) lo -= CHANNEL_PERIOD;
+  let hi = col(x1);
+  if (hi < x1) hi += CHANNEL_PERIOD;
+  return { x0: lo, x1: hi };
+}
+
+export function plotOf(state, area) {
+  if (!area.claimed) return { ...area, full: area, whole: true };
+  const size = Math.max(PLOT.start, state.plan?.farm?.plot ?? PLOT.start);
+  const half = Math.floor(size / 2);
+  const cx = Math.round((area.x0 + area.x1) / 2);
+  const cz = Math.round((area.z0 + area.z1) / 2);
+  // Tepi kiri-kanan petak DIPASKAN ke kolom parit. Tanpa ini, petak inti bisa
+  // berhenti tepat sebelum kolom paritnya sendiri: petak dalam petak itu tidak
+  // akan pernah kebagian air, fase mencangkul selalu menemukan petak kering,
+  // dan petani berputar antara "gali parit" dan "cangkul" tanpa henti.
+  const span = snapToChannels(Math.max(area.x0, cx - half),
+                              Math.min(area.x1, cx + half), area.x0);
+  const plot = {
+    ...area,
+    x0: Math.max(area.x0, span.x0), x1: Math.min(area.x1, span.x1),
+    z0: Math.max(area.z0, cz - half), z1: Math.min(area.z1, cz + half),
+    full: area,
+  };
+  plot.whole = plot.x0 <= area.x0 && plot.x1 >= area.x1 &&
+               plot.z0 <= area.z0 && plot.z1 >= area.z1;
+  return plot;
+}
+
 function areaWidth(area) {
   return area.x1 - area.x0 + 1;
 }
@@ -135,13 +217,30 @@ function columnAt(area, index) {
  * Parit dan pengairan
  * ------------------------------------------------------------------ */
 
+/**
+ * Titik nol pola parit — SELALU dihitung dari tepi patok, bukan dari tepi
+ * petak yang sedang digarap.
+ *
+ * Petak inti melebar sedikit demi sedikit (plotOf), jadi tepinya bergerak.
+ * Kalau pola paritnya ikut tepi petak, parit yang sudah digali dan sudah
+ * berair kemarin berhenti dianggap parit hari ini: petani akan mencangkulnya
+ * jadi ladang, ladang di sebelahnya kehilangan sumber air, dan seluruh petak
+ * balik jadi tanah. Dipatok ke tepi klaim, polanya tidak pernah bergeser.
+ */
+function anchor(area) {
+  const full = area.full ?? area;
+  return { x0: full.x0, z0: full.z0 };
+}
+
 function isChannelColumn(x, area) {
-  return (((x - area.x0) % CHANNEL_PERIOD) + CHANNEL_PERIOD) % CHANNEL_PERIOD === CHANNEL_OFFSET;
+  const base = anchor(area).x0;
+  return (((x - base) % CHANNEL_PERIOD) + CHANNEL_PERIOD) % CHANNEL_PERIOD === CHANNEL_OFFSET;
 }
 
 /** Kolom parit terdekat untuk satu petak — selalu maksimal 4 blok jauhnya. */
 function channelXFor(x, area) {
-  const off = (((x - area.x0) % CHANNEL_PERIOD) + CHANNEL_PERIOD) % CHANNEL_PERIOD;
+  const base = anchor(area).x0;
+  const off = (((x - base) % CHANNEL_PERIOD) + CHANNEL_PERIOD) % CHANNEL_PERIOD;
   return x - off + CHANNEL_OFFSET;
 }
 
@@ -199,68 +298,128 @@ function surfaceAt(dimension, x, z, baseY, span = 6) {
 }
 
 /**
- * Meratakan satu kolom ke flattenY. Lebih tinggi -> dibongkar; lebih rendah ->
- * ditimbun pakai tanah dari peti. Kolom yang belum bisa diratakan sengaja
- * TIDAK dicangkul — lebih baik menunggu daripada meninggalkan petak jomplang
- * yang nanti tidak kebagian air.
+ * Apa yang tersisa di tangan sesudah memangkas satu blok.
+ *
+ * Batang pohon disimpan APA ADANYA. Ladang yang dibuka di hutan menghasilkan
+ * belasan batang kayu, dan kayu itulah yang selama ini hilang begitu saja
+ * sementara pembangun di seberang halaman memasang permintaan "butuh kayu".
+ * Daun, bunga dan rumput memang tidak meninggalkan apa-apa.
  */
-function levelColumn(dimension, x, z, targetY, container, budget) {
-  const surface = surfaceAt(dimension, x, z, targetY);
-  if (!surface) return { used: 0, reason: "none" };
-  if (surface.y === targetY) return { used: 0, reason: "ok" };
-  if (budget <= 0) return { used: 0, reason: "budget" };
+function spoilOf(id) {
+  if (SPOIL[id]) return SPOIL[id];
+  if (LOGS.includes(id)) return id;
+  return undefined;
+}
 
-  if (surface.y > targetY) {
-    let used = 0;
-    for (let y = surface.y; y > targetY && used < budget; y--) {
-      const b = blockAt(dimension, x, y, z);
-      if (!b || b.isAir) continue;
-      if (PROTECTED.has(b.typeId)) {
-        logDebug(TAG, `Kolom (${x}, ${z}) tidak diratakan: ada blok terlindungi ${b.typeId}.`);
-        return { used, reason: "blocked" };
-      }
-      const spoil = SPOIL[b.typeId];
-      try {
-        b.setType("minecraft:air");
-        used++;
-      } catch (e) {
-        logWarn(TAG, `Gagal membongkar blok di (${x}, ${y}, ${z}) saat meratakan`, e);
-        return { used, reason: "blocked" };
-      }
-      // Tanah galian DISIMPAN, bukan dibuang. Gundukan yang dipangkas jadi
-      // bahan untuk menimbun cekungan di petak sebelah — tanpa ini petani
-      // mentok minta tanah timbun padahal dia sendiri baru saja membuang
-      // berkubik-kubik tanah.
-      if (spoil) {
-        putIn(container, makeItem(spoil, 1));
-        logDebug(TAG, `Hasil pangkasan (${b.typeId} -> ${spoil}) disimpan untuk menimbun petak lain.`);
-      }
-    }
-    if (used) logInfo(TAG, `Meratakan (${x}, ${z}): membongkar ${used} blok turun ke Y=${targetY}`);
-    return { used, reason: used ? "ok" : "budget" };
-  }
-
-  if (countIn(container, FILL_BLOCK) < 1) {
-    logDebug(TAG, `Kolom (${x}, ${z}) terlalu rendah tapi tidak ada tanah timbun di peti.`);
-    return { used: 0, reason: "need-fill" };
-  }
-  let used = 0;
-  for (let y = surface.y + 1; y <= targetY && used < budget; y++) {
-    if (takeFrom(container, FILL_BLOCK, 1) !== 1) break;
+/** Blok teratas yang masih menghalangi ladang di kolom ini. */
+function topObstacle(dimension, x, z, targetY) {
+  for (let y = targetY + PLOT.clearHeight; y > targetY; y--) {
     const b = blockAt(dimension, x, y, z);
-    if (!b) break;
+    if (!b || b.isAir || b.isLiquid) continue;
+    if (CROPS[b.typeId]) continue;
+    return b;
+  }
+  return undefined;
+}
+
+/**
+ * Apa yang kurang di kolom ini? Cuma MEMBACA, tidak mengubah apa pun — dipakai
+ * menyapu petak dengan murah sebelum companion benar-benar berjalan ke sana.
+ *
+ * "ok"        sudah rata
+ * "cut"       ada yang harus dipangkas di atasnya (termasuk pohon)
+ * "fill"      cekung, dan bahan timbunnya ada di peti
+ * "need-fill" cekung, tapi tidak ada bahan timbun
+ * "blocked"   ada blok terlindungi; kolom ini dilewati saja
+ */
+function columnNeed(dimension, x, z, targetY, container) {
+  const top = topObstacle(dimension, x, z, targetY);
+  if (top) return PROTECTED.has(top.typeId) ? "blocked" : "cut";
+  const ground = blockAt(dimension, x, targetY, z);
+  if (!ground) return "none";
+  if (!ground.isAir && !ground.isLiquid) return "ok";
+  return FILLS.some((id) => countIn(container, id) > 0) ? "fill" : "need-fill";
+}
+
+/**
+ * Satu denyut mengerjakan kolom yang sedang dipegang (farm.cut).
+ *
+ * Memangkasnya lewat dig.js, jadi pohon di tengah ladang ditebang sebatang
+ * demi sebatang dengan waktu yang wajar — bukan lenyap sekaligus seperti dulu.
+ * Balikan undefined artinya kolom ini sudah selesai dan boleh lanjut.
+ */
+function cutStep(entity, area, container, farm, tool) {
+  const dimension = entity.dimension;
+  const { x, z } = farm.cut;
+  const targetY = area.flattenY;
+
+  const top = topObstacle(dimension, x, z, targetY);
+  if (top) {
+    if (PROTECTED.has(top.typeId)) {
+      logDebug(TAG, `Kolom (${x}, ${z}) dilewati: ada ${top.typeId} yang tidak boleh dibongkar.`);
+      farm.cut = null;
+      return undefined;
+    }
+    if (!reachFor(entity, x, targetY, z) && !isStuck(entity)) {
+      return "menuju petak yang belum rata";
+    }
+    const swing = chipAway(entity, top, tool, { pose: POSE.build, reason: "dig" });
+    if (swing.status === "breaking") {
+      return `meratakan lahan (${Math.round(swing.progress * 100)}%)`;
+    }
+    if (swing.status === "broke") {
+      const keep = spoilOf(swing.id);
+      // Tanah galian DISIMPAN, bukan dibuang: gundukan yang dipangkas jadi
+      // bahan menimbun cekungan di petak sebelah, dan batang pohonnya jadi
+      // kayu untuk seisi halaman.
+      if (keep) putIn(container, makeItem(keep, 1));
+      farm.acted++;
+      return "meratakan lahan";
+    }
+    farm.cut = null;
+    return undefined;
+  }
+
+  const ground = blockAt(dimension, x, targetY, z);
+  if (!ground || (!ground.isAir && !ground.isLiquid)) {
+    farm.cut = null;
+    return undefined;
+  }
+  if (!reachFor(entity, x, targetY, z) && !isStuck(entity)) {
+    return "menuju petak yang cekung";
+  }
+  const fill = FILLS.find((id) => countIn(container, id) > 0);
+  if (!fill) {
+    farm.cut = null;
+    return undefined;
+  }
+  if (takeFrom(container, fill, 1) !== 1) {
+    farm.cut = null;
+    return undefined;
+  }
+  try {
+    ground.setType(fill === "minecraft:grass_block" ? FILL_BLOCK : fill);
+  } catch (e) {
+    logWarn(TAG, `Gagal menimbun (${x}, ${targetY}, ${z})`, e);
+    putIn(container, makeItem(fill, 1));
+    farm.cut = null;
+    return undefined;
+  }
+  // Lubang di bawahnya ikut ditambal supaya timbunannya tidak melayang.
+  const under = blockAt(dimension, x, targetY - 1, z);
+  if (under && (under.isAir || under.isLiquid) && takeFrom(container, fill, 1) === 1) {
     try {
-      b.setType(FILL_BLOCK);
-      used++;
-    } catch (e) {
-      logWarn(TAG, `Gagal menimbun blok di (${x}, ${y}, ${z})`, e);
-      putIn(container, makeItem(FILL_BLOCK, 1));
-      break;
+      under.setType(fill === "minecraft:grass_block" ? FILL_BLOCK : fill);
+    } catch {
+      putIn(container, makeItem(fill, 1));
     }
   }
-  if (used) logInfo(TAG, `Meratakan (${x}, ${z}): menimbun ${used} blok naik ke Y=${targetY}`);
-  const now = blockAt(dimension, x, targetY, z);
-  return { used, reason: now && !now.isAir ? "ok" : "need-fill" };
+  farm.cut = null;
+  farm.acted++;
+  hold(entity, 12, { pose: POSE.build, reason: "level" });
+  sound(dimension, "step.gravel", { x, y: targetY, z });
+  particle(dimension, "minecraft:basic_crit_particle", { x: x + 0.5, y: targetY + 1, z: z + 0.5 });
+  return "menimbun petak yang cekung";
 }
 
 /* ------------------------------------------------------------------ *
@@ -348,6 +507,43 @@ function toPhase(entity, farm, phase, why) {
   farm.cursor = 0;
   farm.swept = 0;
   farm.acted = 0;
+  farm.cut = null;
+  farm.walkTo = null;
+}
+
+const GUARD_EVERY = 400;   // ~20 detik; memeriksa daftar tiap denyut itu mahal
+
+/**
+ * "Kalau gudang dan bengkel berdiri di ladangku, pindahkan."
+ *
+ * Petani memeriksa daftar stasiun dan bengkel milik pemiliknya. Apa pun yang
+ * berdiri di dalam patoknya membuat balai kerja dipilih ulang di luar patok;
+ * companion pemilik peti/meja itu yang membongkar dan memasangnya lagi di
+ * sana (station.js » evictStation, workshop.js » evictWorkBlock), lengkap
+ * dengan seluruh isinya. Petani sendiri tidak membongkar milik orang lain —
+ * dia cuma yang menyuruh, dan yang disuruh yang mengerjakan.
+ */
+function guardField(entity, state, area, ownerId) {
+  if (!area.claimed || !ownerId) return undefined;
+  const now = system.currentTick;
+  if (now - (state.guardAt ?? -GUARD_EVERY) < GUARD_EVERY) return undefined;
+  state.guardAt = now;
+
+  const dimensionId = entity.dimension.id;
+  const bounds = { x0: area.x0, x1: area.x1, z0: area.z0, z1: area.z1 };
+  const chests = stationsIn(ownerId, dimensionId, bounds);
+  const shops = workBlocksIn(ownerId, dimensionId, bounds);
+  if (!chests.length && !shops.length) return undefined;
+
+  const moved = demandMove(entity, ownerId, "gudang berdiri di ladang");
+  const what = [];
+  if (chests.length) what.push(`${chests.length} peti`);
+  if (shops.length) what.push(`${shops.length} bengkel`);
+  logInfo(TAG, `${entStr(entity)} menyuruh ${what.join(" dan ")} pindah dari ladangnya.`);
+  report(entity, `${what.join(" dan ")} berdiri di ladangku. Tolong pindahkan ke balai` +
+    (moved ? ` yang baru di (${moved.x}, ${moved.z}).` : "."));
+  sayFrom(entity, "farm");
+  return `menyuruh ${what.join(" dan ")} pindah dari ladang`;
 }
 
 export function tickFarm(entity, state, owner) {
@@ -361,6 +557,14 @@ export function tickFarm(entity, state, owner) {
   if (!container) {
     logError(TAG, `${entStr(entity)} tidak punya peti maupun kantong!`);
     return "tidak ada tempat menyimpan apa pun";
+  }
+  // Gudang dan bengkel berdiri di balai kerja bersama, dan balai itu SELALU
+  // di luar patok. Kalau petani belum pernah ke sana, dia ke sana dulu — peti
+  // panennya memang ada di situ.
+  const trip = stationTravel(entity, station);
+  if (trip) {
+    writeState(entity, state);
+    return trip;
   }
   if (station.missing) {
     // Kayu untuk peti dan papan namanya diambil sendiri kalau memang ada pohon
@@ -406,7 +610,15 @@ export function tickFarm(entity, state, owner) {
   refreshSign(entity, state);
   const farm = farmPlan(state);
 
-  // 2. Panen selalu didahulukan, apa pun fasenya — tanaman matang tidak
+  // 2. Ladang ini milik petani. Gudang, meja kerja dan tungku yang berdiri di
+  //    dalamnya disuruh pindah — bukan ditimbun diam-diam.
+  const evicted = guardField(entity, state, area, ownerId);
+  if (evicted) {
+    writeState(entity, state);
+    return evicted;
+  }
+
+  // 3. Panen selalu didahulukan, apa pun fasenya — tanaman matang tidak
   //    boleh menunggu ladang selesai diratakan.
   if (state.job?.kind === "harvest") {
     const status = continueHarvest(entity, state, container);
@@ -414,14 +626,16 @@ export function tickFarm(entity, state, owner) {
     if (status) return status;
   }
 
+  // Fase kerja jalan di PETAK INTI, bukan seluruh chunk sekaligus.
+  const plot = plotOf(state, area);
   let status;
   try {
     switch (farm.phase) {
-      case "level": status = phaseLevel(entity, state, area, container, farm, ownerId, station); break;
-      case "water": status = phaseWater(entity, state, area, container, farm, ownerId, station); break;
-      case "till": status = phaseTill(entity, state, area, container, farm, ownerId, station); break;
-      case "plant": status = phasePlant(entity, state, area, container, farm, ownerId, station); break;
-      default: status = phaseTend(entity, state, area, container, farm, ownerId, station); break;
+      case "level": status = phaseLevel(entity, state, plot, container, farm, ownerId, station); break;
+      case "water": status = phaseWater(entity, state, plot, container, farm, ownerId, station); break;
+      case "till": status = phaseTill(entity, state, plot, container, farm, ownerId, station); break;
+      case "plant": status = phasePlant(entity, state, plot, container, farm, ownerId, station); break;
+      default: status = phaseTend(entity, state, plot, container, farm, ownerId, station); break;
     }
   } catch (err) {
     logError(TAG, `Error di fase bertani "${farm.phase}"`, err);
@@ -487,39 +701,32 @@ function phaseLevel(entity, state, area, container, farm, ownerId, station) {
   }
   const dimension = entity.dimension;
   const total = areaSize(area);
-  if (stillWalking(entity, farm)) return "menuju petak yang belum rata";
-  let leveled = 0;
-  let needFill = false;
+  const tool = getGear(entity).mainhand;
 
-  for (let n = 0; n < SCAN_PER_TICK && leveled < LEVEL_BUDGET; n++) {
+  // Kolom yang sedang dipegang dikerjakan sampai tuntas. Tanpa pegangan ini
+  // kursor sudah maju ke kolom berikutnya sebelum satu ayunan pun selesai,
+  // dan tidak ada satu blok pun yang pernah benar-benar patah.
+  if (farm.cut) {
+    const status = cutStep(entity, area, container, farm, tool);
+    if (status) return status;
+  }
+
+  let needFill = false;
+  for (let n = 0; n < SCAN_PER_TICK; n++) {
     const { x, z } = columnAt(area, farm.cursor);
     farm.cursor = (farm.cursor + 1) % total;
     farm.swept++;
-    // Cek jarak DULU, baru bongkar/timbun — supaya companion benar-benar
-    // berdiri di petak yang dia kerjakan.
-    const peek = levelColumn(dimension, x, z, area.flattenY, container, 0);
-    if (peek.reason === "need-fill") needFill = true;
-    if (peek.reason === "ok" || peek.reason === "none" || peek.reason === "blocked") continue;
-    const forced = farm.stuckAt && farm.stuckAt.x === x && farm.stuckAt.z === z;
-    if (!forced && !reachFor(entity, x, area.flattenY, z)) {
-      lockTarget(entity, farm, total, x, area.flattenY, z);
-      return "menuju petak yang belum rata";
+    const need = columnNeed(dimension, x, z, area.flattenY, container);
+    if (need === "need-fill") {
+      needFill = true;
+      continue;
     }
-    farm.stuckAt = null;
-    const result = levelColumn(dimension, x, z, area.flattenY, container, LEVEL_BUDGET - leveled);
-    if (result.reason === "need-fill") needFill = true;
-    if (!result.used) continue;
-    leveled += result.used;
-    hold(entity, 14, { pose: POSE.build, reason: "level" });
-    sound(dimension, "step.gravel", { x, y: area.flattenY, z });
-    particle(dimension, "minecraft:basic_crit_particle", { x: x + 0.5, y: area.flattenY + 1, z: z + 0.5 });
+    if (need !== "cut" && need !== "fill") continue;
+    farm.cut = { x, z };
+    const status = cutStep(entity, area, container, farm, tool);
+    if (status) return status;
   }
 
-  if (leveled) {
-    farm.acted += leveled;
-    logDebug(TAG, `Fase ratakan: ${leveled} blok dikerjakan tick ini.`);
-    return `meratakan lahan (${leveled} blok)`;
-  }
   if (needFill) {
     const own = ensureMaterial(entity, state, ownerId, "dirt",
                                station.chest ?? state.station, container);
@@ -561,7 +768,7 @@ function findChannelCellNeedingWater(dimension, area) {
   for (let x = area.x0; x <= area.x1; x++) {
     if (!isChannelColumn(x, area)) continue;
     for (let z = area.z0; z <= area.z1; z += 1) {
-      const offset = z - area.z0;
+      const offset = z - anchor(area).z0;
       const isSource = offset % SOURCE_EVERY === 0 || z === area.z1;
       if (!isSource) continue;
       const cell = blockAt(dimension, x, area.flattenY, z);
@@ -785,10 +992,20 @@ function phaseTill(entity, state, area, container, farm, ownerId, station) {
     return `mencangkul petak yang sudah berair (${tilled})`;
   }
   if (farm.swept >= total) {
-    if (dry && area.claimed) {
+    // Petak yang tetap kering sesudah paritnya dua kali diperiksa memang tidak
+    // bisa diairi (tepi klaim, batu induk, blok terlindungi). Kembali ke fase
+    // parit untuk yang ketiga kalinya cuma membuat petani berputar antara
+    // "gali parit" dan "cangkul" selamanya dan tidak pernah menanam sebutir
+    // bibit pun — lebih baik ladangnya sedikit lebih kecil tapi jadi.
+    if (dry && area.claimed && (farm.dryRetry ?? 0) < 2) {
+      farm.dryRetry = (farm.dryRetry ?? 0) + 1;
       toPhase(entity, farm, "water", "masih ada petak kering, parit ditambah");
       return `${dry} petak belum kebagian air, menggali parit lagi`;
     }
+    if (dry) {
+      logInfo(TAG, `${dry} petak tetap kering sesudah parit diperiksa ulang; dilewati saja.`);
+    }
+    farm.dryRetry = 0;
     toPhase(entity, farm, "plant", "semua petak yang bisa dicangkul sudah jadi farmland");
     return "selesai mencangkul, mulai menanam";
   }
@@ -935,9 +1152,23 @@ function phaseTend(entity, state, area, container, farm, ownerId, station) {
       report(entity, `Ada ${broken} petak yang kering lagi. Aku perbaiki paritnya.`);
       return "memperbaiki petak yang kering";
     }
+
+    // Petak inti sudah benar-benar jadi ladang: sekarang baru dilebarkan.
+    // Melebar SESUDAH jadi, bukan sebelum — supaya yang dilihat pemain adalah
+    // ladang kecil yang rapi lalu tumbuh, bukan satu chunk penuh tanah gundul
+    // yang tidak pernah selesai.
+    if (area.claimed && !area.whole) {
+      const before = farm.plot ?? PLOT.start;
+      farm.plot = before + PLOT.grow;
+      toPhase(entity, farm, "level", `petak ${before}x${before} sudah jadi, dilebarkan`);
+      logInfo(TAG, `Petak ladang dilebarkan dari ${before} ke ${farm.plot}.`);
+      report(entity, `Petak ${before}x${before} sudah jadi ladang. Aku lebarkan sedikit.`);
+      return "melebarkan ladang";
+    }
+
     const decorated = decorateStep(entity, state, area, container);
     if (decorated) return decorated;
-    for (const c of area.chunks) {
+    for (const c of (area.full ?? area).chunks ?? []) {
       if (markWorked(dimension, c.cx, c.cz)) {
         report(entity, `Chunk (${c.cx}, ${c.cz}) sudah jadi ladang penuh.`);
       }

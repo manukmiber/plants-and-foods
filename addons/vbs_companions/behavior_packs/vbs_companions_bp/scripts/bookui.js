@@ -11,6 +11,7 @@ import {
   chunkMap, ensureStake, ensureVillageStake, nearestClaimHint, toggleClaimAt,
 } from "./claim.js";
 import { betaLines } from "./beta.js";
+import { readDepot } from "./depot.js";
 import { energyOf, isResting, isSleeping, needsLabel, sleepOf } from "./energy.js";
 import { bagCount } from "./bag.js";
 import { dialogueStats } from "./lines.js";
@@ -330,6 +331,25 @@ const CHAPTERS = [
     ],
   },
   {
+    title: "§6Balai kerja bersama",
+    icon: "textures/items/iron_ingot",
+    body: [
+      "§7Semua companion milikmu sepakat memakai §fSATU halaman kerja§7: satu",
+      "§7peti gudang, satu meja kerja, satu tungku. Titiknya dipilih companion",
+      "§7pertama yang butuh tempat kerja, lalu dipakai bersama-sama.",
+      "",
+      "§7Itulah sebabnya kiriman benar-benar sampai: pencari barang menaruh",
+      "§7kayunya di peti yang memang dilihat pembangun dan perajin.",
+      "",
+      "§f• §7Balai TIDAK pernah berdiri di dalam chunk berpatok.",
+      "§f• §7Kalau kamu mematok chunk yang sudah ada gudangnya, §fpetani",
+      "§7  menyuruh mereka pindah§7 — peti, isinya, meja kerja dan tungku",
+      "§7  dibongkar dan dipasang lagi di balai baru. Tidak ada yang hilang.",
+      "",
+      "§8Koordinatnya ada di §7Kendalikan Companion » Perintah untuk Semua§8.",
+    ],
+  },
+  {
     title: "§dTenaga, kantuk, bantuan",
     icon: "textures/items/bed_red",
     body: [
@@ -409,11 +429,17 @@ async function openControl(player) {
 }
 
 async function openAllOrders(player, mine) {
+  // Titik balai ikut dipajang: itu satu-satunya cara pemain tahu ke mana
+  // seluruh kru sepakat menaruh gudang, meja kerja dan tungkunya.
+  const depot = readDepot(player.id);
+  const yard = depot
+    ? `§7Balai kerja bersama: §f${depot.x}, ${depot.y}, ${depot.z}§7 (${String(depot.dim).replace("minecraft:", "")}).`
+    : "§8Balai kerja bersama belum ditentukan — companion pertama yang bekerja yang memilih titiknya.";
   const form = new ActionFormData()
     .title("§l§ePerintah untuk Semua")
     .body(`§7Berlaku untuk §f${mine.length}§7 companion milikmu, di dimensi mana pun.\n` +
           "§8Yang sedang tidur atau beristirahat tetap menerima perintahnya dan\n" +
-          "§8mengerjakannya begitu bangun.");
+          "§8mengerjakannya begitu bangun.\n\n" + yard);
   for (const key of MODE_KEYS) form.button(MODES[key].button, MODES[key].icon);
   form.button("§8« Kembali");
 

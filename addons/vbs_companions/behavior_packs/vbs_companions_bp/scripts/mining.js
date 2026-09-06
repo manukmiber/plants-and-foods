@@ -3,19 +3,19 @@
  */
 
 import { system } from "@minecraft/server";
-import { DIGGABLE, ORES, POSE, PROTECTED } from "./config.js";
+import { DIGGABLE, DIGGABLE_EXTRA, ORES, POSE, PROTECTED } from "./config.js";
 import { report, sayFrom } from "./chat.js";
-import { craftStep } from "./crafting.js";
+import { craftItemStep, craftStep } from "./crafting.js";
 import { hold } from "./hold.js";
 import { isGreeting } from "./look.js";
-import { maybeRequestHelp } from "./requests.js";
+import { requestMaterial, requestTool } from "./requests.js";
 import { writeState } from "./state.js";
 import { ensureStation } from "./station.js";
 import {
-  alive, blockAt, dist2, face, getGear, getOwnerId, isAir, isSolid, makeItem,
-  particle, putIn, sound, steer,
+  alive, blockAt, countIn, dist2, face, getGear, getOwnerId, isAir, isSolid,
+  makeItem, particle, putIn, sound, steer,
 } from "./util.js";
-import { entStr, logDebug, logInfo, logWarn, posStr } from "./logger.js";
+import { entStr, logDebug, logError, logInfo, logWarn, posStr } from "./logger.js";
 
 const TAG = "MINING";
 const DIRS = [[1, 0], [0, 1], [-1, 0], [0, -1]];
@@ -46,14 +46,77 @@ function addToBag(state, id, amount = 1) {
   logDebug(TAG, `Menambah item ke tas mining: +${amount} ${id} (total item tipe ini: ${state.bag[id]})`);
 }
 
+/**
+ * Blok ini boleh digali?
+ *
+ * Yang TIDAK boleh cuma dua: blok terlindungi (peti, ranjang, spawner,
+ * bedrock, obsidian...) dan lava. Selebihnya — termasuk pasir, basalt, sculk,
+ * batu bata reruntuhan dan blok apa pun yang tidak ada di daftar — boleh
+ * dibongkar. Versi lama memakai daftar putih ketat, jadi satu blok asing
+ * setinggi kepala membuat seluruh kolom galian dibatalkan dan terowongan
+ * membelok; hasilnya lorong yang sempit dan berkelok, bukan 1x3 yang lurus.
+ */
 function diggable(block) {
   if (!block) return false;
   try {
     if (block.isAir) return true;
-    if (PROTECTED.has(block.typeId) || LAVA.has(block.typeId)) return false;
-    return DIGGABLE.has(block.typeId);
-  } catch {
+    const id = block.typeId;
+    if (PROTECTED.has(id) || LAVA.has(id)) return false;
+    if (block.isLiquid) return false;
+    return true;
+  } catch (e) {
+    logWarn(TAG, "Gagal memeriksa apakah blok bisa digali", e);
     return false;
+  }
+}
+
+/** Blok yang memang diharapkan ada di jalur galian (untuk pencatatan saja). */
+function expected(block) {
+  const id = block?.typeId;
+  return Boolean(id) && (DIGGABLE.has(id) || DIGGABLE_EXTRA.has(id));
+}
+
+/**
+ * Menggali satu kolom setinggi TUNNEL_HEIGHT. Tiap sel diurus SENDIRI-SENDIRI:
+ * kalau sel di ketinggian kepala kebetulan blok yang tidak boleh dibongkar,
+ * sel itu saja yang dilewati — sisanya tetap digali, jadi lorongnya tetap
+ * terbuka dan tetap setinggi tiga blok di mana pun bisa.
+ */
+function digColumn(entity, state, dimension, x, baseY, z) {
+  let dug = 0;
+  let blocked = 0;
+  for (let dy = 0; dy < TUNNEL_HEIGHT; dy++) {
+    const cell = blockAt(dimension, x, baseY + dy, z);
+    if (!cell) {
+      logDebug(TAG, `Sel (${x}, ${baseY + dy}, ${z}) tidak terbaca (chunk belum dimuat?).`);
+      blocked++;
+      continue;
+    }
+    if (cell.isAir) continue;
+    if (!diggable(cell)) {
+      logDebug(TAG, `Sel (${x}, ${baseY + dy}, ${z}) dilewati: ${cell.typeId} tidak boleh dibongkar.`);
+      blocked++;
+      continue;
+    }
+    if (!expected(cell)) {
+      logDebug(TAG, `Blok tak terduga di jalur galian: ${cell.typeId} di (${x}, ${baseY + dy}, ${z}) — tetap dibongkar.`);
+    }
+    if (dig(entity, state, cell)) dug++;
+  }
+  logDebug(TAG, `digColumn (${x}, ${baseY}, ${z}): ${dug} sel dibongkar, ${blocked} dilewati, target tinggi ${TUNNEL_HEIGHT}.`);
+  return { dug, blocked };
+}
+
+/** Lantai kaki harus padat, kalau tidak companion jatuh ke lubang gua. */
+function floorUnder(dimension, x, y, z) {
+  const floor = blockAt(dimension, x, y - 1, z);
+  if (!floor || floor.isAir || floor.isLiquid) {
+    try {
+      blockAt(dimension, x, y - 1, z)?.setType("minecraft:cobblestone");
+      logDebug(TAG, `Lantai terowongan di (${x}, ${y - 1}, ${z}) ditambal.`);
+    } catch (e) {
+      logDebug(TAG, `Tidak bisa menambal lantai di (${x}, ${y - 1}, ${z})`, e);
+    }
   }
 }
 
@@ -130,13 +193,29 @@ export function tickMine(entity, state, owner) {
   const station = ensureStation(entity, state);
   const container = station?.container;
 
+  if (!container) {
+    logError(TAG, `${entStr(entity)} tidak punya peti maupun kantong!`);
+    return "tidak ada tempat menyimpan apa pun";
+  }
+  if (station.missing) {
+    requestMaterial(entity, state, ownerId, station.missing, station.chest ?? state.station);
+  }
+
+  // Beliung dulu, dan HARUS berurutan: kayu, batu, besi, emas, intan. Kalau
+  // bahan tingkat berikutnya belum ada, dia meminta bahannya — bukan melompat
+  // ke bahan tingkat yang lebih tinggi yang kebetulan tergeletak di peti.
   const held = getGear(entity).mainhand;
   const craft = craftStep(entity, state, "pickaxe", container, held);
   if (craft === "no-material") {
-    maybeRequestHelp(entity, state, ownerId, "pickaxe", held, station?.chest);
-    return "peti kosong: butuh bahan untuk beliung (sudah minta tolong perajin)";
+    requestTool(entity, state, ownerId, "pickaxe", held, station.chest ?? state.station);
+    requestMaterial(entity, state, ownerId, "wood", station.chest ?? state.station);
+    logInfo(TAG, `${entStr(entity)} belum punya beliung apa pun; menunggu bahan kayu.`);
+    return "belum punya beliung kayu: minta kayu ke perajin & pencari barang";
   }
-  if (craft === "no-table") return "tidak ada meja kerja dan tidak ada papan di peti";
+  if (craft === "no-table") {
+    requestMaterial(entity, state, ownerId, "wood", station.chest ?? state.station);
+    return "butuh meja kerja (dan kayu untuk membuatnya)";
+  }
   if (craft === "walking" || craft === "crafting") {
     writeState(entity, state);
     return "membuat beliung";
@@ -144,14 +223,25 @@ export function tickMine(entity, state, owner) {
   if (craft === "done") {
     writeState(entity, state);
     sayFrom(entity, "done");
-    return "beliung baru selesai";
+    return `beliung baru selesai: ${getGear(entity).mainhand ?? "?"}`.replace("minecraft:", "");
   }
 
-  if (container && (state.bag["minecraft:torch"] ?? 0) === 0) {
+  if ((state.bag["minecraft:torch"] ?? 0) === 0) {
     const taken = takeTorches(container);
     if (taken) {
       logInfo(TAG, `Mengambil ${taken} obor dari peti stasiun.`);
       addToBag(state, "minecraft:torch", taken);
+    } else if (countIn(container, ["minecraft:coal", "minecraft:charcoal"]) > 0) {
+      // Obor pun dibuat sendiri dari arang + stik, bukan muncul dari udara.
+      const made = craftItemStep(entity, state, "torch", container);
+      if (made.status === "done") {
+        logInfo(TAG, `${entStr(entity)} membuat ${made.amount} obor sendiri.`);
+      } else if (made.status === "walking" || made.status === "crafting") {
+        writeState(entity, state);
+        return "membuat obor";
+      }
+    } else {
+      requestMaterial(entity, state, ownerId, "coal", station.chest ?? state.station);
     }
   }
 
@@ -236,16 +326,16 @@ function descend(entity, state, plan) {
       report(entity, "Ada lava di depan. Aku belok.");
       return "menghindari lava";
     }
-    const cells = [];
-    for (let dy = 0; dy < TUNNEL_HEIGHT; dy++) cells.push(blockAt(dimension, nx, ny + dy, nz));
-    if (cells.some((b) => b && !diggable(b))) {
+    // Sel kaki wajib bisa dibongkar; sel di atasnya boleh dilewati satu-satu.
+    const foot = blockAt(dimension, nx, ny, nz);
+    if (foot && !diggable(foot)) {
       plan.dir = (plan.dir + 1) % 4;
-      logWarn(TAG, `Blok tidak bisa digali di tangga. Membelokkan arah tangga ke ${plan.dir}`);
+      logWarn(TAG, `Blok kaki ${foot.typeId} tidak bisa digali. Membelokkan tangga ke arah ${plan.dir}`);
       return "membelokkan tangga";
     }
-    for (const cell of cells) {
-      if (dig(entity, state, cell)) done++;
-    }
+    const result = digColumn(entity, state, dimension, nx, ny, nz);
+    done += result.dug;
+    floorUnder(dimension, nx, ny, nz);
     plan.x = nx;
     plan.z = nz;
     plan.y = ny;
@@ -275,14 +365,21 @@ function tunnel(entity, state, plan) {
       report(entity, "Lava. Aku tidak menembus situ.");
       return "menghindari lava";
     }
-    const cells = [];
-    for (let dy = 0; dy < TUNNEL_HEIGHT; dy++) cells.push(blockAt(dimension, nx, plan.y + dy, nz));
-    if (cells.some((b) => b && !diggable(b))) {
+    const foot = blockAt(dimension, nx, plan.y, nz);
+    if (foot && !diggable(foot)) {
+      logWarn(TAG, `Blok kaki ${foot.typeId} di (${nx}, ${plan.y}, ${nz}) tidak boleh dibongkar.`);
       if (digging) plan.branchStep = 0;
       else plan.dir = (plan.dir + 1) % 4;
       return "membelokkan terowongan";
     }
-    for (const cell of cells) dig(entity, state, cell);
+    const result = digColumn(entity, state, dimension, nx, plan.y, nz);
+    floorUnder(dimension, nx, plan.y, nz);
+    if (result.blocked === TUNNEL_HEIGHT) {
+      logWarn(TAG, `Seluruh kolom (${nx}, ${plan.y}, ${nz}) terhalang; terowongan dibelokkan.`);
+      if (digging) plan.branchStep = 0;
+      else plan.dir = (plan.dir + 1) % 4;
+      return "membelokkan terowongan";
+    }
 
     const oreOffsets = [[0, -1, 0], [0, TUNNEL_HEIGHT, 0]];
     for (let dy = 0; dy < TUNNEL_HEIGHT; dy++) {
@@ -319,7 +416,13 @@ function tunnel(entity, state, plan) {
 function haul(entity, state, station) {
   const plan = state.plan.mine;
   plan.phase = "haul";
-  if (!station) return "tidak ada peti untuk menyetor";
+  if (!station?.chest) {
+    // Petinya belum berdiri: hasil tambang tetap di kantong pribadi, dan
+    // begitu peti jadi (ensureStation) isinya otomatis dipindahkan.
+    logDebug(TAG, `${entStr(entity)} belum punya peti; hasil tambang disimpan di kantong.`);
+    plan.phase = plan.y <= targetDepth(entity.dimension.id) ? "tunnel" : "descend";
+    return "kantong penuh, menunggu peti berdiri";
+  }
   const chest = station.chest;
   const target = { x: chest.x + 0.5, y: chest.y, z: chest.z + 0.5 };
   const d2 = dist2(entity.location, target);

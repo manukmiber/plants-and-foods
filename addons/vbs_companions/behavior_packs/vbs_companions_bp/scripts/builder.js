@@ -2,17 +2,20 @@
  * Mode membangun.
  */
 
-import { POSE, PROTECTED } from "./config.js";
+import { system } from "@minecraft/server";
+import { BED_IDS, CHEST_IDS, POSE, PROTECTED } from "./config.js";
 import { report, sayFrom } from "./chat.js";
-import { claimsNear, markWorked } from "./claim.js";
+import { claimsNear, ensureVillageStake, markWorked } from "./claim.js";
 import { workArea } from "./farming.js";
 import { hold } from "./hold.js";
 import { isGreeting } from "./look.js";
+import { takeOrMake } from "./items.js";
+import { requestMaterial } from "./requests.js";
 import { addVillageHome, writeState } from "./state.js";
 import { ensureStation } from "./station.js";
 import {
   alive, blockAt, chunkCenter, countIn, dist2, face, getOwnerId, isAir,
-  isSolid, particle, sound, steer, takeFrom,
+  isSolid, makeItem, particle, putIn, resolveOwner, sound, steer, takeFrom,
 } from "./util.js";
 import { entStr, logDebug, logError, logInfo, logWarn, posStr } from "./logger.js";
 
@@ -50,14 +53,7 @@ const DOORS = [
   "minecraft:oak_door", "minecraft:spruce_door", "minecraft:birch_door",
   "minecraft:iron_door",
 ];
-const BEDS = [
-  "minecraft:red_bed", "minecraft:white_bed", "minecraft:blue_bed",
-  "minecraft:green_bed", "minecraft:brown_bed", "minecraft:black_bed",
-  "minecraft:gray_bed", "minecraft:light_gray_bed", "minecraft:cyan_bed",
-  "minecraft:purple_bed", "minecraft:magenta_bed", "minecraft:pink_bed",
-  "minecraft:lime_bed", "minecraft:yellow_bed", "minecraft:orange_bed",
-  "minecraft:light_blue_bed",
-];
+const BEDS = BED_IDS;
 
 const MATERIALS = {
   floor: [...PLANKS, ...STONE, "minecraft:gravel"],
@@ -73,6 +69,15 @@ const MATERIALS = {
          ...PLANKS, ...STONE],
   bed: BEDS,
 };
+
+function makeItemSafe(id) {
+  try {
+    return makeItem(id, 1);
+  } catch (e) {
+    logWarn(TAG, `Gagal membuat ulang ItemStack ${id}`, e);
+    return undefined;
+  }
+}
 
 function materialFor(container, role) {
   logDebug(TAG, `Mencari bahan untuk peran: "${role}"`);
@@ -366,18 +371,32 @@ function runBuildSteps(entity, dimension, container, job, originY, steps) {
       continue;
     }
 
-    const wanted = step.role === "chest" ? "minecraft:chest" : materialFor(container, step.role);
-    if (!wanted) {
-      logWarn(TAG, `Bahan untuk peran "${step.role}" tidak tersedia di peti!`);
-      missing = step.role;
-      job.index++;
-      continue;
-    }
-    if (step.role !== "chest" && takeFrom(container, wanted, 1) !== 1) {
-      logWarn(TAG, `Gagal mengambil bahan "${wanted}" dari peti untuk peran "${step.role}".`);
-      missing = step.role;
-      job.index++;
-      continue;
+    // Peti di dalam rumah TIDAK lagi muncul dari udara: entah petinya sudah
+    // ada di peti stasiun, entah dirakit dulu dari delapan papan.
+    let wanted;
+    if (step.role === "chest") {
+      const got = takeOrMake(container, "chest", entity, CHEST_IDS);
+      if (!got.got) {
+        logWarn(TAG, `Peti rumah belum bisa dipasang: butuh ${got.missing ?? "kayu"}.`);
+        missing = "peti (butuh papan)";
+        job.index++;
+        continue;
+      }
+      wanted = got.got;
+    } else {
+      wanted = materialFor(container, step.role);
+      if (!wanted) {
+        logWarn(TAG, `Bahan untuk peran "${step.role}" tidak tersedia di peti!`);
+        missing = step.role;
+        job.index++;
+        continue;
+      }
+      if (takeFrom(container, wanted, 1) !== 1) {
+        logWarn(TAG, `Gagal mengambil bahan "${wanted}" dari peti untuk peran "${step.role}".`);
+        missing = step.role;
+        job.index++;
+        continue;
+      }
     }
     try {
       logInfo(TAG, `Memasang blok "${wanted}" di (${step.x}, ${y}, ${step.z})`);
@@ -385,6 +404,7 @@ function runBuildSteps(entity, dimension, container, job, originY, steps) {
       placed++;
     } catch (e) {
       logError(TAG, `Gagal eksekusi block.setType("${wanted}") di (${step.x}, ${y}, ${step.z})`, e);
+      putIn(container, makeItemSafe(wanted));
       job.index++;
       continue;
     }
@@ -423,14 +443,53 @@ function villageStep(entity, state, dimension, container, claim, ownerId) {
     addVillageHome(ownerId, bed);
     logInfo(TAG, `Rumah desa selesai di chunk (${claim.cx}, ${claim.cz}). Ranjang dicatat di ${posStr(bed)}`);
     sayFrom(entity, "village");
-    report(entity, `Rumah baru selesai di chunk (${claim.cx}, ${claim.cz}). Companion bisa tidur di sana malam ini.`);
+    report(entity,
+      `Rumah baru selesai di chunk (${claim.cx}, ${claim.cz}), ranjangnya di ${bed.x}, ${bed.y}, ${bed.z}. ` +
+      "Kalian semua tidur di sana ya kalau sudah mengantuk.");
     return "rumah desa selesai";
   }
 
   writeState(entity, state);
   if (result.waiting) return `menuju rumah desa (${result.index + 1}/${result.total})`;
-  if (!result.placed && result.missing) return `peti kehabisan bahan rumah desa untuk ${result.missing}`;
+  if (!result.placed && result.missing) {
+    const ask = result.missing === "peti (butuh papan)" ? "wood" : "wood";
+    requestMaterial(entity, state, ownerId, ask, state.station);
+    return `peti kehabisan bahan rumah desa untuk ${result.missing} (sudah minta bahan)`;
+  }
   return `membangun rumah desa: ${result.index}/${result.total}`;
+}
+
+const OFFER_EVERY = 6000;   // ~5 menit antar tawaran, jangan mengganggu terus
+
+/**
+ * Pembangun MENGAJUKAN pembuatan kampung ke pemiliknya sendiri.
+ *
+ * Kalau pemilik sedang online, belum punya satu pun chunk berpatok desa, dan
+ * belum lama ditawari, Pembangun menyapa lewat chat lalu langsung menaruh
+ * Patok Desa di kantong pemain — itulah "stick penanda chunk" yang diminta.
+ * Pemain tinggal mematok chunk mana saja, dan rumah akan dibangun di situ.
+ */
+function offerVillage(entity, state, owner, ownerId, dimension) {
+  if (!owner || !ownerId) return false;
+  const now = system.currentTick;
+  const last = state.villageOfferAt ?? -OFFER_EVERY * 2;
+  if (now - last < OFFER_EVERY) return false;
+  const staked = claimsNear(dimension, entity.location, ownerId, 32, "village");
+  if (staked.length) {
+    logDebug(TAG, "Sudah ada chunk desa yang dipatok; tidak perlu menawarkan lagi.");
+    return false;
+  }
+  state.villageOfferAt = now;
+  logInfo(TAG, `${entStr(entity)} mengajukan pembuatan kampung ke ${owner.name}.`);
+  sayFrom(entity, "village");
+  report(entity, "Boleh aku bangun kampung kecil? Patok saja chunk yang kamu mau.");
+  const gave = ensureVillageStake(owner);
+  owner.sendMessage(gave
+    ? "§2Pembangun menyerahkan §fPatok Desa§2 ke kantongmu. §7Klik tanah untuk memilih " +
+      "chunk; tiap chunk berpatok akan dibangun satu rumah lengkap dengan ranjang, " +
+      "dan companion akan tidur di sana."
+    : "§7Patok Desa sudah ada di kantongmu — patok saja chunk yang kamu mau dibangun.");
+  return true;
 }
 
 export function tickBuild(entity, state, owner) {
@@ -453,11 +512,23 @@ export function tickBuild(entity, state, owner) {
   }
 
   const ownerId = getOwnerId(entity);
+  if (station.missing) {
+    requestMaterial(entity, state, ownerId, station.missing, station.chest ?? state.station);
+  }
+
   const villages = ownerId
-    ? claimsNear(dimension, entity.location, ownerId, 16, "village").filter((c) => !c.entry.worked)
+    ? claimsNear(dimension, entity.location, ownerId, 32, "village").filter((c) => !c.entry.worked)
     : [];
   if (villages.length) {
-    return villageStep(entity, state, dimension, container, villages[0], ownerId);
+    const status = villageStep(entity, state, dimension, container, villages[0], ownerId);
+    writeState(entity, state);
+    return status;
+  }
+
+  // Belum ada chunk desa: tawarkan ke pemiliknya, jangan menunggu diperintah.
+  if (offerVillage(entity, state, resolveOwner(entity) ?? owner, ownerId, dimension)) {
+    writeState(entity, state);
+    return "mengajukan pembuatan kampung ke pemilik";
   }
 
   if (!state.plan?.build) {
@@ -471,7 +542,7 @@ export function tickBuild(entity, state, owner) {
     return "rancangan tidak dikenal";
   }
 
-  const ctx = context(entity, state, owner?.id, owner);
+  const ctx = context(entity, state, ownerId, owner);
   const steps = blueprint.plan(ctx);
   if (!steps.length) {
     logWarn(TAG, `Blueprint "${job.name}" menghasilkan 0 langkah.`);
@@ -491,8 +562,11 @@ export function tickBuild(entity, state, owner) {
   writeState(entity, state);
   if (result.waiting) return `menuju titik ${result.index + 1} dari ${result.total}`;
   if (!result.placed && result.missing) {
-    logWarn(TAG, `Companion kekurangan bahan: "${result.missing}".`);
-    return `peti kehabisan bahan untuk ${result.missing}`;
+    logWarn(TAG, `Pembangun kekurangan bahan: "${result.missing}".`);
+    const ask = result.missing === "wall" || result.missing === "floor" ||
+      result.missing === "roof" || result.missing === "post" ? "wood" : "stone";
+    requestMaterial(entity, state, ownerId, ask, station.chest ?? state.station);
+    return `peti kehabisan bahan untuk ${result.missing} (sudah minta ke pencari barang)`;
   }
   const statusStr = `${blueprint.label}: ${result.index}/${result.total}`;
   logDebug(TAG, `tickBuild progress: ${statusStr}`);

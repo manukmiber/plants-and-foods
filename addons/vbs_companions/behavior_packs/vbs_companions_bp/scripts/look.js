@@ -6,7 +6,7 @@ import { system, world } from "@minecraft/server";
 import { FACE, LOOK, POSE } from "./config.js";
 import { sayFrom } from "./chat.js";
 import { hold, isHeld, reasonFor } from "./hold.js";
-import { alive, dist2, getMode, setFace } from "./util.js";
+import { getMode, setFace } from "./util.js";
 import { entStr, logDebug, logInfo, logWarn } from "./logger.js";
 
 const TAG = "LOOK";

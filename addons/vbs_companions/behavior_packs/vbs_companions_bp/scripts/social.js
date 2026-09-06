@@ -14,10 +14,13 @@ import { alive, dist2, face, getMode, getOwnerId, pick } from "./util.js";
 import { entStr, logDebug, logInfo } from "./logger.js";
 
 const TAG = "SOCIAL";
-const TALK_RADIUS = 7;
-const TURN_TICKS = 46;
-const COOLDOWN = 900;
-const CHANCE = 0.5;
+// Companion terasa "mati" kalau jarang bersuara. Jangkauan diperlebar,
+// jeda antar obrolan dipendekkan, dan peluang memulai obrolan dinaikkan —
+// jadi dua companion yang berpapasan hampir selalu bertegur sapa.
+const TALK_RADIUS = 10;
+const TURN_TICKS = 42;
+const COOLDOWN = 420;
+const CHANCE = 0.85;
 
 const talking = new Map();
 const lastTalk = new Map();

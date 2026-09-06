@@ -124,6 +124,9 @@ export const PROP = {
   waypoints: "vbs:waypoints",
   requests: "vbs:requests",
   villageHomes: "vbs:village_homes",
+  stations: "vbs:stations",
+  settings: "vbs:settings",
+  village: "vbs:village_offer",
 };
 
 export const ARMOR_POINTS = {
@@ -228,6 +231,26 @@ export const DIGGABLE = new Set([
   ...Object.keys(ORES),
 ]);
 
+// Blok yang ikut dijumpai saat menggali terowongan tapi dulu tidak ada di
+// DIGGABLE — akibatnya satu blok asing di ketinggian kepala membuat penambang
+// membatalkan seluruh kolom galian dan membelok, jadi terowongannya tidak
+// pernah benar-benar setinggi tiga blok.
+export const DIGGABLE_EXTRA = new Set([
+  "minecraft:sand", "minecraft:red_sand", "minecraft:clay", "minecraft:mud",
+  "minecraft:smooth_basalt", "minecraft:basalt", "minecraft:blackstone",
+  "minecraft:netherrack", "minecraft:soul_sand", "minecraft:soul_soil",
+  "minecraft:magma", "minecraft:end_stone", "minecraft:packed_ice",
+  "minecraft:blue_ice", "minecraft:ice", "minecraft:snow", "minecraft:moss_block",
+  "minecraft:rooted_dirt", "minecraft:podzol", "minecraft:mycelium",
+  "minecraft:terracotta", "minecraft:amethyst_block", "minecraft:tuff_bricks",
+  "minecraft:deepslate_bricks", "minecraft:deepslate_tiles", "minecraft:sculk",
+  "minecraft:mossy_cobblestone", "minecraft:infested_stone",
+  "minecraft:stone_bricks", "minecraft:cracked_stone_bricks",
+  "minecraft:mossy_stone_bricks", "minecraft:chiseled_stone_bricks",
+  "minecraft:suspicious_sand", "minecraft:suspicious_gravel",
+  "minecraft:raw_iron_block", "minecraft:raw_copper_block",
+]);
+
 export const PROTECTED = new Set([
   "minecraft:chest", "minecraft:trapped_chest", "minecraft:barrel",
   "minecraft:furnace", "minecraft:blast_furnace", "minecraft:smoker",
@@ -247,6 +270,69 @@ export const FOOD_HEAL = {
   "minecraft:cake": 10,
   "minecraft:sweet_berries": 2,
 };
+
+// Resep barang non-alat yang benar-benar harus punya bahannya dulu sebelum
+// boleh dipasang. Sebelum ini peti stasiun, papan nama dan meja kerja muncul
+// begitu saja dari udara — sekarang semuanya ditempa dari isi peti, dan kalau
+// bahannya tidak ada, permintaan bantuan dipasang ke perajin/pencari barang.
+export const ITEM_RECIPES = {
+  bucket: {
+    id: "minecraft:bucket", label: "Ember", makes: 1, needsTable: true,
+    needs: [{ any: ["minecraft:iron_ingot"], count: 3 }],
+    ask: "iron",
+  },
+  chest: {
+    id: "minecraft:chest", label: "Peti", makes: 1, needsTable: true,
+    needs: [{ any: "planks", count: 8 }],
+    ask: "wood",
+  },
+  sign: {
+    id: "minecraft:oak_sign", label: "Papan Nama", makes: 3, needsTable: true,
+    needs: [{ any: "planks", count: 6 }, { any: ["minecraft:stick"], count: 1 }],
+    ask: "wood",
+  },
+  crafting_table: {
+    id: "minecraft:crafting_table", label: "Meja Kerja", makes: 1, needsTable: false,
+    needs: [{ any: "planks", count: 4 }],
+    ask: "wood",
+  },
+  torch: {
+    id: "minecraft:torch", label: "Obor", makes: 4, needsTable: false,
+    needs: [{ any: ["minecraft:stick"], count: 1 },
+            { any: ["minecraft:coal", "minecraft:charcoal"], count: 1 }],
+    ask: "coal",
+  },
+};
+
+// Bahan mentah yang boleh diminta ke pencari barang (looter). Nilainya adalah
+// daftar item yang dianggap memenuhi permintaan itu.
+export const MATERIAL_REQUESTS = {
+  wood: { label: "kayu", ids: "logs", want: 16 },
+  planks: { label: "papan", ids: "planks", want: 16 },
+  stone: { label: "batu", ids: ["minecraft:cobblestone", "minecraft:stone", "minecraft:cobbled_deepslate"], want: 16 },
+  iron: { label: "besi", ids: ["minecraft:iron_ingot", "minecraft:raw_iron"], want: 3 },
+  dirt: { label: "tanah timbun", ids: ["minecraft:dirt", "minecraft:coarse_dirt"], want: 32 },
+  coal: { label: "arang", ids: ["minecraft:coal", "minecraft:charcoal"], want: 8 },
+  seed: { label: "bibit", ids: ["minecraft:wheat_seeds", "minecraft:carrot", "minecraft:potato", "minecraft:beetroot_seeds"], want: 16 },
+};
+
+export const CHEST_IDS = [
+  "minecraft:chest", "minecraft:trapped_chest", "minecraft:barrel",
+];
+
+export const SIGN_IDS = [
+  "minecraft:oak_sign", "minecraft:spruce_sign", "minecraft:birch_sign",
+  "minecraft:jungle_sign", "minecraft:acacia_sign", "minecraft:dark_oak_sign",
+];
+
+export const BED_IDS = [
+  "minecraft:red_bed", "minecraft:white_bed", "minecraft:blue_bed",
+  "minecraft:green_bed", "minecraft:brown_bed", "minecraft:black_bed",
+  "minecraft:gray_bed", "minecraft:light_gray_bed", "minecraft:cyan_bed",
+  "minecraft:purple_bed", "minecraft:magenta_bed", "minecraft:pink_bed",
+  "minecraft:lime_bed", "minecraft:yellow_bed", "minecraft:orange_bed",
+  "minecraft:light_blue_bed",
+];
 
 export const STAKE_NAME = "§ePatok Ladang";
 export const STAKE_ITEM = "minecraft:stick";
@@ -311,3 +397,28 @@ export const TICKS = {
   social: 140,
   teleportAt: 24,
 };
+// Daftar papan kayu dipakai di banyak berkas (crafting, stasiun, pembangun).
+// Diambil dari tier pertama TOOL_TIERS supaya tidak ada dua daftar yang bisa
+// berbeda isi.
+export const PLANKS = TOOL_TIERS[0].accepts;
+
+// Rasa kantuk terpisah dari energi. Energi habis karena BEKERJA; kantuk naik
+// karena WAKTU berjalan dan memuncak di malam hari. Companion yang mengantuk
+// akan mencari ranjang di rumah desa; kalau tidak ada ranjang, dia tidur di
+// bawah pohon atau di stasiunnya sendiri.
+export const SLEEP = {
+  max: 100,
+  gainPerTick: 0.06,        // per denyut kerja (TICKS.brain)
+  gainAtNight: 0.30,        // tambahan saat malam
+  sleepyAt: 60,             // mulai menguap, wajah sleepy
+  mustSleepAt: 85,          // wajib cari tempat tidur
+  recoverPerTick: 2.2,      // pemulihan saat tidur
+  wakeBelow: 10,
+  nightFrom: 13000,         // waktu dunia (tick) mulai malam
+  nightTo: 23000,
+  minSleepTicks: 120,
+};
+
+// Label mode yang dipakai di laporan dan obrolan.
+export const MODE_LABEL = Object.fromEntries(
+  Object.entries(MODES).map(([key, meta]) => [key, meta.label]));

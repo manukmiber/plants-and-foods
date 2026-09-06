@@ -3,67 +3,31 @@
  */
 
 import { system, world } from "@minecraft/server";
-
 import {
-  MARKER,
-  STAKE_ITEM,
-  STAKE_NAME,
-  VILLAGE_STAKE_ITEM,
-  VILLAGE_STAKE_NAME,
+  MARKER, STAKE_ITEM, STAKE_NAME, VILLAGE_STAKE_ITEM, VILLAGE_STAKE_NAME,
 } from "./config.js";
-
 import {
-  claimKey,
-  clearClaim,
-  getClaim as getClaimFromState,
-  readClaims,
-  setClaim,
+  claimKey, clearClaim, getClaim, readClaims, setClaim,
 } from "./state.js";
 
-import {
-  blockAt,
-  chunkCenter,
-  chunkOf,
-  dist2,
-  give,
-  isSolid,
-  makeItem,
-  particle,
-  sound,
-} from "./util.js";
-
-import {
-  entStr,
-  logDebug,
-  logError,
-  logInfo,
-  logWarn,
-  posStr,
-} from "./logger.js";
-
-const TAG = "CLAIM";
-
-const BEAM_HEIGHT = 18;
-const BEAM_STEP = 2;
-
-const BEAM = {
-  free: "minecraft:basic_flame_particle",
-  claimed: "minecraft:villager_happy",
-};
-
-// Export eksplisit untuk menghindari error:
-// Could not find export 'getClaim' in module 'claim.js'
-export function getClaim(dimensionId, cx, cz) {
-  return getClaimFromState(dimensionId, cx, cz);
-}
-const TAG = "CLAIM";
-const BEAM_HEIGHT = 18;
-const BEAM_STEP = 2;
-const BEAM = {
-  free: "minecraft:basic_flame_particle",
-  claimed: "minecraft:villager_happy",
-};
+// farming.js dan builder.js membaca ketinggian patok lewat getClaim, dan
+// mengambilnya dari sini. Tanpa re-export ini, Minecraft gagal MENAUTKAN
+// modulnya — seluruh mesin skrip add-on mati diam-diam begitu dunia dibuka,
+// jadi semua fitur "tidak jalan" sekaligus. Ini akar dari sebagian besar
+// keluhan itu.
 export { getClaim };
+import {
+  blockAt, chunkCenter, chunkOf, dist2, give, isSolid, makeItem, particle, sound,
+} from "./util.js";
+import { entStr, logDebug, logError, logInfo, logWarn, posStr } from "./logger.js";
+
+const TAG = "CLAIM";
+const BEAM_HEIGHT = 18;
+const BEAM_STEP = 2;
+const BEAM = {
+  free: "minecraft:basic_flame_particle",
+  claimed: "minecraft:villager_happy",
+};
 
 export function makeStake() {
   logDebug(TAG, "Membuat ItemStack Patok Ladang...");

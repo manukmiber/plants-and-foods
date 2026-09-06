@@ -7,7 +7,7 @@ import { FormCancelationReason } from "@minecraft/server-ui";
 import {
   ARMOR_POINTS, COMPANIONS, DEFAULT_MODE, FACE, MODES, POSE, PROP,
 } from "./config.js";
-import { entStr, logDebug, logError, logInfo, logWarn, posStr } from "./logger.js";
+import { entStr, logDebug, logError, logInfo, logTrace, logWarn, posStr } from "./logger.js";
 
 const TAG = "UTIL";
 export const SLOT_KEYS = ["head", "chest", "legs", "feet", "mainhand"];
@@ -167,37 +167,55 @@ function equippable(entity) {
   }
 }
 
-export function getGear(entity) {
-  const eq = equippable(entity);
-  if (eq) {
-    const out = {};
-    for (const key of SLOT_KEYS) {
-      try {
-        out[key] = eq.getEquipment(SLOT_ENUM[key])?.typeId;
-      } catch {
-        /* slot tidak ada */
-      }
-    }
-    return out;
-  }
+function rememberedGear(entity) {
   try {
-    return JSON.parse(entity.getDynamicProperty(PROP.gear) ?? "{}");
-  } catch {
+    const raw = entity.getDynamicProperty(PROP.gear);
+    return typeof raw === "string" ? JSON.parse(raw) : {};
+  } catch (e) {
+    logWarn(TAG, `Gagal membaca catatan perlengkapan ${entStr(entity)}`, e);
     return {};
   }
 }
 
-function rememberGear(entity, key, typeId) {
-  const gear = (() => {
-    try {
-      return JSON.parse(entity.getDynamicProperty(PROP.gear) ?? "{}");
-    } catch {
-      return {};
+/**
+ * Perlengkapan yang sedang dipakai companion.
+ *
+ * Entity companion memakai `minecraft:equippable` dengan daftar slot kosong,
+ * jadi `getEquipment()` selalu balik undefined walaupun itemnya benar-benar
+ * terpasang lewat perintah `replaceitem`. Versi lama langsung mengembalikan
+ * hasil kosong itu dan tidak pernah melirik catatan di dynamic property —
+ * akibatnya toolRank() selalu 0, companion mengira dirinya belum punya alat,
+ * dan menempa ulang alat tingkat terendah tanpa henti alih-alih naik tingkat.
+ * Sekarang catatan dipakai sebagai dasar dan hasil bacaan slot yang benar-benar
+ * terbaca menimpanya.
+ */
+export function getGear(entity) {
+  const out = rememberedGear(entity);
+  const eq = equippable(entity);
+  if (eq) {
+    for (const key of SLOT_KEYS) {
+      try {
+        const id = eq.getEquipment(SLOT_ENUM[key])?.typeId;
+        if (id) out[key] = id;
+      } catch {
+        /* slot tidak dideklarasikan di entity JSON, pakai catatan saja */
+      }
     }
-  })();
+  }
+  logTrace(TAG, `getGear ${entStr(entity)} -> ${JSON.stringify(out)}`);
+  return out;
+}
+
+function rememberGear(entity, key, typeId) {
+  const gear = rememberedGear(entity);
   if (typeId) gear[key] = typeId;
   else delete gear[key];
-  entity.setDynamicProperty(PROP.gear, JSON.stringify(gear));
+  try {
+    entity.setDynamicProperty(PROP.gear, JSON.stringify(gear));
+    logDebug(TAG, `Catatan perlengkapan ${entStr(entity)} diperbarui: ${key}=${typeId ?? "kosong"}`);
+  } catch (e) {
+    logError(TAG, `Gagal menyimpan catatan perlengkapan ${entStr(entity)}`, e);
+  }
 }
 
 export function setGear(entity, key, item) {
@@ -340,6 +358,31 @@ export function isPassable(block) {
   }
 }
 
+// Air dangkal boleh diarungi. Tanpa ini companion terkurung di balik parit
+// irigasi yang baru saja DIA SENDIRI gali: lantai parit berisi air, air tidak
+// dihitung padat, jadi tidak ada satu pun langkah yang sah untuk menyeberang.
+const WADEABLE = new Set(["minecraft:water", "minecraft:flowing_water"]);
+
+/** Blok yang boleh ditempati badan companion (udara, tanaman, atau air). */
+export function canOccupy(block) {
+  if (!block) return false;
+  try {
+    return isPassable(block) || WADEABLE.has(block.typeId);
+  } catch {
+    return false;
+  }
+}
+
+/** Blok yang cukup kuat untuk dipijak — termasuk air yang bisa diarungi. */
+export function isStandable(block) {
+  if (!block) return false;
+  try {
+    return isSolid(block) || WADEABLE.has(block.typeId);
+  } catch {
+    return false;
+  }
+}
+
 export function isSolid(block) {
   if (!block) return false;
   try {
@@ -366,10 +409,43 @@ export function face(entity, target) {
 }
 
 const walking = new Map();
+const STUCK_TICKS = 60;      // ~3 detik tanpa maju sedikit pun
+const STUCK_EPSILON = 0.08;
+
+/**
+ * Mencatat kemajuan langkah. Medan Minecraft kadang punya tebing yang tidak
+ * bisa dipanjat companion (beda tinggi lebih dari tiga blok, tepi jurang,
+ * dinding batu). Tanpa deteksi ini, companion yang mentok akan berdiri
+ * mendorong dinding selamanya dan pekerjaannya berhenti total.
+ */
+function noteProgress(entity, row) {
+  const at = entity.location;
+  const moved = row.lastPos
+    ? Math.hypot(at.x - row.lastPos.x, at.y - row.lastPos.y, at.z - row.lastPos.z)
+    : Infinity;
+  row.lastPos = { x: at.x, y: at.y, z: at.z };
+  if (moved > STUCK_EPSILON) {
+    row.stillSince = system.currentTick;
+    return;
+  }
+  if (row.stillSince === undefined) row.stillSince = system.currentTick;
+  if (!row.warned && system.currentTick - row.stillSince > STUCK_TICKS) {
+    row.warned = true;
+    logWarn(TAG, `${entStr(entity)} tidak maju ${STUCK_TICKS} tick menuju ${posStr(row.target)}; dianggap mentok.`);
+  }
+}
 
 export function steer(entity, target, step = 0.32) {
-  walking.set(entity.id, { target: { ...target }, step, at: system.currentTick });
-  return stepToward(entity, target, step);
+  const prev = walking.get(entity.id);
+  const same = prev && prev.target.x === target.x && prev.target.z === target.z;
+  const row = same ? prev : { target: { ...target }, step };
+  row.target = { ...target };
+  row.step = step;
+  row.at = system.currentTick;
+  walking.set(entity.id, row);
+  const done = stepToward(entity, target, step);
+  noteProgress(entity, row);
+  return done;
 }
 
 export function tickSteer(entity) {
@@ -379,21 +455,72 @@ export function tickSteer(entity) {
     walking.delete(entity.id);
     return false;
   }
-  return stepToward(entity, row.target, row.step);
+  const done = stepToward(entity, row.target, row.step);
+  noteProgress(entity, row);
+  return done;
+}
+
+/**
+ * Companion sedang mentok menuju tujuan sekarang? Pemanggil wajib memakai ini
+ * untuk berpindah tujuan alih-alih menunggu selamanya.
+ */
+export function isStuck(entity) {
+  const row = walking.get(entity?.id);
+  if (!row || row.stillSince === undefined) return false;
+  return system.currentTick - row.stillSince > STUCK_TICKS;
 }
 
 export function stopWalking(id) {
   walking.delete(id);
 }
 
+/**
+ * Menarik companion keluar kalau kakinya terkubur.
+ *
+ * Ini bisa terjadi wajar saat bekerja: petani menimbun petak tempat dia
+ * berdiri, penambang menambal lantai di bawahnya, pembangun memasang lantai
+ * rumah. Kalau dibiarkan, blok padat di posisi kaki membuat SEMUA percobaan
+ * melangkah gagal dan companion mematung selamanya di satu titik — persis
+ * gejala "dia berhenti kerja di tengah jalan".
+ */
+export function unstick(entity) {
+  const dim = entity.dimension;
+  const a = entity.location;
+  const feet = blockAt(dim, a.x, a.y, a.z);
+  const head = blockAt(dim, a.x, a.y + 1, a.z);
+  if (canOccupy(feet) && canOccupy(head)) return false;
+  for (let dy = 1; dy <= 8; dy++) {
+    const f = blockAt(dim, a.x, a.y + dy, a.z);
+    const h = blockAt(dim, a.x, a.y + dy + 1, a.z);
+    const floor = blockAt(dim, a.x, a.y + dy - 1, a.z);
+    if (!f || !h || !floor) continue;
+    if (!canOccupy(f) || !canOccupy(h) || !isStandable(floor)) continue;
+    try {
+      entity.teleport({ x: a.x, y: Math.floor(a.y + dy) + 0.02, z: a.z }, { dimension: dim });
+      logWarn(TAG, `${entStr(entity)} terkubur di ${posStr(a)}; diangkat ${dy} blok ke atas.`);
+      return true;
+    } catch (e) {
+      logWarn(TAG, `Gagal mengangkat ${entStr(entity)} yang terkubur`, e);
+      return false;
+    }
+  }
+  logWarn(TAG, `${entStr(entity)} terkubur di ${posStr(a)} dan tidak ada ruang kosong di atasnya.`);
+  return false;
+}
+
 function tryStep(entity, nx, nz, a, target) {
   const dim = entity.dimension;
-  for (const dy of [1, 0, -1, -2, -3]) {
+  // Urutannya sengaja dari perubahan tinggi TERKECIL dulu: datar, lalu turun
+  // satu, lalu naik satu. Kalau naik didahulukan, penambang memanjat keluar
+  // dari tangganya sendiri tiap langkah dan tidak pernah sampai ke dasar.
+  // Naik dua blok tetap tersedia (tepi ladang yang baru ditimbun), tapi
+  // paling belakang.
+  for (const dy of [0, -1, 1, -2, 2, -3]) {
     const feet = blockAt(dim, nx, a.y + dy, nz);
     const head = blockAt(dim, nx, a.y + dy + 1, nz);
     const floor = blockAt(dim, nx, a.y + dy - 1, nz);
     if (!feet || !head || !floor) continue;
-    if (!isPassable(feet) || !isPassable(head) || !isSolid(floor)) continue;
+    if (!canOccupy(feet) || !canOccupy(head) || !isStandable(floor)) continue;
     try {
       entity.teleport({ x: nx, y: Math.floor(a.y + dy) + 0.02, z: nz }, {
         dimension: dim,
@@ -408,6 +535,7 @@ function tryStep(entity, nx, nz, a, target) {
 }
 
 function stepToward(entity, target, step) {
+  unstick(entity);
   const a = entity.location;
   const dx = target.x - a.x;
   const dz = target.z - a.z;

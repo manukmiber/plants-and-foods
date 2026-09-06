@@ -4,7 +4,7 @@
 
 import { system } from "@minecraft/server";
 import { MODES } from "./config.js";
-import { readState } from "./state.js";
+import { readSettings, readState } from "./state.js";
 import { alive, getMode, getOwnerId, getOwnerName, info } from "./util.js";
 import { entStr, logDebug, logInfo } from "./logger.js";
 
@@ -25,8 +25,12 @@ export function tagOf(entity) {
     return `§7[${meta.color}${displayName(entity)}§7, §cliar§7]`;
   }
   const mode = MODES[getMode(entity)] ?? MODES.follow;
-  const hideOwner = readState(entity).hideOwner;
+  // Dua saklar: satu khusus companion ini, satu berlaku untuk SEMUA companion
+  // milik pemain yang sama. Salah satu menyala sudah cukup untuk menyembunyikan
+  // nama pemilik dari pemain lain di server.
+  const hideOwner = readState(entity).hideOwner || readSettings(getOwnerId(entity)).hideOwner;
   const ownerPart = hideOwner ? "" : `§7, §b${getOwnerName(entity)}`;
+  logDebug(TAG, `tagOf ${entStr(entity)}: mode=${mode.label}, pemilik ${hideOwner ? "disembunyikan" : "ditampilkan"}`);
   return `§7[${meta.color}${displayName(entity)}§7, §f${mode.label}${ownerPart}§7]`;
 }
 

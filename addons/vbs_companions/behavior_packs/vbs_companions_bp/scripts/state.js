@@ -22,6 +22,17 @@ const EMPTY = {
   quiet: false,
   hideOwner: false,
   energy: 100,
+  sleepiness: 0,
+  resting: null,
+  sleeping: null,
+  craft: null,
+  craftDeliver: null,
+  craftItem: null,
+  delivering: null,
+  askAt: {},
+  needs: {},
+  villageOfferAt: 0,
+  nick: null,
 };
 
 export function readState(entity) {
@@ -151,12 +162,11 @@ export function readWaypoints() {
 export function addWaypoint(entry) {
   logInfo(TAG, `addWaypoint: ${entry.kind} di (${entry.x}, ${entry.y}, ${entry.z})`);
   const list = readWaypoints();
-const near = list.find(
-  (w) =>
-    w.kind === entry.kind &&
-    w.dim === entry.dim &&
-    Math.hypot(w.x - entry.x, w.z - entry.z) < 24
-);
+  const near = list.find(
+    (w) => w.kind === entry.kind &&
+      w.dim === entry.dim &&
+      Math.hypot(w.x - entry.x, w.z - entry.z) < 24,
+  );
   if (near) {
     logDebug(TAG, `Waypoint duplikat (jarak < 24 blok). Dilewati.`);
     return false;
@@ -170,5 +180,40 @@ const near = list.find(
   } catch (e) {
     logError(TAG, "Gagal menulis waypoints ke world dynamic property", e);
     return false;
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ * Pengaturan per-pemain
+ *
+ * Dipakai untuk saklar "sembunyikan nama pemilik". Kalau dimatikan di sini,
+ * SELURUH companion milik pemain itu berhenti memajang nama pemiliknya —
+ * di penanda kepala maupun di papan stasiun — jadi pemain lain di server
+ * tidak bisa tahu itu punya siapa.
+ * ------------------------------------------------------------------ */
+
+const SETTINGS_DEFAULT = { hideOwner: false };
+
+export function readSettings(playerId) {
+  if (!playerId) return { ...SETTINGS_DEFAULT };
+  try {
+    const raw = world.getDynamicProperty(`${PROP.settings}:${playerId}`);
+    const parsed = typeof raw === "string" ? JSON.parse(raw) : {};
+    return { ...SETTINGS_DEFAULT, ...parsed };
+  } catch (e) {
+    logWarn(TAG, `Gagal membaca pengaturan pemain ${playerId}`, e);
+    return { ...SETTINGS_DEFAULT };
+  }
+}
+
+export function writeSettings(playerId, changes) {
+  const next = { ...readSettings(playerId), ...changes };
+  try {
+    world.setDynamicProperty(`${PROP.settings}:${playerId}`, JSON.stringify(next));
+    logInfo(TAG, `Pengaturan pemain ${playerId} disimpan: ${JSON.stringify(next)}`);
+    return next;
+  } catch (e) {
+    logError(TAG, `Gagal menyimpan pengaturan pemain ${playerId}`, e);
+    return next;
   }
 }

@@ -10,6 +10,9 @@
 
 import { system, world } from "@minecraft/server";
 import { setActivity, forget as forgetActivity } from "./activity.js";
+import { setBetaHandlers, betaSummary } from "./beta.js";
+import { wireBook } from "./book.js";
+import { openBook } from "./bookui.js";
 import { sayFrom } from "./chat.js";
 import { forget as forgetCombat, syncWeapon, tickCombat } from "./combat.js";
 import { DEFAULT_MODE, FAMILY, FLOWERS, LOOK, MODES, TICKS } from "./config.js";
@@ -24,9 +27,9 @@ import { forget as forgetLook, tickLook } from "./look.js";
 import { tickMine } from "./mining.js";
 import { forget as forgetBubble, refreshName, tickBubbles } from "./nametag.js";
 import { forget as forgetSocial, tickSocial } from "./social.js";
-import { readState, writeState } from "./state.js";
+import { readSettings, readState, writeState } from "./state.js";
 import { openMenu } from "./ui.js";
-import { wireUserTalk } from "./usertalk.js";
+import { deliver, orderMode, wireUserTalk } from "./usertalk.js";
 import { tickWander } from "./wander.js";
 import {
   alive, allCompanions, applyMode, dist2, getMode, getOwnerId, info, isCompanion,
@@ -209,7 +212,7 @@ subscribe(world.afterEvents.playerInteractWithEntity, "playerInteractWithEntity"
   if (!getOwnerId(target)) {
     if (!player.isSneaking && tryFeedFlower(target, player)) return;
     const last = hintCooldown.get(player.id) ?? 0;
-    if (system.currentTick - last > 60) {
+    if (readSettings(player.id).hints && system.currentTick - last > 60) {
       hintCooldown.set(player.id, system.currentTick);
       player.sendMessage("§7Companion ini masih §cliar§7. Beri dia satu §fbunga§7 (apa saja) untuk menjinakkannya.");
     }
@@ -218,7 +221,7 @@ subscribe(world.afterEvents.playerInteractWithEntity, "playerInteractWithEntity"
 
   if (!player.isSneaking) {
     const last = hintCooldown.get(player.id) ?? 0;
-    if (system.currentTick - last > 60) {
+    if (readSettings(player.id).hints && system.currentTick - last > 60) {
       hintCooldown.set(player.id, system.currentTick);
       player.sendMessage("§7Jongkok dulu, baru klik/tap dia untuk membuka menunya.");
     }
@@ -238,6 +241,15 @@ subscribe(world.afterEvents.playerLeave, "playerLeave", (ev) => {
 
 wireStake();
 wireUserTalk();
+wireBook();
+
+// Perintah garis miring Beta API dilayani oleh modul yang sudah ada; beta.js
+// sengaja tidak meng-import mereka sendiri supaya tidak ada lingkaran import.
+setBetaHandlers({
+  openBook,
+  talk: (player, name, message) => deliver(player, name, message),
+  setMode: (player, name, mode) => orderMode(player, name, mode),
+});
 
 /* ------------------------------------------------------------------ *
  * Denyut
@@ -382,5 +394,8 @@ system.runInterval(guard(TAG, "denyut pagi/malam", () => {
 }), 200);
 
 system.run(guard(TAG, "siap", () => {
+  const beta = betaSummary();
   logInfo(TAG, `[VBS Companions] Sistem siap. Mode tersedia: ${Object.keys(MODES).join(", ")}.`);
+  logInfo(TAG, `[VBS Companions] Beta API: ${beta.beta ? "aktif" : "tidak aktif"}` +
+    (beta.commands.length ? `, perintah: ${beta.commands.join(" ")}` : "") + ".");
 }));

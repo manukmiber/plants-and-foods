@@ -19,8 +19,8 @@ Add-on ini dibungkus jadi **dua berkas terpisah**, satu per pack:
 
 | Berkas | Isinya |
 |---|---|
-| `VBS-Companions-v1.4.0-BP.mcaddon` | Behavior pack — entity, mode, dan seluruh script |
-| `VBS-Companions-v1.4.0-RP.mcaddon` | Resource pack — model, tekstur, animasi, teks |
+| `VBS-Companions-v1.5.0-BP.mcaddon` | Behavior pack — entity, mode, dan seluruh script |
+| `VBS-Companions-v1.5.0-RP.mcaddon` | Resource pack — model, tekstur, animasi, teks |
 
 **Keduanya harus dipasang.** Manifest keduanya saling menyebut sebagai dependensi,
 jadi memasang salah satu saja akan membuat Minecraft mengeluh pasangannya tidak ada.
@@ -37,8 +37,8 @@ API versi stabil.
 ### Di dedicated server (BDS)
 
 ```bash
-unzip VBS-Companions-v1.4.0-BP.mcaddon -d /tmp/vbs
-unzip VBS-Companions-v1.4.0-RP.mcaddon -d /tmp/vbs
+unzip VBS-Companions-v1.5.0-BP.mcaddon -d /tmp/vbs
+unzip VBS-Companions-v1.5.0-RP.mcaddon -d /tmp/vbs
 cp -r /tmp/vbs/vbs_companions_bp  <server>/behavior_packs/
 cp -r /tmp/vbs/vbs_companions_rp  <server>/resource_packs/
 ```
@@ -47,7 +47,7 @@ Lalu daftarkan ke dunianya. `<server>/worlds/<nama dunia>/world_behavior_packs.j
 
 ```json
 [
-  { "pack_id": "e980994d-a9a6-469e-af1b-a31c3e9f7838", "version": [1, 4, 0] }
+  { "pack_id": "e980994d-a9a6-469e-af1b-a31c3e9f7838", "version": [1, 5, 0] }
 ]
 ```
 
@@ -55,7 +55,7 @@ Lalu daftarkan ke dunianya. `<server>/worlds/<nama dunia>/world_behavior_packs.j
 
 ```json
 [
-  { "pack_id": "b5872873-2873-40c9-8d5b-424bc5592785", "version": [1, 4, 0] }
+  { "pack_id": "b5872873-2873-40c9-8d5b-424bc5592785", "version": [1, 5, 0] }
 ]
 ```
 
@@ -78,6 +78,10 @@ Minecraft Bedrock **1.21.0 ke atas**.
    tombol **Buka Menu** yang muncul). UI-nya terbuka. Selama masih liar, jongkok
    dan klik hanya menampilkan pesan "beri dia bunga dulu" — menunya belum bisa
    dibuka.
+4. **Buku Panduan** langsung ada di kantongmu begitu masuk dunia. Pakai bukunya
+   untuk membaca panduan, mengendalikan companion dari jauh, dan mengatur mod
+   ini — dan buku itu tidak akan hilang walaupun kamu mati (lihat bagian
+   tersendiri di bawah). Bisa juga ditempa sendiri: **satu buku + satu bunga**.
 
 ### Penanda di atas kepala
 
@@ -119,6 +123,55 @@ melihat **papan permintaan bantuan**, membaca **catatan kejadian/log**, menggant
 nama panggilan, memanggilnya ke tempatmu, dan mengistirahatkannya.
 
 Mode yang dipilih **tersimpan** — dunia ditutup lalu dibuka lagi, perintahnya tetap.
+
+---
+
+## Buku Panduan: satu buku yang tidak bisa hilang
+
+Ditempa di meja kerja dari **satu buku + satu bunga** (bunga apa saja dari daftar
+resep — bunga yang sama yang dipakai menjinakkan companion). Pakai bukunya
+(klik kanan, atau tahan di layar sentuh) untuk membukanya.
+
+Isinya tiga hal:
+
+| Halaman | Isinya |
+|---|---|
+| **Cara Pakai** | Enam bab: menjinakkan, sembilan perintah, bertani, membangun & rancangan, mengajak bicara, tenaga & bantuan |
+| **Kendalikan Companion** | Daftar companion milikmu beserta tugas dan jaraknya. Pilih satu untuk membuka menunya seperti biasa — tanpa berjalan ke tempatnya — atau beri **satu perintah untuk semuanya sekaligus** |
+| **Pengaturan Mod** | Tujuh saklar milik **kamu**, bukan milik satu companion |
+| **Isi Tambahan & Status** | Rancangan dan dialog yang datang dari berkas JSON, dan status Beta API |
+
+### Tidak bisa hilang
+
+Buku ini dijaga **tiga lapis**, karena satu lapis saja tidak cukup:
+
+1. **Mati** — begitu respawn, bukunya ada lagi di kantong.
+2. **Dibuang atau dilempar** — item-nya dipungut kembali seketika, dengan pesan
+   yang menjelaskan kenapa.
+3. **Hilang cara lain** (kantong penuh, `/clear`, dunia lama yang belum pernah
+   punya buku) — denyut lima detik memeriksa dan mengembalikannya.
+
+Kalau kamu memang ingin membuangnya, matikan saklar **"Buku ini tidak bisa
+hilang"** di dalam bukunya sendiri; sesudah itu dia berlaku seperti item biasa.
+
+### Tujuh saklar pengaturan per pemain
+
+Setelan ini disimpan **per pemain di tingkat dunia** — berlaku untuk seluruh
+companion milikmu, tetap ada sesudah dunia ditutup, dan tidak ikut hilang kalau
+satu companion diistirahatkan.
+
+| Saklar | Bawaan | Yang berubah |
+|---|---|---|
+| Sembunyikan nama pemilik | mati | Namamu hilang dari penanda kepala dan papan stasiun semua companionmu |
+| Bungkam semua celoteh | mati | Mereka tetap bekerja, cuma tidak bersuara |
+| Gelembung teks di atas kepala | hidup | Kalau dimatikan, kalimatnya masuk chat biasa — bukan hilang |
+| Laporan jarak jauh masuk chat | hidup | Panen selesai, minta bahan, tawaran membangun kampung |
+| Pesan petunjuk | hidup | "Jongkok dulu", "beri dia bunga" |
+| Buku ini tidak bisa hilang | hidup | Pengembalian otomatis di atas |
+| Kirim peringatan & error ke chat | mati | Sama dengan saklar di menu Catatan Kejadian |
+
+Kalau bukunya tertinggal entah di mana, dua jalan lain membukanya:
+`!panduan` diketik di chat, atau `/scriptevent vbs:panduan`.
 
 ---
 
@@ -344,6 +397,54 @@ Setelah rumahnya jadi, posisi ranjangnya dicatat — itulah tempat companion mil
 pemain yang sama akan pergi tidur kalau tenaganya habis di malam hari (lihat
 **Energi dan istirahat** di bawah).
 
+#### Rancangan sendiri dari berkas JSON
+
+Tujuh rancangan di tabel atas dihitung kode. **Rancangan baru tidak perlu kode
+sama sekali**: taruh satu berkas `.json` di folder
+[`blueprints/`](blueprints/), jalankan generatornya, dan rancangan itu muncul di
+menu **Rancangan Bangunan** bertanda `JSON`.
+
+```bash
+cd tools && python3 gen_blueprints.py && python3 build_mcaddon.py
+```
+
+Inilah gunanya kalau kamu menemukan skema bangunan Minecraft di internet
+(`.schematic`, `.nbt`, `.litematic`, atau bahkan cuma gambar): suruh AI
+mengubahnya ke skema di [`blueprints/README.md`](blueprints/README.md), simpan
+hasilnya di folder itu, selesai. Kalimat yang bisa langsung dipakai ada di
+README folder itu.
+
+Bentuknya denah huruf per lapis, dengan **palette** yang memberi arti tiap huruf:
+
+```json
+{
+  "id": "watchtower",
+  "label": "Menara Pengawas",
+  "origin": "center",
+  "palette": { "#": { "role": "wall" }, "L": { "role": "light" }, ".": { "role": "air" } },
+  "layers": [{ "y": 0, "rows": ["#####", "#...#", "#...#", "#...#", "#####"] }]
+}
+```
+
+Tiga hal yang membuat bentuk ini betah dipakai:
+
+- **Peran, bukan blok.** `"role": "wall"` berarti companion memakai papan, batu
+  atau gelondongan — apa pun yang ada di petinya. Blok tertentu tetap boleh
+  (`"block": "minecraft:cobblestone"`), dan kalau blok itu habis, perannya
+  dipakai sebagai cadangan alih-alih berhenti.
+- **Bangunan JSON dibangun rata.** Ketinggian dasarnya dikunci sekali di kolom
+  tempat companion berdiri, jadi menara di lereng bukit tetap menara — tidak
+  ikut naik-turun mengikuti kontur seperti pagar keliling ladang.
+- **Ditolak lebih awal.** Generator menolak huruf yang tidak ada di palette,
+  peran yang tidak dikenal, baris yang panjangnya berbeda, dan rancangan yang
+  lebih besar dari 32×32×32 atau 8000 langkah. `validate.py` menolak kalau
+  berkas JSON dan hasil generatornya tidak sinkron — jadi "sudah kutaruh tapi
+  tidak muncul" ketahuan sebelum add-on dipasang.
+
+Dua contoh ikut di dalam folder itu: **Menara Pengawas** (bentuk `layers`) dan
+**Sumur Desa** (bentuk `blocks`, yaitu daftar koordinat jarang seperti hasil
+konversi schematic).
+
 ---
 
 ## Dua role bantuan: Merajin dan Mencari Barang
@@ -459,9 +560,39 @@ permintaan bahan, tawaran membangun kampung, dan celoteh biasa semuanya sampai k
 chat pemiliknya.
 
 Tiap karakter punya suaranya sendiri. Akito pendek dan ketus, Kohane ragu-ragu dan
-sopan, An santai, Toya rapi dan menghitung, Flins formal. Semua dialognya ada di
-satu berkas, `behavior_packs/.../scripts/lines.js`, jadi menambahnya tidak perlu
-menyentuh kode.
+sopan, An santai, Toya rapi dan menghitung, Flins formal. Semua dialog bawaan ada
+di satu berkas, `behavior_packs/.../scripts/lines.js`.
+
+### Menambah obrolan lewat berkas JSON
+
+Sama seperti rancangan bangunan, **kalimat baru tidak perlu menyentuh kode**:
+taruh satu berkas `.json` di folder [`dialogue/`](dialogue/), jalankan
+generatornya, dan kalimatnya ikut terucap.
+
+```bash
+cd tools && python3 gen_dialogue.py && python3 build_mcaddon.py
+```
+
+```json
+{
+  "id": "kohane_tambahan",
+  "character": "kohane",
+  "lines": { "greet": ["A-ada apa?"], "farm": ["Tanahnya sudah rata kok..."] },
+  "topics": [{ "tag": "hujan", "modes": ["farm"], "turns": ["Mau hujan.", "Bagus, kebagian air."] }]
+}
+```
+
+- `character` boleh satu karakter atau `"*"` untuk semuanya.
+- `lines` **ditambahkan** ke kalimat bawaan, tidak menggantikannya — kecuali
+  berkasnya menulis `"mode": "replace"`.
+- `topics` adalah obrolan antar companion, lengkap dengan syarat mode: topik
+  "hujan" di atas hanya dipilih kalau salah satu dari keduanya sedang bertani.
+- Kunci suasana di luar daftar yang dikenali (`greet`, `idle`, `farm`, `mine`,
+  `hurt`, `sleepy`, …) **ditolak generator** — kalau tidak, kalimat itu diam-diam
+  tidak akan pernah terucap.
+
+Skema lengkapnya di [`dialogue/README.md`](dialogue/README.md), termasuk kalimat
+siap pakai untuk menyuruh AI membuatkannya.
 
 ---
 
@@ -580,6 +711,52 @@ sesudahnya ikut menyembunyikan pemiliknya sejak awal.
 
 ---
 
+## Beta API: tambahan, bukan syarat
+
+Add-on ini **jalan penuh tanpa satu pun toggle eksperimen** — itu tetap bawaannya,
+dan berkas `.mcaddon` yang ikut di repo ini memakai modul `@minecraft/server`
+versi stabil.
+
+Buat yang mau lebih jauh, ada varian manifest yang memakai **modul beta**:
+
+```bash
+cd tools
+python3 gen_packs.py --beta      # manifest memakai @minecraft/server 2.0.0-beta
+python3 validate.py --beta       # periksa varian beta
+python3 build_mcaddon.py
+```
+
+Pasang hasilnya, lalu nyalakan **Beta APIs** di pengaturan dunia. Yang bertambah:
+
+| Perintah | Yang dilakukan |
+|---|---|
+| `/vbs:panduan` | Membuka Buku Panduan |
+| `/vbs:chat <nama> <pesan>` | Bicara ke companion, sama seperti `chat <nama> <pesan>` |
+| `/vbs:mode <nama> <tugas>` | Mengganti tugas companion, dengan jawaban berhasil/gagal |
+
+Perintah-perintah itu **melengkapi**, bukan menggantikan: tanpa beta semuanya
+tetap ada lewat buku, menu companion, `chat <nama> <pesan>` dan
+`/scriptevent vbs:chat`.
+
+Yang membuat ini aman dipasang di dunia biasa: `scripts/beta.js` mengimpor
+`@minecraft/server` sebagai **namespace** (`import * as mc`), bukan menyebut nama
+seperti `CommandPermissionLevel` satu per satu. Bedanya besar — mengimpor nama
+yang tidak ada di versi stabil adalah kegagalan penautan modul, dan Bedrock
+menjawabnya dengan mematikan **seluruh** mesin skrip add-on begitu dunia dibuka,
+diam-diam. Lewat namespace, nama yang tidak ada cuma bernilai `undefined`, dan
+setiap kemampuan dicek dulu sebelum dipakai.
+
+Status kemampuan yang terdeteksi bisa dibaca kapan saja di
+**Buku Panduan » Isi Tambahan & Status**, dan ikut tercatat di log saat dunia
+dibuka. Simulasi di `tools/sim/` dijalankan **dua kali** — dengan dan tanpa modul
+beta — supaya kedua jalur benar-benar teruji.
+
+Kalau Minecraft-mu sudah lebih baru dan menolak versi modulnya, ganti
+`SERVER_MODULE_BETA` di `tools/gen_packs.py`; tidak ada tempat lain yang perlu
+ikut diubah.
+
+---
+
 ## Kalau ada yang salah: catatan kejadian
 
 Setiap kejadian dicatat: event dunia, tiap langkah kerja, tiap percabangan
@@ -643,15 +820,23 @@ preview, semuanya ikut berubah.
 
 ```bash
 cd tools
-python3 gen_geometry.py      # -> models/entity/vbs_companions.geo.json
-python3 gen_textures.py      # -> semua PNG (tekstur 1024x1024, spawn egg, patok, pack icon)
-python3 gen_packs.py         # -> manifest, entity behavior + resource, render controller, lang
-python3 render_preview.py    # -> docs/preview/*.png
-python3 validate.py          # periksa semua kaitan antar berkas
-python3 build_mcaddon.py     # -> VBS-Companions-v1.4.0-BP.mcaddon dan -RP.mcaddon
+python3 gen_geometry.py       # -> models/entity/vbs_companions.geo.json
+python3 gen_textures.py       # -> semua PNG (tekstur 1024x1024, spawn egg, patok, pack icon)
+python3 gen_book_texture.py   # -> ikon 16x16 Buku Panduan (tidak butuh Pillow)
+python3 gen_packs.py          # -> manifest, entity, item buku + resepnya, render controller, lang
+python3 gen_blueprints.py     # blueprints/*.json   -> scripts/blueprints.data.js
+python3 gen_dialogue.py       # dialogue/*.json     -> scripts/dialogue.data.js
+python3 render_preview.py     # -> docs/preview/*.png
+python3 validate.py           # periksa semua kaitan antar berkas
+python3 build_mcaddon.py      # -> VBS-Companions-v1.5.0-BP.mcaddon dan -RP.mcaddon
 
-cd sim && ./run.sh           # jalankan otak companion di luar Minecraft
+cd sim && ./run.sh            # jalankan otak companion di luar Minecraft, dua kali
 ```
+
+Dua generator terakhir sebelum `render_preview.py` itulah yang membuat isi mod
+bisa ditambah **tanpa menyentuh kode**: mesin skrip Bedrock tidak bisa membaca
+berkas JSON saat dunia berjalan, jadi generatornya yang menyalin isi
+`blueprints/` dan `dialogue/` menjadi modul JavaScript di dalam pack.
 
 Butuh Python 3 dan Pillow (`pip install pillow`). Hasil generatornya ikut di-commit,
 jadi orang yang cuma mau memasang add-on ini tidak perlu Python sama sekali.
@@ -663,7 +848,12 @@ jadi orang yang cuma mau memasang add-on ini tidak perlu Python sama sekali.
 | `tools/model.py` | Bentuk tiap karakter: bone dan kubusnya, dua build, dua perawakan, plus bone perlengkapan role |
 | `tools/paint.py` | Kuas dasar: satu Face = satu sisi kubus, koordinat pecahan |
 | `tools/detailed.py` | Penggambar build detailed: delapan wajah, dua perawakan, dan perlengkapan role |
-| `tools/gen_packs.py` | Entity, entity property, priority goal, render controller, manifest |
+| `tools/gen_packs.py` | Entity, entity property, priority goal, render controller, manifest, item Buku Panduan dan resepnya (`--beta` untuk varian manifest beta) |
+| `tools/gen_blueprints.py` | `blueprints/*.json` -> `scripts/blueprints.data.js`, lengkap dengan penolakan rancangan yang salah |
+| `tools/gen_dialogue.py` | `dialogue/*.json` -> `scripts/dialogue.data.js` |
+| `tools/gen_book_texture.py` | Ikon 16x16 Buku Panduan, ditulis piksel demi piksel tanpa Pillow |
+| `blueprints/` | Tempat menaruh rancangan bangunan baru, satu berkas JSON per rancangan |
+| `dialogue/` | Tempat menaruh kalimat dan obrolan baru, satu berkas JSON per kumpulan |
 | `tools/render_preview.py` | Renderer ortografis + z-buffer, untuk gambar preview |
 | `tools/validate.py` | 2400+ pemeriksaan kaitan antar berkas |
 | `tools/sim/` | Menjalankan skrip add-on di luar Minecraft dan memeriksa hasil kerjanya |
@@ -673,8 +863,10 @@ identifier entity behavior vs resource vs script vs teks, bone yang disebut anim
 tapi tidak ada di geometry, UV yang keluar tekstur, component group yang dipanggil
 event tapi tidak didefinisikan, tekstur yang ditunjuk tapi tidak ada, entity
 property yang dipakai Molang tapi tidak dideklarasikan atau tidak `client_sync`,
-daftar mode dan pose di `config.js` yang melenceng dari `gen_packs.py`, dan —
-yang paling menolong — **priority goal yang kembar**. Priority kembar tidak
+daftar mode dan pose di `config.js` yang melenceng dari `gen_packs.py`,
+**berkas JSON di `blueprints/` dan `dialogue/` yang belum di-generate ulang**,
+resep buku yang memakai bunga di luar daftar `FLOWERS`, dan — yang paling
+menolong — **priority goal yang kembar**. Priority kembar tidak
 memunculkan galat apa pun; Bedrock diam-diam memilih satu goal dan mengabaikan
 sisanya, dan itulah yang dulu membuat mode bertarung tidak melakukan apa-apa.
 
@@ -697,6 +889,14 @@ API Minecraft ditiru (`stub/`) di atas dunia voxel kecil (`world.mjs`), lalu
   sekaligus dan tidak ada petunjuk kenapa. Persis itulah yang terjadi di v1.3.0.
 - Petani meratakan lahan, menggali parit, membuat ember, mengairi, dan
   **tidak pernah meninggalkan satu pun farmland yang kering**.
+- Rancangan JSON di `blueprints/` benar-benar dibaca, diurut dari lapis bawah ke
+  atas, dan **dibangun rata** di atas tanah yang tidak rata.
+- Kalimat JSON di `dialogue/` ikut terucap **tanpa menghapus** kalimat bawaan,
+  dan syarat mode di topik obrolan benar-benar dipatuhi.
+- Buku Panduan diberikan, **dikembalikan sesudah pemain mati**, dan berhenti
+  dikembalikan begitu saklarnya dimatikan.
+- Seluruh berkas ini dijalankan **dua kali**: sekali seperti dunia biasa dan
+  sekali seperti dunia yang menyalakan Beta APIs.
 - Penambang menggali lorong **1×3** dan menaiki tingkat alat satu per satu
   (kayu → batu → besi), walaupun peti penuh besi sejak awal.
 - Pencari barang dan perajin benar-benar melayani permintaan companion lain

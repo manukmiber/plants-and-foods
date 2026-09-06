@@ -296,11 +296,16 @@ async function openBlueprints(player, entity) {
       "§7Mau bikin kampung kecil? Ambil §fPatok Desa§7 di bawah, patok beberapa",
       "§7chunk, lalu suruh dia ke Mode Membangun — rumah lengkap ranjang akan",
       "§7dibangun duluan sebelum rancangan di atas.",
+      "",
+      "§8Rancangan bertanda §7JSON§8 datang dari berkas di folder",
+      "§8addons/vbs_companions/blueprints/ — tambah berkas di sana untuk",
+      "§8menambah rancangan baru tanpa menyentuh kode.",
     ].join("\n"));
   for (const key of keys) {
     const bp = BLUEPRINTS[key];
     const mark = key === state.blueprint ? " §8(sekarang)" : "";
-    form.button(`§f${bp.label}${mark}\n§8${bp.hint}`);
+    const from = bp.source ? " §7JSON" : "";
+    form.button(`§f${bp.label}${mark}${from}\n§8${bp.hint}`);
   }
   form.button("§2Ajukan Desa\n§8Minta Patok Desa untuk menandai chunk yang boleh dibangun rumah");
   form.button("§8« Kembali");

@@ -2,7 +2,8 @@
  * Apa yang diucapkan companion.
  */
 
-import { logDebug } from "./logger.js";
+import { DATA_LINES, DATA_REPLACES, DATA_TOPICS } from "./dialogue.data.js";
+import { logDebug, logInfo } from "./logger.js";
 
 const TAG = "LINES";
 
@@ -293,6 +294,14 @@ export const TOPICS = [
     when: (a, b) => a === "stay" || b === "stay",
     turns: ["Tidak capek berdiri terus di situ?", "Ini perintahnya. Aku tidak keberatan.", "Kalau bosan, panggil saja aku."],
   },
+  // Topik dari berkas JSON di addons/vbs_companions/dialogue/. Daftar mode di
+  // JSON diubah jadi predikat di sini, karena JSON tidak bisa menyimpan fungsi.
+  ...DATA_TOPICS.map((t) => ({
+    tag: t.tag,
+    source: t.source,
+    when: (a, b) => !t.modes.length || t.modes.includes(a) || t.modes.includes(b),
+    turns: t.turns,
+  })),
 ];
 
 export const REPORTS = [
@@ -316,10 +325,45 @@ export function voiceOf(id) {
   return LINES[id] ?? FALLBACK;
 }
 
+/**
+ * Kalimat tambahan dari berkas JSON di addons/vbs_companions/dialogue/.
+ *
+ * Yang bertanda "*" berlaku untuk semua karakter, yang bernama karakter hanya
+ * untuk dia. Berkas bermode "replace" membuang kalimat bawaan khusus untuk kunci
+ * yang disebutnya — itu satu-satunya cara suara bawaan bisa hilang.
+ */
+function extraLines(id, key) {
+  const mine = DATA_LINES[id]?.[key] ?? [];
+  const all = DATA_LINES["*"]?.[key] ?? [];
+  return mine.length || all.length ? [...mine, ...all] : [];
+}
+
+function replaced(id, key) {
+  return Boolean(DATA_REPLACES[id]?.includes(key)) ||
+    Boolean(DATA_REPLACES["*"]?.includes(key));
+}
+
 export function linesFor(id, key) {
   const voice = voiceOf(id);
-  const list = voice[key];
-  const valid = Array.isArray(list) && list.length ? list : (FALLBACK[key] ?? FALLBACK.idle);
-  logDebug(TAG, `linesFor("${id}", "${key}") -> Mengembalikan ${valid.length} baris.`);
+  const builtin = replaced(id, key) ? [] : (voice[key] ?? []);
+  const extra = extraLines(id, key);
+  const pool = [...(Array.isArray(builtin) ? builtin : []), ...extra];
+  const valid = pool.length ? pool : (FALLBACK[key] ?? FALLBACK.idle);
+  logDebug(TAG, `linesFor("${id}", "${key}") -> ${valid.length} baris ` +
+    `(${extra.length} dari dialogue/*.json).`);
   return valid;
+}
+
+/** Berapa banyak yang datang dari JSON — dipakai buku panduan dan log. */
+export function dialogueStats() {
+  let extra = 0;
+  for (const pools of Object.values(DATA_LINES)) {
+    for (const pool of Object.values(pools)) extra += pool.length;
+  }
+  return { lines: extra, topics: DATA_TOPICS.length, total: TOPICS.length };
+}
+
+if (DATA_TOPICS.length || Object.keys(DATA_LINES).length) {
+  logInfo(TAG, `Dialog tambahan dimuat: ${dialogueStats().lines} kalimat, ` +
+    `${DATA_TOPICS.length} topik obrolan dari dialogue/*.json.`);
 }

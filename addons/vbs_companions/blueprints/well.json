@@ -1,0 +1,37 @@
+{
+  "id": "well",
+  "label": "Sumur Desa",
+  "hint": "Sumur batu 3x3 beratap, contoh bentuk daftar blok",
+  "origin": "center",
+  "palette": {
+    "S": { "role": "wall", "block": "minecraft:cobblestone" },
+    "O": { "role": "post" },
+    "R": { "role": "roof" },
+    "L": { "role": "light" }
+  },
+  "blocks": [
+    { "x": 0, "y": 0, "z": 0, "key": "S" },
+    { "x": 1, "y": 0, "z": 0, "key": "S" },
+    { "x": 2, "y": 0, "z": 0, "key": "S" },
+    { "x": 0, "y": 0, "z": 1, "key": "S" },
+    { "x": 2, "y": 0, "z": 1, "key": "S" },
+    { "x": 0, "y": 0, "z": 2, "key": "S" },
+    { "x": 1, "y": 0, "z": 2, "key": "S" },
+    { "x": 2, "y": 0, "z": 2, "key": "S" },
+
+    { "x": 0, "y": 1, "z": 0, "key": "O" },
+    { "x": 2, "y": 1, "z": 0, "key": "O" },
+    { "x": 0, "y": 1, "z": 2, "key": "O" },
+    { "x": 2, "y": 1, "z": 2, "key": "O" },
+
+    { "x": 0, "y": 2, "z": 0, "key": "R" },
+    { "x": 1, "y": 2, "z": 0, "key": "R" },
+    { "x": 2, "y": 2, "z": 0, "key": "R" },
+    { "x": 0, "y": 2, "z": 1, "key": "R" },
+    { "x": 1, "y": 2, "z": 1, "key": "L" },
+    { "x": 2, "y": 2, "z": 1, "key": "R" },
+    { "x": 0, "y": 2, "z": 2, "key": "R" },
+    { "x": 1, "y": 2, "z": 2, "key": "R" },
+    { "x": 2, "y": 2, "z": 2, "key": "R" }
+  ]
+}

@@ -16,6 +16,9 @@
     },
     "vbs_spawn_egg_flins": {
       "textures": "textures/items/vbs_spawn_egg_flins"
+    },
+    "vbs_guide": {
+      "textures": "textures/items/vbs_guide"
     }
   }
 }

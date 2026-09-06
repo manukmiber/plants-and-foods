@@ -16,6 +16,10 @@
 #   * penambang menggali lorong 1x3 dan menaiki tingkat alat satu per satu
 #   * pencari barang dan perajin benar-benar melayani permintaan companion lain
 #   * tenaga terkuras dan kantuk naik sampai companion berhenti bekerja
+#   * rancangan JSON di blueprints/ benar-benar dibaca dan dibangun
+#   * kalimat dan topik JSON di dialogue/ ikut terucap tanpa menghapus bawaan
+#   * buku panduan diberikan, dikembalikan sesudah mati, dan bisa dimatikan
+#   * Beta API: sim dijalankan DUA KALI, dengan dan tanpa modul beta
 #
 # Butuh Node.js 18+. Keluar dengan kode 1 kalau ada pemeriksaan yang gagal.
 set -e
@@ -48,4 +52,12 @@ if (bad) { console.log(`${bad} modul gagal ditautkan`); process.exit(1); }
 console.log("  semua modul tertaut bersih");
 ' 2>&1 | grep -v '^\[VBS-'
 
+echo "== Dunia biasa (tanpa Beta API) =="
 node sim.mjs
+
+# Sekali lagi seolah pemain menyalakan toggle "Beta APIs" di pengaturan dunia.
+# Keduanya HARUS lolos: beta itu tambahan, bukan syarat, dan add-on yang cuma
+# jalan di salah satunya berarti ada jalur kode yang tidak pernah diuji.
+echo
+echo "== Dunia dengan Beta API menyala =="
+VBS_SIM_BETA=1 node sim.mjs

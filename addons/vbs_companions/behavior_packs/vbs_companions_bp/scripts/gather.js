@@ -16,14 +16,20 @@
  * memang bisa dipatahkan tangan kosong di Minecraft — cuma lebih lama.
  */
 
+import { system } from "@minecraft/server";
+
 import { LOGS, PLANKS, POSE, SEED_SOURCES } from "./config.js";
 import { hold } from "./hold.js";
-import { blockAt, dist2, face, particle, sound, steer } from "./util.js";
+import { blockAt, dist2, face, isStuck, particle, sound, steer } from "./util.js";
 import { entStr, logDebug, logInfo, logWarn, posStr } from "./logger.js";
 
 const TAG = "GATHER";
 const REACH = 3.2;
 const SEARCH_RADIUS = 16;
+
+// Lingkaran "depan muka" yang disapu HABIS tiap kali mencari. Apa pun yang
+// berdiri di dalamnya selalu menang dari yang belasan blok jauhnya.
+const NEAR_RADIUS = 5;
 
 export const STONE_LIKE = [
   "minecraft:stone", "minecraft:cobblestone", "minecraft:andesite",
@@ -77,36 +83,157 @@ const OFFSETS = (() => {
   return out;
 })();
 
+// OFFSETS urut dari yang paling dekat, jadi lingkaran dekat itu persis potongan
+// paling depan dari daftarnya.
+const NEAR_END = (() => {
+  let n = 0;
+  while (n < OFFSETS.length && OFFSETS[n][0] ** 2 + OFFSETS[n][2] ** 2 <= NEAR_RADIUS ** 2) n++;
+  return n;
+})();
+
 // Menyapu SELURUH OFFSETS tiap denyut berarti membaca lebih dari sepuluh ribu
 // blok tiap setengah detik untuk tiap companion — itu membuat dunia tersendat.
-// Sapuannya dipotong dan dilanjutkan dari posisi terakhir, jadi beban per
-// denyut kecil tapi areanya tetap tersisir habis.
-const SCAN_PER_TICK = 700;
-const cursors = new Map();
+// Sisa daerah di luar lingkaran dekat dipotong dan dilanjutkan lintas denyut,
+// jadi beban per denyut kecil tapi areanya tetap tersisir habis. Sapuan jauh
+// ini jarang jalan: selama sasarannya masih ada, pencarian berhenti di kunci
+// dan tidak membaca satu blok pun.
+const SCAN_PER_TICK = 500;
+const sweeps = new Map();
 
-/** Blok terdekat yang cocok, dicari sedikit demi sedikit tiap denyut. */
+// Sapuan jauh memakai titik awal TETAP. Kalau ikut bergeser bersama companion,
+// potongan yang sudah disapu ikut bergeser juga dan ada blok yang tidak pernah
+// terbaca sama sekali. Sapuannya baru diulang dari awal kalau companion sudah
+// benar-benar pindah tempat.
+const SWEEP_DRIFT = 4;
+
+// Sasaran yang sedang dikerjakan, supaya pilihannya tidak berubah tiap denyut.
+const locks = new Map();
+const LOCK_TICKS = 400;   // ~20 detik di jalan; sesudah itu timbang ulang
+const LOCK_GRACE = 40;    // beri waktu berjalan dulu sebelum dianggap mentok
+
+// Titik yang sudah terbukti tidak bisa dicapai, dilewati untuk sementara.
+const avoided = new Map();
+const AVOID_TICKS = 600;
+const AVOID_MAX = 256;    // catatan yang kedaluwarsa dibuang sebelum menumpuk
+
+function avoiding(entity, x, y, z) {
+  const key = `${entity.id}:${x},${y},${z}`;
+  const until = avoided.get(key);
+  if (until === undefined) return false;
+  if (system.currentTick <= until) return true;
+  avoided.delete(key);
+  return false;
+}
+
+function avoid(entity, pos) {
+  if (avoided.size >= AVOID_MAX) {
+    for (const [key, until] of avoided) {
+      if (system.currentTick > until) avoided.delete(key);
+    }
+  }
+  avoided.set(`${entity.id}:${pos.x},${pos.y},${pos.z}`, system.currentTick + AVOID_TICKS);
+}
+
+/** Baca satu titik: cocok, belum dihindari, dan memang ada bloknya? */
+function probe(entity, dimension, want, origin, offset) {
+  const x = origin.x + offset[0];
+  const y = origin.y + offset[1];
+  const z = origin.z + offset[2];
+  if (avoiding(entity, x, y, z)) return undefined;
+  const block = blockAt(dimension, x, y, z);
+  if (!block || !want.has(block.typeId)) return undefined;
+  return { x, y, z, id: block.typeId };
+}
+
+/**
+ * Sasaran yang sedang dikunci, kalau masih layak dikerjakan.
+ *
+ * Ini inti perbaikannya. Tanpa kunci, sasarannya dipilih ULANG tiap denyut dan
+ * pilihannya berbeda-beda: companion melangkah setengah langkah ke satu pohon,
+ * denyut berikutnya berbelok ke pohon lain, begitu terus. Dari luar dia
+ * kelihatan kebingungan mencari kayu padahal pohonnya persis di depan muka.
+ */
+function lockedTarget(entity, dimension, want, id) {
+  const lock = locks.get(id);
+  if (!lock) return undefined;
+
+  const block = blockAt(dimension, lock.x, lock.y, lock.z);
+  if (!block || !want.has(block.typeId)) {
+    locks.delete(id);          // sudah ditebang atau digali: cari yang berikutnya
+    return undefined;
+  }
+
+  // Terhalang tebing atau dinding, atau sudah kelamaan di jalan: lepaskan, dan
+  // jangan pilih titik yang sama lagi untuk sementara supaya tidak berputar-putar
+  // ke sasaran yang memang tidak bisa dicapai.
+  //
+  // `isStuck` menimbang langkah companion secara keseluruhan, bukan langkah ke
+  // sasaran ini saja, jadi dua syarat dipasang supaya sasaran yang sebenarnya
+  // baik-baik saja tidak ikut dibuang: sasarannya memang masih di luar jangkauan
+  // (artinya dia sedang di jalan ke sana, bukan sedang menebang), dan kuncinya
+  // sudah cukup umur untuk sempat berjalan.
+  const age = system.currentTick - lock.since;
+  const walkingThere = dist2(entity.location, { x: lock.x + 0.5, y: lock.y, z: lock.z + 0.5 }) > REACH ** 2;
+  if (age > LOCK_TICKS || (walkingThere && age > LOCK_GRACE && isStuck(entity))) {
+    locks.delete(id);
+    avoid(entity, lock);
+    logDebug(TAG, `${entStr(entity)} melepas sasaran ${posStr(lock)}: tidak tercapai, mencari yang lain.`);
+    return undefined;
+  }
+
+  return { x: lock.x, y: lock.y, z: lock.z, id: block.typeId };
+}
+
+function lockOn(id, hit, how) {
+  locks.set(id, { x: hit.x, y: hit.y, z: hit.z, since: system.currentTick });
+  logDebug(TAG, `Sasaran ${hit.id} ditemukan di ${posStr(hit)} (${how}); dikunci sampai selesai.`);
+  return hit;
+}
+
+function sweepFor(id, here) {
+  const prev = sweeps.get(id);
+  if (prev &&
+      Math.abs(prev.origin.x - here.x) <= SWEEP_DRIFT &&
+      Math.abs(prev.origin.y - here.y) <= SWEEP_DRIFT &&
+      Math.abs(prev.origin.z - here.z) <= SWEEP_DRIFT) {
+    return prev;
+  }
+  const fresh = { cursor: 0, origin: { ...here } };
+  sweeps.set(id, fresh);
+  return fresh;
+}
+
+/** Blok terdekat yang cocok; sasaran yang sudah dipilih dipegang sampai habis. */
 export function findBlock(entity, wanted, key = "any") {
   if (!wanted?.length) return undefined;
   const want = new Set(wanted);
   const dimension = entity.dimension;
-  const at = entity.location;
-  const bx = Math.floor(at.x);
-  const by = Math.floor(at.y);
-  const bz = Math.floor(at.z);
-  const cursorKey = `${entity.id}:${key}`;
-  let cursor = cursors.get(cursorKey) ?? 0;
+  const id = `${entity.id}:${key}`;
 
+  const held = lockedTarget(entity, dimension, want, id);
+  if (held) return held;
+
+  // 1. Lingkaran dekat: disapu habis, selalu dari titik terdekat. Karena
+  //    OFFSETS urut dari yang paling dekat, yang pertama ketemu memang yang
+  //    paling dekat — pohon di depan muka tidak mungkin terlewat lagi.
+  const at = entity.location;
+  const here = { x: Math.floor(at.x), y: Math.floor(at.y), z: Math.floor(at.z) };
+  for (let n = 0; n < NEAR_END; n++) {
+    const hit = probe(entity, dimension, want, here, OFFSETS[n]);
+    if (hit) return lockOn(id, hit, "dekat");
+  }
+
+  // 2. Baru sesudah sekitarnya benar-benar kosong, lanjutkan sapuan jauh.
+  const sweep = sweepFor(id, here);
+  const span = OFFSETS.length - NEAR_END;
   for (let n = 0; n < SCAN_PER_TICK; n++) {
-    const [dx, dy, dz] = OFFSETS[cursor];
-    cursor = (cursor + 1) % OFFSETS.length;
-    const block = blockAt(dimension, bx + dx, by + dy, bz + dz);
-    if (block && want.has(block.typeId)) {
-      cursors.set(cursorKey, cursor);
-      logDebug(TAG, `Sasaran ${block.typeId} ditemukan di ${posStr({ x: bx + dx, y: by + dy, z: bz + dz })}`);
-      return { x: bx + dx, y: by + dy, z: bz + dz, id: block.typeId };
+    const hit = probe(entity, dimension, want, sweep.origin, OFFSETS[NEAR_END + sweep.cursor]);
+    sweep.cursor = (sweep.cursor + 1) % span;
+    if (hit) {
+      sweep.cursor = 0;   // ketemu: pencarian berikutnya mulai dari dekat lagi
+      return lockOn(id, hit, "sapuan jauh");
     }
   }
-  cursors.set(cursorKey, cursor);
   return undefined;
 }
 
@@ -195,17 +322,36 @@ export function countKind(counts, kind, ids) {
   return n;
 }
 
-/** Geser area pencarian kalau di sekitar sini tidak ada apa-apa lagi. */
+const roams = new Map();
+const ROAM_TICKS = 100;   // ~5 detik ke satu arah sebelum arahnya ditimbang ulang
+
+/**
+ * Geser area pencarian kalau di sekitar sini tidak ada apa-apa lagi.
+ *
+ * Arahnya dipegang beberapa detik. Versi lama mengundi arah baru TIAP denyut,
+ * jadi companion cuma bergetar di tempat: langkahnya 0,35 blok ke arah yang
+ * selalu berubah, dan dia tidak pernah benar-benar sampai ke daerah baru.
+ */
 export function roam(entity) {
   const at = entity.location;
-  const angle = Math.random() * Math.PI * 2;
-  const step = { x: at.x + Math.cos(angle) * 8, y: at.y, z: at.z + Math.sin(angle) * 8 };
-  logDebug(TAG, `Tidak ada sasaran di sekitar, bergeser ke ${posStr(step)}`);
-  steer(entity, step, 0.35);
+  let trip = roams.get(entity.id);
+  if (!trip || system.currentTick - trip.since > ROAM_TICKS ||
+      isStuck(entity) || dist2(at, trip.to) < 4) {
+    const angle = Math.random() * Math.PI * 2;
+    trip = {
+      to: { x: at.x + Math.cos(angle) * 8, y: at.y, z: at.z + Math.sin(angle) * 8 },
+      since: system.currentTick,
+    };
+    roams.set(entity.id, trip);
+    logDebug(TAG, `Tidak ada sasaran di sekitar, bergeser ke ${posStr(trip.to)}`);
+  }
+  steer(entity, trip.to, 0.35);
 }
 
 export function forget(id) {
-  for (const key of [...cursors.keys()]) {
-    if (key.startsWith(`${id}:`)) cursors.delete(key);
-  }
+  const prefix = `${id}:`;
+  for (const key of [...sweeps.keys()]) if (key.startsWith(prefix)) sweeps.delete(key);
+  for (const key of [...locks.keys()]) if (key.startsWith(prefix)) locks.delete(key);
+  for (const key of [...avoided.keys()]) if (key.startsWith(prefix)) avoided.delete(key);
+  roams.delete(id);
 }

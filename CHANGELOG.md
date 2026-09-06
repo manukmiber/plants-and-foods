@@ -63,6 +63,33 @@ bacaan menjadi alat**.
 - Permintaan bahan `seed` akhirnya punya sasaran: `HUNT.seed` dulu daftar kosong,
   jadi pencari barang tidak pernah bisa memenuhi satu pun pesanan bibit.
 
+**Kayu di depan muka tidak lagi terlewat (`gather.js`):**
+
+- Gejalanya: companion berdiri di tengah hutan sambil mengulang *"mencari kayu
+  sendiri"*, lalu berangkat ke batang belasan blok jauhnya — padahal ada pohon
+  persis di depan muka. Sesudah itu dia mondar-mandir dan petinya tidak pernah
+  jadi karena papannya tidak pernah cukup.
+- Sebab pertama: sapuan bloknya **dilanjutkan dari titik terakhir** lintas
+  denyut. Daftar sasarannya memang diurutkan dari yang paling dekat, tapi karena
+  penunjuknya tidak pernah kembali ke awal, urutan itu jadi percuma: sesudah satu
+  kali ketemu, pencarian berikutnya mulai dari titik yang sudah jauh dan
+  berputar keluar terus. Sekarang **lingkaran lima blok di sekitar companion
+  disapu habis lebih dulu, tiap kali** — apa pun yang berdiri di situ selalu
+  menang. Sisanya yang jauh tetap disapu sepotong-sepotong seperti dulu, dari
+  titik awal yang tetap supaya tidak ada blok yang terlewat, dan penunjuknya
+  dikembalikan ke awal begitu sasarannya ketemu.
+- Sebab kedua: sasarannya **dipilih ulang tiap denyut**. Pilihannya berbeda-beda,
+  jadi companion melangkah setengah langkah ke satu pohon lalu berbelok ke pohon
+  lain — dari luar persis seperti kebingungan. Sekarang sasaran yang sudah
+  dipilih **dipegang sampai habis**, dan baru dilepas kalau bloknya memang sudah
+  hilang, kalau jalannya terhalang, atau kalau sudah dua puluh detik belum sampai
+  juga. Yang terbukti tidak bisa dicapai tidak dipilih lagi untuk sementara.
+- `roam()` juga berhenti mengundi arah baru tiap denyut. Langkahnya cuma 0,35
+  blok, jadi arah yang selalu berubah membuat companion bergetar di tempat alih-
+  alih benar-benar pindah mencari. Arahnya sekarang dipegang sekitar lima detik.
+- Hasilnya di simulasi, 300 denyut berdiri di hutan rapat: **25 kayu menjadi 275**.
+  Ujinya ada di `tools/sim/sim.mjs` dan gagal pada kode lama.
+
 **Companion bertanya, pemain menjawab (`ask.js`):**
 
 - **Petani** yang petinya kehabisan bibit bertanya: *"Apakah aku mencari bibit

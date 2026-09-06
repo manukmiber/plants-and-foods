@@ -21,10 +21,11 @@ import { orderMode } from "./scripts/usertalk.js";
 import { writeSettings } from "./scripts/state.js";
 import { offerFlower, tickTaming, isTamed, heldFlower } from "./scripts/taming.js";
 import { hasHelper, gatherOwn } from "./scripts/selfhelp.js";
+import { findMaterial, forget as forgetGather } from "./scripts/gather.js";
 import { askOwner, pendingAsks, answerAsk, answerLatestYesNo } from "./scripts/ask.js";
 import { openBook } from "./scripts/bookui.js";
 import { getActivity, setActivity } from "./scripts/activity.js";
-import { summarize, setGear, makeItem } from "./scripts/util.js";
+import { summarize, setGear, makeItem, stopWalking } from "./scripts/util.js";
 import { bagCount } from "./scripts/bag.js";
 
 LOG_CONFIG.minLevel = LogLevel.WARN;   // simulasi: cuma tampilkan yang penting
@@ -657,6 +658,67 @@ console.log("\n== Uji kerja sendiri: menebang pohon pakai tangan ==");
     advance(10);
   }
   check(seeds > 0, "membabat rumput benar-benar menghasilkan bibit", `${seeds} bibit`);
+}
+
+/* ------- Uji 10b: sasaran kayu yang terdekat, dan tidak berganti-ganti ------ */
+//
+// Gejalanya di dunia asli: companion berdiri di tengah hutan sambil mengulang
+// "mencari kayu sendiri", lalu berangkat ke batang yang belasan blok jauhnya —
+// padahal ada pohon persis di depan muka. Sebabnya dua-duanya di gather.js:
+// sapuan bloknya dilanjutkan dari titik terakhir (jadi urutan "paling dekat
+// dulu" jadi percuma), dan sasarannya dipilih ULANG tiap denyut (jadi dia
+// berbelok terus dan tidak pernah sampai).
+console.log("\n== Uji sasaran kayu: yang terdekat, dan dipegang sampai habis ==");
+{
+  const W = makeWorld({ groundY: 64 });
+  __setDimension(W.dimension);
+  for (let dy = 1; dy <= 5; dy++) W.put(2, 64 + dy, 0, "minecraft:oak_log");   // depan muka
+  for (let x = 12; x < 16; x++) {                                              // hutan jauh
+    for (let z = -3; z < 4; z++) {
+      for (let dy = 1; dy <= 5; dy++) W.put(x, 64 + dy, z, "minecraft:acacia_log");
+    }
+  }
+
+  const e = makeCompanion(W.dimension, "vbs:toya", { x: 0.5, y: 65, z: 0.5 });
+  forgetGather(e.id);
+  stopWalking(e.id);
+
+  const picks = [];
+  for (let i = 0; i < 12; i++) {
+    picks.push(findMaterial(e, "wood"));
+    advance(10);
+  }
+  check(picks.every((t) => t?.id === "minecraft:oak_log"),
+        "pohon di depan muka menang dari hutan belasan blok jauhnya",
+        picks.map((t) => (t ? t.id.replace("minecraft:", "") : "TIDAK KETEMU")).join(" "));
+  check(new Set(picks.map((t) => (t ? `${t.x},${t.y},${t.z}` : "-"))).size === 1,
+        "sasarannya dipegang, bukan diundi ulang tiap denyut",
+        `${new Set(picks.map((t) => (t ? `${t.x},${t.y},${t.z}` : "-"))).size} sasaran berbeda`);
+
+  // Dan buktinya di jalur yang sebenarnya dipakai: berdiri di hutan rapat,
+  // kayunya harus benar-benar masuk peti — bukan cuma mondar-mandir.
+  const F = makeWorld({ groundY: 64 });
+  __setDimension(F.dimension);
+  for (let x = -16; x <= 16; x++) {
+    for (let z = -16; z <= 16; z++) {
+      if ((x * 5 + z * 3) % 11) continue;
+      for (let dy = 1; dy <= 5; dy++) F.put(x, 64 + dy, z, "minecraft:acacia_log");
+    }
+  }
+  const woodman = makeCompanion(F.dimension, "vbs:akito", { x: 0.5, y: 65, z: 0.5 });
+  woodman.setDynamicProperty("vbs:owner", "S3");
+  forgetGather(woodman.id);
+  stopWalking(woodman.id);
+  const box = makeContainer();
+  const ws = readState(woodman);
+  for (let i = 0; i < 300; i++) {
+    gatherOwn(woodman, ws, "S3", "wood", box, { search: true });
+    writeState(woodman, ws);
+    advance(10);
+  }
+  const wood = Object.values(summarize(box)).reduce((a, b) => a + b, 0);
+  check(wood >= 100, "berdiri di hutan rapat: kayunya benar-benar terkumpul",
+        `${wood} kayu dalam 300 denyut`);
 }
 
 /* -------- Uji 11: companion bertanya, pemain menjawab ------------------- */

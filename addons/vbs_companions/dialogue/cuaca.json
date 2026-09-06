@@ -1,0 +1,39 @@
+{
+  "id": "cuaca",
+  "character": "*",
+  "mode": "append",
+  "lines": {
+    "idle": [
+      "Langitnya bersih hari ini.",
+      "Kalau hujan, kerjaannya lebih adem.",
+      "Aku dengar air dari sebelah sana."
+    ],
+    "morning": [
+      "Embunnya belum kering, {owner}."
+    ],
+    "night": [
+      "Bintangnya banyak malam ini."
+    ]
+  },
+  "topics": [
+    {
+      "tag": "hujan",
+      "modes": ["farm", "wander", "looter"],
+      "turns": [
+        "Awannya menebal dari tadi.",
+        "Mungkin hujan. Tanamannya kebagian air kalau begitu.",
+        "Aku tetap kerja, cuma basah sedikit.",
+        "Jangan sampai sakit. {owner} nanti repot."
+      ]
+    },
+    {
+      "tag": "hasil-kerja",
+      "modes": [],
+      "turns": [
+        "Petimu sudah penuh belum?",
+        "Belum. Masih muat beberapa tumpuk lagi.",
+        "Kalau penuh, bilang. Aku bantu angkut."
+      ]
+    }
+  ]
+}

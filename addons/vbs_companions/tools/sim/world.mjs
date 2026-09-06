@@ -164,3 +164,34 @@ export function makeCompanion(dimension, typeId, at) {
   };
   return entity;
 }
+
+/**
+ * Pemain tiruan: cukup untuk menguji buku panduan (kantong, pesan chat) dan
+ * perintah beta. Tidak meniru apa pun yang tidak dipakai add-on ini.
+ */
+export function makePlayer(dimension, { id = "P1", name = "Pemain", at = { x: 0, y: 65, z: 0 } } = {}) {
+  const container = makeContainer(36);
+  const messages = [];
+  const player = {
+    id,
+    name,
+    typeId: "minecraft:player",
+    isValid: true,
+    dimension,
+    location: { ...at },
+    isSneaking: false,
+    messages,
+    container,
+    getComponent(cid) {
+      if (cid === "minecraft:inventory") return { container };
+      if (cid === "minecraft:equippable") {
+        return { getEquipment: () => player.__hand, setEquipment: (slot, item) => { player.__hand = item; } };
+      }
+      return undefined;
+    },
+    sendMessage(text) { messages.push(text); },
+    playSound() {},
+    teleport(pos) { player.location = { x: pos.x, y: pos.y, z: pos.z }; },
+  };
+  return player;
+}

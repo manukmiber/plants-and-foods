@@ -6,6 +6,79 @@ reconstructed afterwards, which is why the builder refuses to save without one.
 
 ## Unreleased
 
+### VBS Companions v1.5.0
+
+Empat tambahan yang intinya sama: **isi mod bisa ditambah tanpa menyentuh kode**,
+dan pemain punya satu tempat untuk mengatur segalanya.
+
+**Tempat menaruh rancangan bangunan baru (`addons/vbs_companions/blueprints/`):**
+
+- Satu berkas `.json` di folder itu = satu pilihan baru di menu **Rancangan
+  Bangunan**, bertanda `JSON`. Dipakai untuk memasukkan skema bangunan yang
+  ditemukan di internet: suruh AI mengubahnya ke skema di `blueprints/README.md`,
+  simpan, jalankan generatornya.
+- Dua bentuk didukung: `layers` (denah huruf per lapis) dan `blocks` (daftar
+  koordinat jarang, bentuk yang wajar keluar dari konversi schematic).
+- Rancangan menyebut **peran** blok (`wall`, `floor`, `roof`, `light`, …) sehingga
+  companion memakai bahan apa pun yang ada di petinya; blok tertentu tetap boleh
+  dan perannya jadi cadangan kalau blok itu habis.
+- Bangunan JSON dibangun **rata** — ketinggian dasarnya dikunci sekali, jadi
+  menara di lereng bukit tetap menara. Rancangan bawaan tetap mengikuti kontur.
+- `tools/gen_blueprints.py` menolak huruf di luar palette, peran tak dikenal,
+  baris yang panjangnya berbeda, dan rancangan lebih besar dari 32×32×32 atau
+  8000 langkah. `validate.py` menolak kalau JSON dan hasil generatornya tidak
+  sinkron — jadi "sudah kutaruh tapi tidak muncul" ketahuan sebelum dipasang.
+- Dua contoh ikut: Menara Pengawas dan Sumur Desa.
+
+**Tempat menaruh dialog baru (`addons/vbs_companions/dialogue/`):**
+
+- Sama pola: satu berkas `.json` berisi `lines` (kalimat per suasana) dan
+  `topics` (obrolan antar companion, lengkap dengan syarat mode).
+- Kalimat JSON **ditambahkan** ke suara bawaan, tidak menggantikannya — kecuali
+  berkasnya menulis `"mode": "replace"`. `character: "*"` berlaku untuk semua.
+- Kunci suasana karangan sendiri ditolak generator; kalau tidak, kalimat itu
+  diam-diam tidak akan pernah terucap.
+
+**Buku Panduan Companion — item baru yang tidak bisa hilang:**
+
+- Ditempa dari **satu buku + satu bunga** (18 resep, satu per bunga, karena resep
+  Bedrock tidak bisa menyebut beberapa kemungkinan untuk satu bahan).
+- Isinya: **Cara Pakai** (enam bab), **Kendalikan Companion** (buka menu
+  companion mana pun dari jauh, atau beri satu perintah untuk semuanya sekaligus),
+  **Pengaturan Mod** (tujuh saklar per pemain), dan **Isi Tambahan & Status**.
+- Tidak bisa hilang, dijaga tiga lapis: diberikan lagi sesudah mati, dipungut
+  kembali kalau dibuang, dan diperiksa tiap lima detik untuk kasus lain
+  (kantong penuh, `/clear`, dunia lama). Bisa dimatikan lewat saklarnya sendiri.
+- Tujuh setelan per pemain yang semuanya benar-benar dibaca kode: sembunyikan
+  nama pemilik, bungkam celoteh, gelembung teks, laporan jarak jauh, pesan
+  petunjuk, buku tidak bisa hilang, dan kirim peringatan ke chat.
+- Kalau bukunya tertinggal: `!panduan` di chat atau `/scriptevent vbs:panduan`.
+
+**Dukungan Beta API — tambahan, bukan syarat:**
+
+- `python3 gen_packs.py --beta` menulis varian manifest yang memakai modul beta;
+  dengan toggle **Beta APIs** menyala, add-on mendapat perintah garis miring
+  sungguhan: `/vbs:panduan`, `/vbs:chat <nama> <pesan>`, `/vbs:mode <nama> <tugas>`.
+- Varian yang di-commit tetap **stabil**: tidak ada satu pun eksperimen yang perlu
+  dinyalakan, dan `validate.py` menolak manifest beta kecuali dijalankan dengan
+  `--beta`.
+- `scripts/beta.js` mengimpor `@minecraft/server` sebagai namespace dan mengecek
+  tiap kemampuan sebelum memakainya. Ini bukan gaya penulisan: mengimpor nama
+  yang tidak ada di versi stabil adalah kegagalan penautan modul, dan Bedrock
+  menjawabnya dengan mematikan seluruh mesin skrip add-on, diam-diam — persis
+  akar masalah v1.3.0.
+
+**Uji:**
+
+- `tools/sim/run.sh` sekarang dijalankan **dua kali**, dengan dan tanpa modul
+  beta, dan bertambah empat kelompok pemeriksaan: rancangan JSON benar-benar
+  dibangun rata di tanah tidak rata, dialog JSON terucap tanpa menghapus bawaan,
+  buku dikembalikan sesudah pemain mati, dan perintah beta menolak masukan salah.
+- `validate.py` bertambah pemeriksaan sinkronisasi JSON ↔ modul hasil generator,
+  peran rancangan ↔ `MATERIALS` di `builder.js`, kunci dialog ↔ `FALLBACK` di
+  `lines.js`, dan resep buku ↔ daftar `FLOWERS` di `config.js`.
+
+
 ### VBS Companions v1.4.0
 
 Pemeriksaan ulang seluruh pekerjaan v1.3.0 — banyak fitur yang seharusnya ada di

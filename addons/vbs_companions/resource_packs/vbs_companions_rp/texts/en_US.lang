@@ -2,6 +2,9 @@
 action.interact.vbs_menu=Buka Menu
 entity.vbs:marker.name=Patok Ladang
 
+item.vbs:guide=Buku Panduan Companion
+item.vbs:guide.name=Buku Panduan Companion
+
 entity.vbs:akito.name=Akito
 item.spawn_egg.entity.vbs:akito.name=Panggil Akito
 entity.vbs:kohane.name=Kohane

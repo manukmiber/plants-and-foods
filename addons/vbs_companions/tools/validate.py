@@ -279,10 +279,23 @@ def main():
     modules = {d.get("module_name"): d.get("version") for d in bpm["dependencies"]}
     check("@minecraft/server" in modules, "dependensi @minecraft/server hilang")
     check("@minecraft/server-ui" in modules, "dependensi @minecraft/server-ui hilang")
+    # Varian yang di-commit HARUS memakai modul stabil: begitu manifestnya beta,
+    # add-on tidak bisa dipasang tanpa menyalakan toggle eksperimen. Varian beta
+    # dibuat sengaja dengan `gen_packs.py --beta` dan diperiksa dengan
+    # `validate.py --beta`.
+    want_beta = "--beta" in sys.argv
     for name, version in modules.items():
-        if name:
-            check("beta" not in str(version),
-                  f"{name} memakai versi beta — add-on jadi butuh eksperimen di server")
+        if not name:
+            continue
+        is_beta = "beta" in str(version)
+        if want_beta:
+            check(is_beta, f"{name} versi {version} bukan beta, padahal "
+                           "diperiksa dengan --beta")
+        else:
+            check(not is_beta,
+                  f"{name} memakai versi beta — add-on jadi butuh eksperimen di "
+                  "server. Jalankan `python3 gen_packs.py` tanpa --beta untuk "
+                  "mengembalikannya.")
 
     # 9. script: entry ada, dan semua import relatif ketemu
     entry = next(m for m in bpm["modules"] if m["type"] == "script")["entry"]
@@ -321,13 +334,111 @@ def main():
         check(os.path.exists(os.path.join(pack, "pack_icon.png")),
               f"pack_icon.png hilang di {os.path.basename(pack)}")
 
+    # 12. rancangan bangunan JSON <-> modul hasil generator
+    #
+    # Yang paling gampang terlupa: menambah berkas di blueprints/ tapi lupa
+    # menjalankan generatornya, jadi rancangannya tidak pernah ikut ke dalam
+    # pack dan tidak muncul di menu — tanpa galat apa pun.
+    import gen_blueprints
+    try:
+        bp_text, bp_count = gen_blueprints.build()
+        on_disk = open(gen_blueprints.OUT, encoding="utf-8").read()
+        check(bp_text == on_disk,
+              "blueprints.data.js tidak sinkron dengan blueprints/*.json — "
+              "jalankan `python3 tools/gen_blueprints.py`")
+        check(bp_count == len([n for n in os.listdir(gen_blueprints.SRC)
+                               if n.endswith(".json")]),
+              "ada berkas di blueprints/ yang tidak ikut terbaca generator")
+    except gen_blueprints.Bad as exc:
+        check(False, f"rancangan JSON ditolak: {exc}")
+
+    builder_src = open(os.path.join(BP, "scripts", "builder.js"), encoding="utf-8").read()
+    mat_block = re.search(r"const MATERIALS = \{(.*?)\n\};", builder_src, re.S)
+    check(mat_block is not None, "MATERIALS tidak ditemukan di builder.js")
+    if mat_block:
+        # Peran yang boleh dipakai berkas JSON harus benar-benar bisa dilayani
+        # builder.js; "air" dan "chest" ditangani sebagai kasus khusus di sana.
+        roles = set(re.findall(r"^\s{2}(\w+):", mat_block.group(1), re.M)) | {"air", "chest"}
+        for role in gen_blueprints.ROLES:
+            check(role in roles,
+                  f"peran \"{role}\" diizinkan gen_blueprints.py tapi tidak "
+                  "dilayani MATERIALS di builder.js")
+    check("dataBlueprints()" in builder_src,
+          "builder.js tidak lagi menggabungkan rancangan JSON ke BLUEPRINTS")
+
+    # 13. dialog JSON <-> modul hasil generator
+    import gen_dialogue
+    try:
+        dlg_text, dlg_count, dlg_lines = gen_dialogue.build()
+        on_disk = open(gen_dialogue.OUT, encoding="utf-8").read()
+        check(dlg_text == on_disk,
+              "dialogue.data.js tidak sinkron dengan dialogue/*.json — "
+              "jalankan `python3 tools/gen_dialogue.py`")
+    except gen_dialogue.Bad as exc:
+        check(False, f"dialog JSON ditolak: {exc}")
+        dlg_count = dlg_lines = 0
+
+    lines_src = open(os.path.join(BP, "scripts", "lines.js"), encoding="utf-8").read()
+    fallback = re.search(r"export const FALLBACK = \{(.*?)\n\};", lines_src, re.S)
+    check(fallback is not None, "FALLBACK tidak ditemukan di lines.js")
+    if fallback:
+        keys = set(re.findall(r"^\s{2}(\w+):", fallback.group(1), re.M))
+        check(set(gen_dialogue.KEYS) == keys,
+              f"kunci suasana di gen_dialogue.py {sorted(set(gen_dialogue.KEYS) - keys)} / "
+              f"{sorted(keys - set(gen_dialogue.KEYS))} tidak sama dengan FALLBACK di lines.js")
+    check(set(gen_dialogue.MODES) == listed_modes,
+          "daftar mode di gen_dialogue.py tidak sama dengan config.js")
+
+    # 14. buku panduan: item, resep, tekstur, teks, dan konstanta di script
+    item_doc = load(os.path.join(BP, "items", "guide.json"))["minecraft:item"]
+    check(item_doc["description"]["identifier"] == gen_packs.GUIDE_ITEM,
+          "identifier item buku panduan tidak sama dengan gen_packs.py")
+    icon = item_doc["components"]["minecraft:icon"]
+    icon_key = icon if isinstance(icon, str) else icon["texture"]
+    check(icon_key in itex, f"ikon buku '{icon_key}' belum terdaftar di item_texture.json")
+    guide_png = os.path.join(RP, "textures", "items", f"{icon_key}.png")
+    check(os.path.exists(guide_png), f"tekstur buku hilang: {rel(guide_png)}")
+    if os.path.exists(guide_png):
+        check(Image.open(guide_png).size == (16, 16),
+              "tekstur buku bukan 16x16 — ikon item harus seukuran ikon vanilla")
+    check(f"item.{gen_packs.GUIDE_ITEM}=" in lang,
+          "nama buku panduan belum ada di en_US.lang")
+
+    # Bunga yang dipakai resep harus benar-benar dianggap bunga oleh script,
+    # kalau tidak pemain bisa menempa buku dengan bunga yang tidak bisa
+    # menjinakkan companion — dua daftar yang diam-diam berbeda.
+    flowers_block = re.search(r"export const FLOWERS = new Set\(\[(.*?)\]\);",
+                              script, re.S)
+    check(flowers_block is not None, "FLOWERS tidak ditemukan di config.js")
+    script_flowers = set(re.findall(r'"minecraft:(\w+)"', flowers_block.group(1))) \
+        if flowers_block else set()
+    recipe_dir = os.path.join(BP, "recipes")
+    recipe_files = sorted(n for n in os.listdir(recipe_dir) if n.endswith(".json"))
+    check(len(recipe_files) == len(gen_packs.GUIDE_FLOWERS),
+          f"ada {len(recipe_files)} resep buku, seharusnya "
+          f"{len(gen_packs.GUIDE_FLOWERS)} — jalankan gen_packs.py")
+    for name in recipe_files:
+        doc = load(os.path.join(recipe_dir, name))["minecraft:recipe_shapeless"]
+        items = [i["item"] for i in doc["ingredients"]]
+        check("minecraft:book" in items, f"resep {name} tidak memakai buku vanilla")
+        flower = next((i for i in items if i != "minecraft:book"), "")
+        check(flower.replace("minecraft:", "") in script_flowers,
+              f"resep {name} memakai {flower} yang tidak ada di FLOWERS config.js")
+        check(doc["result"]["item"] == gen_packs.GUIDE_ITEM,
+              f"resep {name} tidak menghasilkan {gen_packs.GUIDE_ITEM}")
+
+    book_src = open(os.path.join(BP, "scripts", "book.js"), encoding="utf-8").read()
+    check(f'GUIDE_ID = "{gen_packs.GUIDE_ITEM}"' in book_src,
+          "GUIDE_ID di book.js tidak sama dengan identifier item di gen_packs.py")
+
     if problems:
         print(f"{len(problems)} masalah dari {checks} pemeriksaan:\n")
         for p in problems:
             print("  ✗ " + p)
         return 1
     print(f"semua {checks} pemeriksaan lolos — {len(ids)} karakter, "
-          f"{len(geoms)} geometry, {len(anims)} animasi")
+          f"{len(geoms)} geometry, {len(anims)} animasi, {bp_count} rancangan JSON, "
+          f"{dlg_count} berkas dialog JSON, {len(recipe_files)} resep buku")
     return 0
 
 

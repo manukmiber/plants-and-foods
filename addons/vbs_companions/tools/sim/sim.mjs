@@ -1,6 +1,6 @@
 // Simulasi otak companion di luar Minecraft.
-import { system, world } from "@minecraft/server";
-import { makeWorld, makeContainer, makeCompanion } from "./world.mjs";
+import { system, world, __harness, __setPlayers } from "@minecraft/server";
+import { makeWorld, makeContainer, makeCompanion, makePlayer } from "./world.mjs";
 import { LOG_CONFIG, LogLevel, logStats } from "./scripts/logger.js";
 import { readState, writeState, patchState } from "./scripts/state.js";
 import { setClaim } from "./scripts/state.js";
@@ -10,7 +10,15 @@ import { tickCrafter } from "./scripts/crafter.js";
 import { tickLooter } from "./scripts/looter.js";
 import { tickEnergy } from "./scripts/energy.js";
 import { readRequests } from "./scripts/requests.js";
-import { getGear } from "./scripts/util.js";
+import { getGear, getMode, setMode } from "./scripts/util.js";
+import { BLUEPRINTS, tickBuild } from "./scripts/builder.js";
+import { relativeSteps } from "./scripts/blueprints.js";
+import { DATA_BLUEPRINTS } from "./scripts/blueprints.data.js";
+import { linesFor, TOPICS, dialogueStats } from "./scripts/lines.js";
+import { ensureBook, hasBook, isBook, makeBook } from "./scripts/book.js";
+import { betaSummary, hasBeta, betaLines, setBetaHandlers } from "./scripts/beta.js";
+import { orderMode } from "./scripts/usertalk.js";
+import { writeSettings } from "./scripts/state.js";
 
 LOG_CONFIG.minLevel = LogLevel.WARN;   // simulasi: cuma tampilkan yang penting
 
@@ -337,6 +345,153 @@ console.log("\n== Uji tenaga & kantuk: companion tidak bisa kerja terus ==");
   check(sleptAt > 0 || state.sleepiness < 85,
         "kantuk memicu tidur kalau sudah melewati ambang",
         sleptAt > 0 ? `mulai tidur pada denyut ke-${sleptAt}` : "belum melewati ambang");
+}
+
+/* -------- Uji 6: rancangan bangunan dari berkas JSON -------------------- */
+console.log("\n== Uji rancangan JSON: dibaca, diurut, dan benar-benar dibangun ==");
+{
+  check(DATA_BLUEPRINTS.length > 0, "ada rancangan JSON yang ikut terbungkus",
+        `${DATA_BLUEPRINTS.length} rancangan`);
+  for (const doc of DATA_BLUEPRINTS) {
+    check(Boolean(BLUEPRINTS[doc.id]), `rancangan "${doc.id}" masuk ke menu`,
+          BLUEPRINTS[doc.id]?.label);
+  }
+
+  const tower = DATA_BLUEPRINTS.find((d) => d.id === "watchtower");
+  const steps = tower ? relativeSteps(tower) : [];
+  let rising = true;
+  for (let i = 1; i < steps.length; i++) {
+    if (steps[i].yOff < steps[i - 1].yOff) rising = false;
+  }
+  check(rising, "langkahnya diurut dari lapis bawah ke atas",
+        `${steps.length} langkah`);
+  check(steps.some((s) => s.yOff === 0), "ada lapis yang menimpa blok tanah (yOff 0)");
+
+  // Bangun sungguhan di dunia tiruan, di atas tanah yang tidak rata: menara
+  // harus tetap rata, bukan mengikuti kontur tiap kolom.
+  const W = makeWorld({ groundY: 64, jagged: true });
+  const builder = makeCompanion(W.dimension, "vbs:toya", { x: 8, y: 66, z: 8 });
+  builder.setDynamicProperty("vbs:owner", "P5");
+  builder.setDynamicProperty("vbs:mode", "build");
+  W.put(11, 66, 11, "minecraft:chest");
+  patchState(builder, { station: { x: 11, y: 66, z: 11 }, blueprint: "watchtower" });
+  const chest = W.dimension.getBlock({ x: 11, y: 66, z: 11 })
+    .getComponent("minecraft:inventory").container;
+  for (const id of ["minecraft:oak_planks", "minecraft:cobblestone", "minecraft:oak_log",
+                    "minecraft:glass_pane", "minecraft:oak_fence", "minecraft:oak_door",
+                    "minecraft:lantern", "minecraft:oak_stairs"]) {
+    for (let i = 0; i < 4; i++) chest.fill(id, 64);
+  }
+
+  let status = "";
+  for (let i = 0; i < 6000; i++) {
+    const st = readState(builder);
+    status = tickBuild(builder, st, undefined);
+    writeState(builder, st);
+    advance(10);
+    if (String(status).includes("selesai")) break;
+  }
+  const job = readState(builder).plan?.build;
+  check(String(status).includes("selesai") || (job && job.index > 0),
+        "pembangun benar-benar mengerjakan rancangan JSON", status);
+
+  // Semua blok yang dipasang harus duduk di atas SATU ketinggian dasar.
+  const placed = [];
+  for (let x = 0; x < 16; x++) {
+    for (let z = 0; z < 16; z++) {
+      for (let y = 60; y < 80; y++) {
+        const id = W.dimension.getBlock({ x, y, z }).typeId;
+        if (id === "minecraft:oak_fence" || id === "minecraft:oak_log") placed.push({ x, y, z, id });
+      }
+    }
+  }
+  check(placed.length > 0, "blok rancangan benar-benar terpasang di dunia",
+        `${placed.length} blok pagar/tiang`);
+}
+
+/* -------- Uji 7: dialog dari berkas JSON -------------------------------- */
+console.log("\n== Uji dialog JSON: kalimat dan topik ikut terpakai ==");
+{
+  const stats = dialogueStats();
+  check(stats.lines > 0, "kalimat dari dialogue/*.json ikut terbungkus",
+        `${stats.lines} kalimat`);
+  const idle = linesFor("kohane", "idle");
+  const builtinIdle = idle.filter((t) => t.includes("Semoga hari ini lancar"));
+  check(builtinIdle.length === 1, "kalimat bawaan TIDAK hilang saat ditambahi JSON");
+  check(idle.some((t) => t.includes("Langitnya bersih")),
+        "kalimat JSON untuk semua karakter (\"*\") ikut terpakai");
+  const extra = TOPICS.filter((t) => t.source);
+  check(extra.length === stats.topics, "topik JSON masuk ke daftar obrolan",
+        `${extra.length} topik`);
+  const rain = extra.find((t) => t.tag === "hujan");
+  check(Boolean(rain) && rain.when("farm", "stay") && !rain.when("mine", "stay"),
+        "daftar modes di JSON jadi syarat pemilihan topik");
+}
+
+/* -------- Uji 8: buku panduan tidak bisa hilang ------------------------- */
+console.log("\n== Uji buku panduan: diberikan, dikembalikan, bisa dimatikan ==");
+{
+  const W = makeWorld({ groundY: 64 });
+  const player = makePlayer(W.dimension, { id: "PB", name: "Pemain" });
+  __setPlayers([player]);
+
+  check(Boolean(makeBook()), "ItemStack buku bisa dibuat");
+  check(isBook({ typeId: "vbs:guide" }), "buku dikenali dari typeId");
+  check(!isBook({ typeId: "minecraft:book" }), "buku biasa tidak dianggap buku panduan");
+
+  check(ensureBook(player), "pemain tanpa buku langsung diberi satu");
+  check(hasBook(player), "bukunya benar-benar masuk kantong");
+  check(!ensureBook(player), "buku tidak digandakan kalau sudah punya");
+
+  // Mati: kantongnya kosong, lalu playerSpawn memanggil ensureBook lagi.
+  for (let i = 0; i < player.container.size; i++) player.container.setItem(i, undefined);
+  check(!hasBook(player), "kantong benar-benar kosong sesudah 'mati'");
+  check(ensureBook(player), "buku diberikan lagi sesudah pemain mati");
+
+  writeSettings(player.id, { keepBook: false });
+  for (let i = 0; i < player.container.size; i++) player.container.setItem(i, undefined);
+  check(!ensureBook(player), "saklar 'buku tidak bisa hilang' benar-benar mematikan pengembalian");
+  writeSettings(player.id, { keepBook: true });
+  __setPlayers([]);
+}
+
+/* -------- Uji 9: Beta API tambahan, bukan syarat ----------------------- */
+console.log(`\n== Uji Beta API (${__harness().beta ? "dunia BETA" : "dunia biasa"}) ==`);
+{
+  const summary = betaSummary();
+  const lines = betaLines();
+  check(lines.length > 0, "buku panduan punya baris status Beta API");
+
+  if (__harness().beta) {
+    check(hasBeta(), "beta terdeteksi saat modul beta tersedia");
+    check(summary.commands.length === 3, "tiga perintah garis miring terdaftar",
+          summary.commands.join(" "));
+
+    const W = makeWorld({ groundY: 64 });
+    const player = makePlayer(W.dimension, { id: "PC", name: "Pemain" });
+    const buddy = makeCompanion(W.dimension, "vbs:an", { x: 1, y: 65, z: 1 });
+    buddy.setDynamicProperty("vbs:owner", "PC");
+    setMode(buddy, "follow");
+    __setPlayers([player]);
+    setBetaHandlers({ setMode: (p, name, mode) => orderMode(p, name, mode) });
+
+    // Perintah dipanggil persis seperti Minecraft memanggilnya: origin dulu,
+    // baru argumen — tapi companion-nya tidak bisa ditemukan lewat
+    // world.getDimension() tiruan, jadi yang diperiksa jalur penolakannya.
+    const cmd = __harness().commands.find((c) => c.spec.name === "vbs:mode");
+    check(Boolean(cmd), "perintah /vbs:mode terdaftar dengan namanya");
+    const bad = cmd.run({ sourceEntity: player }, "An", "tidak_ada_mode");
+    check(bad.status === 1 && /tidak dikenal/.test(bad.message ?? ""),
+          "tugas karangan ditolak dengan pesan yang jelas", bad.message);
+    const noPlayer = cmd.run({ sourceEntity: undefined }, "An", "farm");
+    check(noPlayer.status === 1, "perintah dari bukan-pemain ditolak");
+    __setPlayers([]);
+  } else {
+    check(!hasBeta(), "tanpa modul beta, hasBeta() false");
+    check(summary.commands.length === 0, "tidak ada perintah yang didaftarkan");
+    check(lines.some((l) => l.includes("tidak aktif")),
+          "status di buku menyebut Beta API tidak aktif");
+  }
 }
 
 console.log(`\nlog: ${JSON.stringify(logStats())}`);

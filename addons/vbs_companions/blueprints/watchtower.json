@@ -1,0 +1,51 @@
+{
+  "id": "watchtower",
+  "label": "Menara Pengawas",
+  "hint": "Menara 5x5 delapan blok, berjendela, berlampu di puncaknya",
+  "origin": "center",
+  "palette": {
+    "K": { "role": "floor" },
+    "#": { "role": "wall" },
+    "O": { "role": "post" },
+    "D": { "role": "door" },
+    "G": { "role": "glass" },
+    "F": { "role": "fence" },
+    "L": { "role": "light" },
+    ".": { "role": "air" },
+    " ": { "skip": true }
+  },
+  "layers": [
+    {
+      "y": 0,
+      "rows": ["KKKKK", "KKKKK", "KKKKK", "KKKKK", "KKKKK"]
+    },
+    {
+      "y": 1,
+      "rows": ["O#D#O", "#...#", "#...#", "#...#", "O###O"]
+    },
+    {
+      "y": 2,
+      "rows": ["O#.#O", "#...#", "#...#", "#...#", "O###O"]
+    },
+    {
+      "y": 3,
+      "rows": ["O#G#O", "#...#", "G...G", "#...#", "O#G#O"]
+    },
+    {
+      "y": 4,
+      "rows": ["O###O", "#...#", "#...#", "#...#", "O###O"]
+    },
+    {
+      "y": 5,
+      "rows": ["O#G#O", "#...#", "G...G", "#...#", "O#G#O"]
+    },
+    {
+      "y": 6,
+      "rows": ["#####", "#KKK#", "#KKK#", "#KKK#", "#####"]
+    },
+    {
+      "y": 7,
+      "rows": ["FFFFF", "F...F", "F.L.F", "F...F", "FFFFF"]
+    }
+  ]
+}

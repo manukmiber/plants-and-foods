@@ -17,6 +17,30 @@ export class ItemStack {
 
 const intervals = [];
 const timeouts = [];
+
+// Mode BETA tiruan. Dinyalakan dengan VBS_SIM_BETA=1 supaya sim bisa dijalankan
+// dua kali: sekali seperti dunia biasa (tanpa Beta API) dan sekali seperti dunia
+// yang menyalakan toggle "Beta APIs". Keduanya harus lolos — itulah yang
+// membuktikan beta benar-benar tambahan, bukan syarat.
+const BETA = Boolean(globalThis.process?.env?.VBS_SIM_BETA);
+const commands = [];
+
+export const CustomCommandParamType = BETA ? { String: "String", Integer: "Integer" } : undefined;
+export const CommandPermissionLevel = BETA ? { Any: 0, GameDirectors: 1, Admin: 2 } : undefined;
+export const CustomCommandStatus = BETA ? { Success: 0, Failure: 1 } : undefined;
+
+const startupEvent = {
+  subscribe(fn) {
+    // Bedrock memanggil startup sekali sebelum dunia dimuat; tiruan ini
+    // memanggilnya langsung supaya pendaftaran perintah bisa diperiksa.
+    fn({
+      customCommandRegistry: {
+        registerCommand(spec, run) { commands.push({ spec, run }); },
+      },
+    });
+  },
+};
+
 export const system = {
   currentTick: 0,
   run(fn) { timeouts.push(fn); },
@@ -24,21 +48,28 @@ export const system = {
   runInterval(fn, period) { intervals.push({ fn, period }); return intervals.length; },
   clearRun() {},
   afterEvents: { scriptEventReceive: { subscribe() {} } },
-  beforeEvents: { watchdogTerminate: { subscribe() {} } },
+  beforeEvents: BETA
+    ? { watchdogTerminate: { subscribe() {} }, startup: startupEvent }
+    : { watchdogTerminate: { subscribe() {} } },
 };
 
 function evt() { return { subscribe(fn) { this._fns = (this._fns ?? []).concat(fn); } }; }
 
 const props = new Map();
+let players = [];
+
+/** Dipakai sim.mjs: daftar pemain yang "online" di dunia tiruan. */
+export function __setPlayers(list) { players = list; }
+
 export const world = {
   afterEvents: {
     entitySpawn: evt(), entityLoad: evt(), entityRemove: evt(), entityDie: evt(),
     entityHurt: evt(), playerInteractWithEntity: evt(), playerLeave: evt(),
-    itemUseOn: evt(), playerInteractWithBlock: evt(), playerSpawn: evt(),
-    worldLoad: evt(),
+    itemUse: evt(), itemUseOn: evt(), playerInteractWithBlock: evt(),
+    playerSpawn: evt(), worldLoad: evt(),
   },
   beforeEvents: { chatSend: evt() },
-  getAllPlayers() { return []; },
+  getAllPlayers() { return players; },
   getDimension(id) { return makeDimension(id); },
   getDynamicProperty(k) { return props.get(k); },
   setDynamicProperty(k, v) { props.set(k, v); },
@@ -63,5 +94,5 @@ export const ItemTypes = {};
 export const TicksPerSecond = 20;
 
 export function __harness() {
-  return { intervals, timeouts };
+  return { intervals, timeouts, commands, beta: BETA };
 }

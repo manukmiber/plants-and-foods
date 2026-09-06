@@ -26,13 +26,14 @@ Tiga hal yang perlu dipahami sebelum mengubah berkas ini:
 
 import json
 import os
+import sys
 
 import model
 
 BP = os.path.join(model.HERE, "..", "behavior_packs", "vbs_companions_bp")
 RP = os.path.join(model.HERE, "..", "resource_packs", "vbs_companions_rp")
 
-VERSION = [1, 4, 0]
+VERSION = [1, 5, 0]
 MIN_ENGINE = [1, 21, 0]
 
 # UUID ini adalah identitas pack di mata Minecraft. JANGAN diubah setelah dirilis:
@@ -45,10 +46,31 @@ UUID = {
     "rp_res": "7306a655-02d7-42bb-9774-3656d90404da",
 }
 
-# Modul script versi stabil — sengaja bukan beta, supaya add-on ini bisa dipasang
-# di server tanpa menyalakan eksperimen apa pun.
+# Modul script versi stabil — bawaan, supaya add-on ini bisa dipasang di server
+# tanpa menyalakan eksperimen apa pun.
 SERVER_MODULE = "1.11.0"
 SERVER_UI_MODULE = "1.2.0"
+
+# Modul script versi BETA, dipakai kalau generator dijalankan dengan --beta.
+# Manifest yang memakai versi ini HANYA bisa dimuat kalau toggle "Beta APIs"
+# dinyalakan di pengaturan dunia; sebagai gantinya scripts/beta.js mendapat
+# perintah garis miring sungguhan (/vbs:panduan, /vbs:chat, ...). Angkanya
+# mengikuti versi gim: naikkan di sini kalau Minecraft sudah lebih baru.
+SERVER_MODULE_BETA = "2.0.0-beta"
+SERVER_UI_MODULE_BETA = "2.0.0-beta"
+
+# Buku panduan: satu buku vanilla + satu bunga. Bunga yang dipakai di resep
+# sengaja hanya bunga yang sudah ada sejak lama — bunga terbaru (wildflowers,
+# eyeblossom) tetap bisa dipakai untuk MENJINAKKAN companion, tapi tidak
+# dijadikan resep supaya tidak ada resep yang gagal dimuat di gim yang lebih tua.
+GUIDE_ITEM = "vbs:guide"
+GUIDE_TEXTURE = "vbs_guide"
+GUIDE_FLOWERS = [
+    "poppy", "dandelion", "blue_orchid", "allium", "azure_bluet", "red_tulip",
+    "orange_tulip", "white_tulip", "pink_tulip", "oxeye_daisy", "cornflower",
+    "lily_of_the_valley", "wither_rose", "sunflower", "lilac", "rose_bush",
+    "peony", "torchflower",
+]
 
 CROP_BLOCKS = ["minecraft:wheat", "minecraft:carrots", "minecraft:potatoes",
                "minecraft:beetroot", "minecraft:nether_wart"]
@@ -116,7 +138,9 @@ def write(path, doc):
 
 # --- manifest --------------------------------------------------------------
 
-def manifests():
+def manifests(beta=False):
+    server = SERVER_MODULE_BETA if beta else SERVER_MODULE
+    server_ui = SERVER_UI_MODULE_BETA if beta else SERVER_UI_MODULE
     write(os.path.join(BP, "manifest.json"), {
         "format_version": 2,
         "header": {
@@ -135,8 +159,8 @@ def manifests():
         ],
         "dependencies": [
             {"uuid": UUID["rp_header"], "version": VERSION},
-            {"module_name": "@minecraft/server", "version": SERVER_MODULE},
-            {"module_name": "@minecraft/server-ui", "version": SERVER_UI_MODULE},
+            {"module_name": "@minecraft/server", "version": server},
+            {"module_name": "@minecraft/server-ui", "version": server_ui},
         ],
     })
     write(os.path.join(RP, "manifest.json"), {
@@ -638,15 +662,70 @@ def client_entity_doc(char):
     }
 
 
+# --- buku panduan ----------------------------------------------------------
+
+def guide_item_doc():
+    """Item kustom `vbs:guide` — buku yang isinya menu, bukan halaman teks.
+
+    Sengaja memakai format_version 1.20.50: item data-driven sesederhana ini
+    (ikon, nama, tumpukan satu) sudah stabil sejak versi itu dan TIDAK butuh
+    toggle eksperimental apa pun. Yang dilakukan saat dipakai diurus script
+    (scripts/book.js), bukan komponen, supaya tidak ada bagian add-on ini yang
+    bergantung pada custom component beta.
+
+    Komponennya sengaja sesedikit mungkin. Satu komponen yang tidak dikenal versi
+    gim yang dipasang pemain membuat SELURUH item gagal dimuat — dan buku yang
+    gagal dimuat berarti resepnya ikut mati. Buku yang jatuh ke tanah tidak
+    dijaga komponen `should_despawn`, tapi oleh script: book.js memungutnya
+    kembali pada tick yang sama.
+    """
+    return {
+        "format_version": "1.20.50",
+        "minecraft:item": {
+            "description": {
+                "identifier": GUIDE_ITEM,
+                "menu_category": {"category": "items"},
+            },
+            "components": {
+                "minecraft:icon": {"texture": GUIDE_TEXTURE},
+                "minecraft:max_stack_size": 1,
+                "minecraft:hand_equipped": False,
+            },
+        },
+    }
+
+
+def guide_recipe_doc(flower):
+    """Satu resep tanpa bentuk: satu buku + satu bunga.
+
+    Satu berkas per bunga, bukan satu resep dengan daftar bunga: resep Bedrock
+    tidak bisa menyebut beberapa kemungkinan untuk satu bahan.
+    """
+    return {
+        "format_version": "1.20.10",
+        "minecraft:recipe_shapeless": {
+            "description": {"identifier": f"vbs:guide_from_{flower}"},
+            "tags": ["crafting_table"],
+            "ingredients": [
+                {"item": "minecraft:book"},
+                {"item": f"minecraft:{flower}"},
+            ],
+            "result": {"item": GUIDE_ITEM, "count": 1},
+        },
+    }
+
+
 def item_texture_doc(chars):
+    data = {
+        f"vbs_spawn_egg_{c['id']}": {
+            "textures": f"textures/items/vbs_spawn_egg_{c['id']}"
+        } for c in chars
+    }
+    data[GUIDE_TEXTURE] = {"textures": f"textures/items/{GUIDE_TEXTURE}"}
     return {
         "resource_pack_name": "vbs_companions",
         "texture_name": "atlas.items",
-        "texture_data": {
-            f"vbs_spawn_egg_{c['id']}": {
-                "textures": f"textures/items/vbs_spawn_egg_{c['id']}"
-            } for c in chars
-        },
+        "texture_data": data,
     }
 
 
@@ -655,6 +734,12 @@ def lang_lines(chars):
         "## VBS Companions",
         "action.interact.vbs_menu=Buka Menu",
         f"entity.{MARKER}.name=Patok Ladang",
+        "",
+        # Dua kunci untuk satu item: Bedrock memakai "item.<id>" untuk item
+        # data-driven, tapi beberapa versi mencari "item.<id>.name". Menulis
+        # keduanya lebih murah daripada item tak bernama di tangan pemain.
+        f"item.{GUIDE_ITEM}=Buku Panduan Companion",
+        f"item.{GUIDE_ITEM}.name=Buku Panduan Companion",
         "",
     ]
     for c in chars:
@@ -666,8 +751,9 @@ def lang_lines(chars):
 
 
 def main():
+    beta = "--beta" in sys.argv
     chars = model.load_characters()
-    manifests()
+    manifests(beta)
     for c in chars:
         write(os.path.join(BP, "entities", f"{c['id']}.json"), entity_doc(c))
         write(os.path.join(RP, "entity", f"{c['id']}.entity.json"), client_entity_doc(c))
@@ -676,13 +762,28 @@ def main():
     write(os.path.join(RP, "models", "entity", "vbs_marker.geo.json"), marker_geometry_doc())
     write(os.path.join(RP, "render_controllers", "vbs_companion.render_controllers.json"),
           render_controller_doc(chars))
+    write(os.path.join(BP, "items", "guide.json"), guide_item_doc())
+    recipes = os.path.join(BP, "recipes")
+    os.makedirs(recipes, exist_ok=True)
+    wanted = set()
+    for flower in GUIDE_FLOWERS:
+        name = f"guide_from_{flower}.json"
+        wanted.add(name)
+        write(os.path.join(recipes, name), guide_recipe_doc(flower))
+    # Bunga yang dicoret dari daftar tidak boleh meninggalkan resep yatim di
+    # dalam pack — resep yang menyebut item tak dikenal muncul sebagai error di
+    # content log tiap kali dunia dibuka.
+    for stale in sorted(set(os.listdir(recipes)) - wanted):
+        os.remove(os.path.join(recipes, stale))
+        print(f"hapus resep usang recipes/{stale}")
     write(os.path.join(RP, "textures", "item_texture.json"), item_texture_doc(chars))
     path = os.path.join(RP, "texts", "en_US.lang")
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
         f.write(lang_lines(chars))
-    print(f"tulis 2 manifest, {len(chars)} entity behavior + patok, "
-          f"{len(chars)} entity resource, geometry patok, render controller, "
+    print(f"tulis 2 manifest{' (BETA APIs)' if beta else ''}, {len(chars)} entity "
+          f"behavior + patok, {len(chars)} entity resource, geometry patok, "
+          f"render controller, item buku panduan + {len(GUIDE_FLOWERS)} resep, "
           f"item_texture.json, en_US.lang")
 
 

@@ -186,13 +186,32 @@ export function addWaypoint(entry) {
 /* ------------------------------------------------------------------ *
  * Pengaturan per-pemain
  *
- * Dipakai untuk saklar "sembunyikan nama pemilik". Kalau dimatikan di sini,
- * SELURUH companion milik pemain itu berhenti memajang nama pemiliknya —
- * di penanda kepala maupun di papan stasiun — jadi pemain lain di server
- * tidak bisa tahu itu punya siapa.
+ * Setelan di sini berlaku untuk SELURUH companion milik satu pemain dan
+ * tersimpan di tingkat dunia, jadi tetap ada sesudah dunia ditutup dan tidak
+ * ikut hilang kalau satu companion diistirahatkan. Pemain mengubahnya lewat
+ * Buku Panduan (scripts/book.js » Pengaturan Mod).
+ *
+ * Tiap saklar di sini benar-benar dibaca di suatu tempat — daftar ini bukan
+ * hiasan:
+ *
+ *   hideOwner   nametag.js, station.js   nama pemilik dipajang atau tidak
+ *   quiet       chat.js                  semua celoteh companion dibungkam
+ *   bubbles     chat.js                  gelembung teks di atas kepala
+ *   reports     chat.js                  laporan jarak jauh masuk chat
+ *   hints       main.js                  pesan petunjuk saat mengklik companion
+ *   keepBook    book.js                  buku panduan dikembalikan otomatis
+ *   logToChat   book.js, logger.js       peringatan & error dikirim ke chat
  * ------------------------------------------------------------------ */
 
-const SETTINGS_DEFAULT = { hideOwner: false };
+export const SETTINGS_DEFAULT = {
+  hideOwner: false,
+  quiet: false,
+  bubbles: true,
+  reports: true,
+  hints: true,
+  keepBook: true,
+  logToChat: false,
+};
 
 export function readSettings(playerId) {
   if (!playerId) return { ...SETTINGS_DEFAULT };

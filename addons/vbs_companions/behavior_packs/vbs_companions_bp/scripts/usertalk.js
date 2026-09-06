@@ -140,7 +140,7 @@ function respondTo(entity, message, player) {
   sayFrom(entity, "reply", opts);
 }
 
-function deliver(player, name, message) {
+export function deliver(player, name, message) {
   const targets = findTargets(player, name);
   if (!targets.length) {
     player.sendMessage(
@@ -155,6 +155,33 @@ function deliver(player, name, message) {
       logWarn(TAG, `Gagal memproses balasan dari ${entStr(target)}`, e);
     }
   }
+}
+
+/**
+ * Ganti tugas companion dari luar (perintah garis miring Beta API).
+ *
+ * Dipisah dari deliver() karena perintah membalas dengan status berhasil/gagal
+ * ke pemanggilnya, bukan lewat gelembung teks.
+ */
+export function orderMode(player, name, mode) {
+  const wanted = String(mode ?? "").toLowerCase();
+  if (!MODES[wanted]) {
+    return { ok: false, message: `Tugas "${mode}" tidak dikenal. Pilih: ${Object.keys(MODES).join(", ")}.` };
+  }
+  const targets = findTargets(player, name);
+  if (!targets.length) {
+    return { ok: false, message: `Tidak ada companion bernama "${name}" yang kamu miliki.` };
+  }
+  let changed = 0;
+  for (const target of targets) {
+    if (!setMode(target, wanted)) continue;
+    changed++;
+    say(target, `Baik, aku ${MODES[wanted].label.toLowerCase()} sekarang.`, { toOwnerAlways: true });
+  }
+  logInfo(TAG, `${player.name} menyuruh ${changed} companion ke mode "${wanted}" lewat perintah.`);
+  return changed
+    ? { ok: true, message: `${changed} companion sekarang ${MODES[wanted].label}.` }
+    : { ok: false, message: "Tidak ada companion yang bisa diperintah sekarang." };
 }
 
 let wired = false;

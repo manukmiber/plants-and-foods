@@ -5,6 +5,7 @@
 import { system } from "@minecraft/server";
 import { BED_IDS, CHEST_IDS, POSE, PROTECTED } from "./config.js";
 import { report, sayFrom } from "./chat.js";
+import { dataBlueprints } from "./blueprints.js";
 import { claimsNear, ensureVillageStake, markWorked } from "./claim.js";
 import { workArea } from "./farming.js";
 import { hold } from "./hold.js";
@@ -262,6 +263,11 @@ export const BLUEPRINTS = {
     hint: "Seperti gubuk, lebih besar, lengkap dengan peti di dalam",
     plan: (ctx) => housePlan(ctx.origin, 7, 5, 3, true),
   },
+  // Rancangan dari berkas JSON di addons/vbs_companions/blueprints/ ikut masuk
+  // ke sini. Menu, mesin pembangun dan penyimpanan state tidak perlu tahu
+  // bedanya — sebuah rancangan JSON adalah rancangan biasa yang plan()-nya
+  // dihitung dari denah huruf, bukan dari kode.
+  ...dataBlueprints(),
 };
 
 function context(entity, state, ownerId, owner) {
@@ -313,6 +319,10 @@ export function startBlueprint(entity, state, name, owner) {
   state.plan.build = {
     name, index: 0, dir,
     origin: { x: Math.floor(at.x), y: Math.floor(at.y), z: Math.floor(at.z) },
+    // Rancangan JSON dibangun rata; ketinggian dasarnya dikunci di langkah
+    // pertama dan disimpan di sini supaya tetap sama sesudah dunia ditutup.
+    flat: Boolean(BLUEPRINTS[name].flat),
+    baseY: null,
   };
   state.blueprint = name;
   writeState(entity, state);
@@ -331,13 +341,32 @@ function runBuildSteps(entity, dimension, container, job, originY, steps) {
   while (job.index < steps.length && placed < PLACE_PER_TICK) {
     const step = steps[job.index];
     logDebug(TAG, `Menjalankan langkah build [${job.index + 1}/${steps.length}]: Role=${step.role}, RelPos=(${step.x},${step.dy},${step.z})`);
-    const base = groundY(dimension, step.x, step.z, originY);
+    // Rancangan JSON dibangun RATA: satu ketinggian dasar untuk seluruh denah,
+    // dihitung sekali di kolom origin lalu dipakai ulang. Rancangan bawaan tetap
+    // mengikuti kontur tiap kolom seperti sebelumnya — pagar keliling ladang
+    // memang harus naik-turun mengikuti tanah, menara tidak.
+    let base;
+    if (job.flat) {
+      if (job.baseY === undefined || job.baseY === null) {
+        const at = job.origin ?? step;
+        job.baseY = groundY(dimension, at.x, at.z, originY) ?? originY;
+        logInfo(TAG, `Ketinggian dasar rancangan rata dikunci di Y=${job.baseY}.`);
+      }
+      base = job.baseY;
+    } else {
+      base = groundY(dimension, step.x, step.z, originY);
+    }
     if (base === undefined) {
       logDebug(TAG, `Langkah ${job.index} dilewati: Ketinggian tanah tidak valid.`);
       job.index++;
       continue;
     }
-    const y = base + (step.dy ?? 0) + (step.role === "path" || step.role === "floor" ? 0 : 1);
+    // yOff (rancangan JSON) dihitung dari blok tanah itu sendiri: 0 = menimpa
+    // tanahnya, 1 = satu blok di atasnya. dy (rancangan bawaan) memakai
+    // pergeseran +1 khusus untuk lantai dan jalan, dan itu dipertahankan.
+    const y = step.yOff !== undefined
+      ? base + step.yOff
+      : base + (step.dy ?? 0) + (step.role === "path" || step.role === "floor" ? 0 : 1);
     const block = blockAt(dimension, step.x, y, step.z);
     if (!block) {
       logWarn(TAG, `Langkah ${job.index} dilewati: Blok null di (${step.x}, ${y}, ${step.z}). Chunk belum dimuat?`);
@@ -384,7 +413,12 @@ function runBuildSteps(entity, dimension, container, job, originY, steps) {
       }
       wanted = got.got;
     } else {
-      wanted = materialFor(container, step.role);
+      // Rancangan JSON boleh menyebut blok tertentu. Yang tidak ada di peti
+      // jatuh ke peran bahannya, jadi rumah bata tetap berdiri sebagai rumah
+      // kayu kalau batanya belum ada — bukan berhenti sama sekali.
+      wanted = step.block && countIn(container, step.block) > 0
+        ? step.block
+        : materialFor(container, step.role);
       if (!wanted) {
         logWarn(TAG, `Bahan untuk peran "${step.role}" tidak tersedia di peti!`);
         missing = step.role;

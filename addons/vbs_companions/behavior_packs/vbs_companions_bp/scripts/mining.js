@@ -2,21 +2,20 @@
  * Mode menambang.
  */
 
-import { system } from "@minecraft/server";
 import {
   DIGGABLE, DIGGABLE_EXTRA, MINE_KEY_OF, MINE_TARGETS, ORES, POSE, PROTECTED,
 } from "./config.js";
 import { askOwner } from "./ask.js";
 import { report, sayFrom } from "./chat.js";
 import { craftItemStep, craftStep } from "./crafting.js";
-import { hold } from "./hold.js";
+import { chipAway } from "./dig.js";
 import { isGreeting } from "./look.js";
 import { requestMaterial, requestTool } from "./requests.js";
 import { ensureMaterial } from "./selfhelp.js";
 import { writeState } from "./state.js";
-import { ensureStation } from "./station.js";
+import { ensureStation, stationTravel } from "./station.js";
 import {
-  alive, blockAt, countIn, dist2, face, getGear, getOwnerId, isAir, isSolid,
+  alive, blockAt, countIn, dist2, face, getGear, getOwnerId, isAir, isFooting,
   makeItem, particle, putIn, sound, steer,
 } from "./util.js";
 import { entStr, logDebug, logError, logInfo, logWarn, posStr } from "./logger.js";
@@ -28,7 +27,6 @@ const BRANCH_EVERY = 3;
 const BRANCH_LENGTH = 8;
 const BAG_LIMIT = 96;
 const REACH = 4.0;
-const DIG_PER_TICK = 2;
 // Lebar x tinggi terowongan: 1 blok lebar, 3 blok tinggi — cukup lega untuk
 // companion (dan pemain) berjalan tanpa menunduk, tidak seperti versi lama
 // yang cuma 2 tinggi dan terasa sempit.
@@ -102,13 +100,19 @@ function expected(block) {
 }
 
 /**
- * Menggali satu kolom setinggi TUNNEL_HEIGHT. Tiap sel diurus SENDIRI-SENDIRI:
- * kalau sel di ketinggian kepala kebetulan blok yang tidak boleh dibongkar,
- * sel itu saja yang dilewati — sisanya tetap digali, jadi lorongnya tetap
- * terbuka dan tetap setinggi tiga blok di mana pun bisa.
+ * Menggali satu kolom setinggi TUNNEL_HEIGHT — SATU sel sekali denyut.
+ *
+ * Dulu seluruh kolom (tiga blok) dibongkar sekaligus, dua kolom tiap denyut:
+ * enam blok batu tiap setengah detik, tanpa satu pun ayunan yang terlihat.
+ * Sekarang selnya dicari satu per satu dari bawah ke atas dan masing-masing
+ * dipukul sampai patah (dig.js), jadi lorongnya tumbuh sepelan penambang
+ * sungguhan — dan bergantung pada tingkat beliung yang dipegangnya.
+ *
+ * Balikan: { status: "clear" } kolomnya sudah terbuka, { status: "breaking" }
+ * masih diayun, { status: "broke" } satu sel patah tick ini, atau
+ * { status: "blocked" } seluruh kolomnya memang tidak boleh dibongkar.
  */
-function digColumn(entity, state, dimension, x, baseY, z) {
-  let dug = 0;
+function digColumn(entity, state, dimension, x, baseY, z, tool) {
   let blocked = 0;
   for (let dy = 0; dy < TUNNEL_HEIGHT; dy++) {
     const cell = blockAt(dimension, x, baseY + dy, z);
@@ -126,10 +130,10 @@ function digColumn(entity, state, dimension, x, baseY, z) {
     if (!expected(cell)) {
       logDebug(TAG, `Blok tak terduga di jalur galian: ${cell.typeId} di (${x}, ${baseY + dy}, ${z}) — tetap dibongkar.`);
     }
-    if (dig(entity, state, cell)) dug++;
+    return dig(entity, state, cell, tool);
   }
-  logDebug(TAG, `digColumn (${x}, ${baseY}, ${z}): ${dug} sel dibongkar, ${blocked} dilewati, target tinggi ${TUNNEL_HEIGHT}.`);
-  return { dug, blocked };
+  if (blocked >= TUNNEL_HEIGHT) return { status: "blocked" };
+  return { status: "clear" };
 }
 
 /** Lantai kaki harus padat, kalau tidak companion jatuh ke lubang gua. */
@@ -157,17 +161,21 @@ function lavaNear(dimension, x, y, z) {
   return false;
 }
 
-function dig(entity, state, block) {
-  if (!block || block.isAir) return false;
-  const id = block.typeId;
-  logDebug(TAG, `Menggali blok ${id} di ${posStr(block)}`);
-  try {
-    block.setType("minecraft:air");
-  } catch (e) {
-    logWarn(TAG, `Gagal setType air pada blok di ${posStr(block)}`, e);
-    return false;
-  }
+/**
+ * Satu ayunan ke satu blok. Balikan sama bentuknya dengan digColumn.
+ *
+ * Bijih hasil pukulan masuk kantong hanya pada tick blok itu benar-benar
+ * patah — jadi tidak ada lagi bijih yang "didapat" sebelum blok yang
+ * bersangkutan hilang dari dunia.
+ */
+function dig(entity, state, block, tool) {
+  const swing = chipAway(entity, block, tool, { pose: POSE.mine, reason: "dig" });
+  if (swing.status === "breaking") return { status: "breaking", progress: swing.progress };
+  if (swing.status !== "broke") return { status: "clear" };
+
+  const id = swing.id;
   const ore = ORES[id];
+  const at = { x: block.x + 0.5, y: block.y + 0.5, z: block.z + 0.5 };
   if (ore) {
     // Bijih yang kebetulan berdiri di jalur terowongan tetap dipungut walau
     // tidak diminta — meninggalkannya berarti membuangnya, karena bloknya
@@ -177,21 +185,21 @@ function dig(entity, state, block) {
     // tidak diminta itulah yang membuang waktu.
     logInfo(TAG, `BIJIH DITEMUKAN: ${id} -> Menghasilkan ${ore}`);
     addToBag(state, ore, 1);
-    particle(entity.dimension, "minecraft:villager_happy", { x: block.x + 0.5, y: block.y + 0.6, z: block.z + 0.5 });
-    sound(entity.dimension, "random.orb", block.location, { volume: 0.4 });
+    particle(entity.dimension, "minecraft:villager_happy", at);
+    sound(entity.dimension, "random.orb", at, { volume: 0.4 });
   } else if (wanted(state, "minecraft:cobblestone") &&
              (state.bag["minecraft:cobblestone"] ?? 0) < 32 &&
              (id === "minecraft:stone" || id === "minecraft:cobblestone")) {
     addToBag(state, "minecraft:cobblestone", 1);
   }
-  return true;
+  return { status: "broke", id };
 }
 
 function torchAt(entity, state, x, y, z) {
   if ((state.bag["minecraft:torch"] ?? 0) < 1) return false;
   const spot = blockAt(entity.dimension, x, y, z);
   const floor = blockAt(entity.dimension, x, y - 1, z);
-  if (!isAir(spot) || !isSolid(floor)) return false;
+  if (!isAir(spot) || !isFooting(floor)) return false;
   try {
     spot.setType("minecraft:torch");
     logInfo(TAG, `Obor dipasang di (${x}, ${y}, ${z})`);
@@ -251,6 +259,14 @@ export function tickMine(entity, state, owner) {
   if (!container) {
     logError(TAG, `${entStr(entity)} tidak punya peti maupun kantong!`);
     return "tidak ada tempat menyimpan apa pun";
+  }
+  // Peti gudangnya berdiri di balai kerja bersama; kalau penambang belum
+  // pernah ke sana, ke sana dulu. Sesudah petinya berdiri, dia turun dan
+  // pulang ke titik itu tiap kali kantongnya penuh.
+  const trip = stationTravel(entity, station);
+  if (trip) {
+    writeState(entity, state);
+    return trip;
   }
   if (station.missing) {
     const own = ensureMaterial(entity, state, ownerId, station.missing,
@@ -331,8 +347,8 @@ export function tickMine(entity, state, owner) {
   }
 
   const status = plan.phase === "descend"
-    ? descend(entity, state, plan)
-    : tunnel(entity, state, plan);
+    ? descend(entity, state, plan, held)
+    : tunnel(entity, state, plan, held);
   writeState(entity, state);
   return status;
 }
@@ -362,15 +378,7 @@ function atFace(entity, target) {
   return false;
 }
 
-function swing(entity, target) {
-  face(entity, target);
-  hold(entity, 14, { pose: POSE.mine, reason: "mine" });
-  if (system.currentTick % 6 === 0) {
-    sound(entity.dimension, "dig.stone", target, { volume: 0.5 });
-  }
-}
-
-function descend(entity, state, plan) {
+function descend(entity, state, plan, tool) {
   const dimension = entity.dimension;
   const [dx, dz] = DIRS[plan.dir];
   const floor = targetDepth(dimension.id, state.mineWants);
@@ -385,39 +393,66 @@ function descend(entity, state, plan) {
 
   const target = { x: plan.x + 0.5, y: plan.y, z: plan.z + 0.5 };
   if (!atFace(entity, target)) return "menuruni tangga";
-  swing(entity, target);
 
-  let done = 0;
-  for (let n = 0; n < DIG_PER_TICK && done < DIG_PER_TICK; n++) {
-    const nx = plan.x + dx;
-    const nz = plan.z + dz;
-    const ny = plan.y - 1;
-    if (lavaNear(dimension, nx, ny, nz)) {
-      plan.dir = (plan.dir + 1) % 4;
-      logWarn(TAG, `Lava menghalangi tangga! Membelokkan arah ke ${plan.dir}`);
-      report(entity, "Ada lava di depan. Aku belok.");
-      return "menghindari lava";
-    }
-    // Sel kaki wajib bisa dibongkar; sel di atasnya boleh dilewati satu-satu.
-    const foot = blockAt(dimension, nx, ny, nz);
-    if (foot && !diggable(foot)) {
-      plan.dir = (plan.dir + 1) % 4;
-      logWarn(TAG, `Blok kaki ${foot.typeId} tidak bisa digali. Membelokkan tangga ke arah ${plan.dir}`);
-      return "membelokkan tangga";
-    }
-    const result = digColumn(entity, state, dimension, nx, ny, nz);
-    done += result.dug;
-    floorUnder(dimension, nx, ny, nz);
-    plan.x = nx;
-    plan.z = nz;
-    plan.y = ny;
-    plan.step++;
-    if (plan.step % TORCH_EVERY === 0) torchAt(entity, state, plan.x, plan.y, plan.z);
+  const nx = plan.x + dx;
+  const nz = plan.z + dz;
+  const ny = plan.y - 1;
+  if (lavaNear(dimension, nx, ny, nz)) {
+    plan.dir = (plan.dir + 1) % 4;
+    logWarn(TAG, `Lava menghalangi tangga! Membelokkan arah ke ${plan.dir}`);
+    report(entity, "Ada lava di depan. Aku belok.");
+    return "menghindari lava";
   }
-  return "menggali tangga turun";
+  // Sel kaki wajib bisa dibongkar; sel di atasnya boleh dilewati satu-satu.
+  const foot = blockAt(dimension, nx, ny, nz);
+  if (foot && !diggable(foot)) {
+    plan.dir = (plan.dir + 1) % 4;
+    logWarn(TAG, `Blok kaki ${foot.typeId} tidak bisa digali. Membelokkan tangga ke arah ${plan.dir}`);
+    return "membelokkan tangga";
+  }
+
+  const result = digColumn(entity, state, dimension, nx, ny, nz, tool);
+  if (result.status === "breaking") {
+    return `menggali tangga turun (${Math.round(result.progress * 100)}%)`;
+  }
+  if (result.status === "broke") return "menggali tangga turun";
+  if (result.status === "blocked") {
+    plan.dir = (plan.dir + 1) % 4;
+    logWarn(TAG, `Seluruh kolom tangga (${nx}, ${ny}, ${nz}) terhalang; arah dibelokkan.`);
+    return "membelokkan tangga";
+  }
+
+  // Kolomnya benar-benar terbuka: baru sekarang langkahnya maju satu.
+  floorUnder(dimension, nx, ny, nz);
+  plan.x = nx;
+  plan.z = nz;
+  plan.y = ny;
+  plan.step++;
+  if (plan.step % TORCH_EVERY === 0) torchAt(entity, state, plan.x, plan.y, plan.z);
+  return "menuruni tangga yang baru digali";
 }
 
-function tunnel(entity, state, plan) {
+/**
+ * Bijih di DINDING terowongan yang memang diminta pemilik.
+ *
+ * Dipisah supaya penambang menyimpang ke bijih SATU per satu dan tiap bijih
+ * tetap harus dipukul sampai patah, bukan dipanen sekaligus dalam satu denyut
+ * seperti versi lama.
+ */
+function oreBeside(dimension, state, x, y, z) {
+  const offsets = [[0, -1, 0], [0, TUNNEL_HEIGHT, 0]];
+  for (let dy = 0; dy < TUNNEL_HEIGHT; dy++) {
+    offsets.push([1, dy, 0], [-1, dy, 0], [0, dy, 1], [0, dy, -1]);
+  }
+  for (const [ox, oy, oz] of offsets) {
+    const near = blockAt(dimension, x + ox, y + oy, z + oz);
+    const ore = near && ORES[near.typeId];
+    if (ore && wanted(state, ore)) return near;
+  }
+  return undefined;
+}
+
+function tunnel(entity, state, plan, tool) {
   const dimension = entity.dimension;
   const main = DIRS[plan.dir];
   const side = DIRS[(plan.dir + (plan.branchSide > 0 ? 1 : 3)) % 4];
@@ -426,64 +461,68 @@ function tunnel(entity, state, plan) {
 
   const target = { x: plan.x + 0.5, y: plan.y, z: plan.z + 0.5 };
   if (!atFace(entity, target)) return digging ? "menuju cabang" : "menuju ujung terowongan";
-  swing(entity, target);
 
-  for (let n = 0; n < DIG_PER_TICK; n++) {
-    const nx = plan.x + dx;
-    const nz = plan.z + dz;
-    if (lavaNear(dimension, nx, plan.y, nz)) {
-      if (digging) plan.branchStep = 0;
-      else plan.dir = (plan.dir + 1) % 4;
-      report(entity, "Lava. Aku tidak menembus situ.");
-      return "menghindari lava";
+  // Bijih di dinding lebih dulu: itu memang tujuan seluruh terowongan ini.
+  const vein = oreBeside(dimension, state, plan.x, plan.y, plan.z);
+  if (vein) {
+    const hit = dig(entity, state, vein, tool);
+    if (hit.status === "breaking") {
+      return `mengejar bijih di dinding (${Math.round(hit.progress * 100)}%)`;
     }
-    const foot = blockAt(dimension, nx, plan.y, nz);
-    if (foot && !diggable(foot)) {
-      logWarn(TAG, `Blok kaki ${foot.typeId} di (${nx}, ${plan.y}, ${nz}) tidak boleh dibongkar.`);
-      if (digging) plan.branchStep = 0;
-      else plan.dir = (plan.dir + 1) % 4;
-      return "membelokkan terowongan";
-    }
-    const result = digColumn(entity, state, dimension, nx, plan.y, nz);
-    floorUnder(dimension, nx, plan.y, nz);
-    if (result.blocked === TUNNEL_HEIGHT) {
-      logWarn(TAG, `Seluruh kolom (${nx}, ${plan.y}, ${nz}) terhalang; terowongan dibelokkan.`);
-      if (digging) plan.branchStep = 0;
-      else plan.dir = (plan.dir + 1) % 4;
-      return "membelokkan terowongan";
-    }
-
-    const oreOffsets = [[0, -1, 0], [0, TUNNEL_HEIGHT, 0]];
-    for (let dy = 0; dy < TUNNEL_HEIGHT; dy++) {
-      oreOffsets.push([1, dy, 0], [-1, dy, 0], [0, dy, 1], [0, dy, -1]);
-    }
-    for (const [ox, oy, oz] of oreOffsets) {
-      const near = blockAt(dimension, nx + ox, plan.y + oy, nz + oz);
-      const ore = near && ORES[near.typeId];
-      if (ore && wanted(state, ore)) dig(entity, state, near);
-    }
-
-    plan.x = nx;
-    plan.z = nz;
-    if (digging) {
-      plan.branchStep--;
-      if (plan.branchStep <= 0) {
-        plan.x -= side[0] * BRANCH_LENGTH;
-        plan.z -= side[1] * BRANCH_LENGTH;
-        plan.branchSide = -plan.branchSide;
-        logInfo(TAG, `Cabang selesai. Kembali ke sumbu terowongan utama.`);
-      }
-    } else {
-      plan.step++;
-      if (plan.step % TORCH_EVERY === 0) torchAt(entity, state, plan.x, plan.y, plan.z);
-      if (plan.step % BRANCH_EVERY === 0) {
-        plan.branchStep = BRANCH_LENGTH;
-        logInfo(TAG, `Mulai menggali cabang baru sepanjang ${BRANCH_LENGTH} blok.`);
-        return "menggali cabang";
-      }
-    }
+    if (hit.status === "broke") return "memungut bijih dari dinding";
   }
-  return digging ? "menggali cabang" : "menggali terowongan utama";
+
+  const nx = plan.x + dx;
+  const nz = plan.z + dz;
+  if (lavaNear(dimension, nx, plan.y, nz)) {
+    if (digging) plan.branchStep = 0;
+    else plan.dir = (plan.dir + 1) % 4;
+    report(entity, "Lava. Aku tidak menembus situ.");
+    return "menghindari lava";
+  }
+  const foot = blockAt(dimension, nx, plan.y, nz);
+  if (foot && !diggable(foot)) {
+    logWarn(TAG, `Blok kaki ${foot.typeId} di (${nx}, ${plan.y}, ${nz}) tidak boleh dibongkar.`);
+    if (digging) plan.branchStep = 0;
+    else plan.dir = (plan.dir + 1) % 4;
+    return "membelokkan terowongan";
+  }
+
+  const result = digColumn(entity, state, dimension, nx, plan.y, nz, tool);
+  if (result.status === "breaking") {
+    return digging
+      ? `menggali cabang (${Math.round(result.progress * 100)}%)`
+      : `menggali terowongan utama (${Math.round(result.progress * 100)}%)`;
+  }
+  if (result.status === "broke") return digging ? "menggali cabang" : "menggali terowongan utama";
+  if (result.status === "blocked") {
+    logWarn(TAG, `Seluruh kolom (${nx}, ${plan.y}, ${nz}) terhalang; terowongan dibelokkan.`);
+    if (digging) plan.branchStep = 0;
+    else plan.dir = (plan.dir + 1) % 4;
+    return "membelokkan terowongan";
+  }
+
+  floorUnder(dimension, nx, plan.y, nz);
+  plan.x = nx;
+  plan.z = nz;
+  if (digging) {
+    plan.branchStep--;
+    if (plan.branchStep <= 0) {
+      plan.x -= side[0] * BRANCH_LENGTH;
+      plan.z -= side[1] * BRANCH_LENGTH;
+      plan.branchSide = -plan.branchSide;
+      logInfo(TAG, "Cabang selesai. Kembali ke sumbu terowongan utama.");
+    }
+    return "menggali cabang";
+  }
+  plan.step++;
+  if (plan.step % TORCH_EVERY === 0) torchAt(entity, state, plan.x, plan.y, plan.z);
+  if (plan.step % BRANCH_EVERY === 0) {
+    plan.branchStep = BRANCH_LENGTH;
+    logInfo(TAG, `Mulai menggali cabang baru sepanjang ${BRANCH_LENGTH} blok.`);
+    return "menggali cabang";
+  }
+  return "menggali terowongan utama";
 }
 
 function haul(entity, state, station) {

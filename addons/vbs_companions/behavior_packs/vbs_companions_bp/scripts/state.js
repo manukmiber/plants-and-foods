@@ -31,6 +31,13 @@ const EMPTY = {
   delivering: null,
   askAt: {},
   needs: {},
+  // Pesanan yang sedang dipegang pencari barang, dan kapan gilirannya mulai.
+  order: null,
+  // Kapan terakhir petani memeriksa apakah ada gudang berdiri di ladangnya.
+  guardAt: 0,
+  // Kapan perjalanan ke balai kerja dimulai; dipakai untuk menyerah kalau
+  // balainya ternyata tidak bisa dicapai.
+  depotTrip: null,
   // Jawaban pemilik atas pertanyaan companion (ask.js). null = belum ditanya
   // atau belum dijawab, dan selama itu companion memakai perilaku bawaannya.
   seedSelf: null,      // "ya" = cari bibit sendiri, "tidak" = pemilik yang carikan
@@ -75,17 +82,29 @@ export function claimKey(dimensionId, cx, cz) {
   return `${dimensionId}|${cx},${cz}`;
 }
 
+// Papan klaim dibaca SANGAT sering: tiap companion memeriksa patok tiap denyut,
+// dan pemilihan titik balai kerja memeriksa puluhan kolom sekaligus. Mem-parse
+// JSON yang sama ratusan kali per detik membuat dunia tersendat, jadi hasilnya
+// disimpan dan cuma dibaca ulang kalau memang ada yang menulisnya.
+//
+// Aman karena satu-satunya yang menulis claims adalah setClaim/clearClaim di
+// berkas ini juga — tidak ada penulis lain di luar mesin skrip.
+let claimCache;
+
 export function readClaims() {
+  if (claimCache) return claimCache;
   try {
     const raw = world.getDynamicProperty(PROP.claims);
-    return typeof raw === "string" ? JSON.parse(raw) : {};
+    claimCache = typeof raw === "string" ? JSON.parse(raw) : {};
   } catch (e) {
     logWarn(TAG, "Gagal membaca claims dunia", e);
-    return {};
+    claimCache = {};
   }
+  return claimCache;
 }
 
 function writeClaims(claims) {
+  claimCache = claims;
   try {
     world.setDynamicProperty(PROP.claims, JSON.stringify(claims));
     logDebug(TAG, `Claims dunia berhasil disimpan.`);

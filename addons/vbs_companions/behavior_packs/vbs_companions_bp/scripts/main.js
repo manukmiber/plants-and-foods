@@ -10,6 +10,7 @@
 
 import { system, world } from "@minecraft/server";
 import { setActivity, forget as forgetActivity } from "./activity.js";
+import { forget as forgetDig } from "./dig.js";
 import { setBetaHandlers, betaSummary } from "./beta.js";
 import { wireBook } from "./book.js";
 import { openBook } from "./bookui.js";
@@ -50,6 +51,9 @@ const chatterAt = new Map();
 const CHATTER_EVERY = 420;
 const CHATTER_CHANCE = 0.7;
 const DAYPART_EVERY = 1200;
+
+// Alasan hold yang TIDAK boleh menghentikan denyut kerja.
+const WORK_HOLDS = new Set(["rest", "dig"]);
 
 const CHATTER_KEY = {
   farm: "farm", mine: "mine", wander: "wander", build: "build", attack: "attack",
@@ -95,6 +99,7 @@ function forgetAll(id) {
   logInfo(TAG, `Membersihkan seluruh cache memori untuk entity ID: ${id}`);
   forgetActivity(id);
   forgetBubble(id);
+  forgetDig(id);
   forgetCombat(id);
   forgetHold(id);
   forgetLook(id);
@@ -241,8 +246,13 @@ function workOnce(entity) {
   // Hold karena istirahat/tidur sengaja TIDAK menghentikan workOnce: kalau
   // begitu, tickEnergy (yang justru memulihkan tenaga dan memutuskan kapan
   // bangun) tidak akan pernah terpanggil lagi.
+  //
+  // "dig" ikut dikecualikan sejak blok butuh waktu untuk dibongkar (dig.js):
+  // kemajuan ayunan dihitung DI DALAM denyut kerja, jadi menghentikan denyut
+  // kerja selama menahan pose menambang berarti tidak ada satu blok pun yang
+  // pernah patah — companion mengayun selamanya di depan blok yang sama.
   const heldReason = reasonFor(entity);
-  if (isHeld(entity) && heldReason !== "rest") {
+  if (isHeld(entity) && !WORK_HOLDS.has(heldReason)) {
     logDebug(TAG, `workOnce: ${entStr(entity)} sedang ditahan (${heldReason}); kerja dilewati.`);
     return;
   }

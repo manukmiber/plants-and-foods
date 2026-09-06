@@ -25,11 +25,12 @@ import {
 import { hold } from "./hold.js";
 import { isGreeting } from "./look.js";
 import { displayName } from "./nametag.js";
+import { canMake } from "./items.js";
 import { clearRequest, craftRequests } from "./requests.js";
 import { ensureMaterial } from "./selfhelp.js";
 import { pickSmelt, smeltStep } from "./smelting.js";
 import { readState, writeState } from "./state.js";
-import { ensureStation } from "./station.js";
+import { ensureStation, stationTravel } from "./station.js";
 import {
   alive, allCompanions, containerAt, countIn, dist2, face, getGear, getMode,
   getOwnerId, makeItem, putIn, sound, steer, takeFrom,
@@ -268,6 +269,37 @@ function idleWork(entity, state, container, ownerId, station) {
   return undefined;
 }
 
+// Giliran satu pesanan sebelum diserahkan ke pesanan berikutnya. Sama seperti
+// pencari barang: tanpa giliran, satu pesanan besi yang bahannya belum ada
+// mengunci perajin selamanya sementara pesanan cangkul kayu di belakangnya —
+// yang bahannya menumpuk di peti — tidak pernah dikerjakan.
+const ORDER_TURN = 1200;
+
+/** Pesanan yang bahannya BENAR-BENAR ada didahulukan; sisanya bergiliran. */
+function chooseOrder(state, container, orders) {
+  if (!orders.length) return undefined;
+  const now = system.currentTick;
+
+  for (const req of orders) {
+    const ready = req.type === "item"
+      ? (countIn(container, ITEM_RECIPES[req.kind]?.id ?? "minecraft:air") > 0 ||
+         canMake(container, req.kind).ok)
+      : Boolean(bestTier(container, req.kind, (req.neededRank ?? 1) - 1));
+    if (!ready) continue;
+    state.order = { id: req.id, since: now };
+    return req;
+  }
+
+  const held = orders.find((r) => r.id === state.order?.id);
+  if (held && now - (state.order.since ?? 0) < ORDER_TURN) return held;
+
+  const start = held ? orders.indexOf(held) + 1 : 0;
+  const req = orders[start % orders.length];
+  logDebug(TAG, `Giliran pesanan perajin berpindah ke ${req.type}/${req.kind} milik ${req.fromName}.`);
+  state.order = { id: req.id, since: now };
+  return req;
+}
+
 export function tickCrafter(entity, state, owner) {
   logDebug(TAG, `tickCrafter untuk ${entStr(entity)}`);
   if (!alive(entity)) return "hilang";
@@ -277,6 +309,12 @@ export function tickCrafter(entity, state, owner) {
   const station = ensureStation(entity, state);
   const container = station.container;
   if (!container) return "tidak ada peti maupun kantong";
+  // Bengkel perajin ada di balai kerja bersama; ke sana dulu kalau belum.
+  const trip = stationTravel(entity, station);
+  if (trip) {
+    writeState(entity, state);
+    return trip;
+  }
   if (station.missing) {
     const own = ensureMaterial(entity, state, ownerId, station.missing,
                                station.chest ?? state.station, container);
@@ -319,7 +357,7 @@ export function tickCrafter(entity, state, owner) {
     return "menunggu pesanan di dekat meja kerja";
   }
 
-  const req = pending[0];
+  const req = chooseOrder(state, container, pending);
   logInfo(TAG, `Mengerjakan pesanan ${req.type}/${req.kind} dari ${req.fromName}.`);
   return req.type === "item"
     ? serveItem(entity, state, container, req, ownerId, station)

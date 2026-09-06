@@ -69,6 +69,17 @@ export function materialRequests(ownerId) {
   return readRequests(ownerId).filter((r) => r.type === "material");
 }
 
+/**
+ * Sejak kapan permintaan jenis ini dari companion ini menggantung di papan?
+ * Balikan undefined kalau memang belum pernah dipasang. Dipakai selfhelp.js
+ * untuk memutuskan kapan berhenti menunggu dan mengerjakannya sendiri.
+ */
+export function pendingSince(ownerId, entity, type, kind) {
+  if (!ownerId || !entity) return undefined;
+  const id = `${entity.id}-${type}-${kind}`;
+  return readRequests(ownerId).find((r) => r.id === id)?.postedAt;
+}
+
 export function postRequest(ownerId, req) {
   if (!ownerId) {
     logDebug(TAG, "postRequest dilewati: companion belum punya pemilik.");

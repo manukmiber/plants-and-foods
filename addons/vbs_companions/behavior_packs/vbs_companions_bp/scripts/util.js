@@ -5,7 +5,8 @@
 import { EquipmentSlot, ItemStack, system, world } from "@minecraft/server";
 import { FormCancelationReason } from "@minecraft/server-ui";
 import {
-  ARMOR_POINTS, COMPANIONS, DEFAULT_MODE, FACE, MODES, POSE, PROP,
+  ARMOR_POINTS, COMPANIONS, DEFAULT_MODE, FACE, LEAVES, MODES, POSE, PROP,
+  SOFT_PATH,
 } from "./config.js";
 import { entStr, logDebug, logError, logInfo, logTrace, logWarn, posStr } from "./logger.js";
 
@@ -373,14 +374,99 @@ export function canOccupy(block) {
   }
 }
 
-/** Blok yang cukup kuat untuk dipijak — termasuk air yang bisa diarungi. */
+/**
+ * Blok yang cukup kuat untuk dipijak — termasuk air yang bisa diarungi.
+ *
+ * Daun sengaja TIDAK dihitung. Dulu dihitung, dan itulah sebabnya companion
+ * bisa memanjat ke dalam tajuk pohon lalu terlihat melayang di antara daun:
+ * tiap langkah naik satu blok menemukan daun, menganggapnya lantai, dan naik
+ * lagi. Sekarang daun bukan lantai; kalau daun yang menghalangi, daun itu yang
+ * dibabat (clearWay), bukan dipanjat.
+ */
 export function isStandable(block) {
   if (!block) return false;
   try {
-    return isSolid(block) || WADEABLE.has(block.typeId);
+    const id = block.typeId;
+    if (WADEABLE.has(id)) return true;
+    if (LEAVES.has(id) || SOFT_PATH.has(id)) return false;
+    return isSolid(block);
   } catch {
     return false;
   }
+}
+
+// Blok yang bentuknya BUKAN kubus penuh. Peti, meja kerja, tungku dan papan
+// nama tidak boleh berdiri di atasnya — di dunia nyata pemain pun tidak bisa,
+// dan di sinilah asal "peti melayang di atas pohon".
+const PARTIAL_SUFFIX = [
+  "_slab", "_stairs", "_fence", "_fence_gate", "_wall", "_carpet", "_pane",
+  "_bars", "_door", "_trapdoor", "_sign", "_button", "_pressure_plate",
+  "_candle", "_head", "_pot", "_rail",
+];
+
+const NOT_FOOTING = new Set([
+  "minecraft:snow_layer", "minecraft:scaffolding", "minecraft:hopper",
+  "minecraft:cactus", "minecraft:composter", "minecraft:cauldron",
+  "minecraft:lantern", "minecraft:soul_lantern", "minecraft:chain",
+  "minecraft:end_rod", "minecraft:conduit", "minecraft:turtle_egg",
+  "minecraft:farmland", "minecraft:soul_sand", "minecraft:mud",
+  "minecraft:ice", "minecraft:blue_ice", "minecraft:packed_ice",
+  "minecraft:magma", "minecraft:tnt", "minecraft:sand", "minecraft:red_sand",
+  "minecraft:gravel", "minecraft:powder_snow",
+]);
+
+/**
+ * Lantai yang benar-benar sanggup menopang peti, meja kerja, tungku atau papan
+ * nama: kubus padat, bukan daun, bukan setengah blok, bukan blok yang jatuh.
+ */
+export function isFooting(block) {
+  if (!block) return false;
+  try {
+    if (!isSolid(block)) return false;
+    const id = block.typeId;
+    if (LEAVES.has(id) || SOFT_PATH.has(id) || NOT_FOOTING.has(id)) return false;
+    if (PARTIAL_SUFFIX.some((suffix) => id.endsWith(suffix))) return false;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// Membabat daun/sulur yang menghalangi jalan. Sengaja dijeda: kalau boleh tiap
+// tick, satu companion bisa mengosongkan sepetak hutan hanya dengan berjalan
+// melewatinya, dan itu terlihat sama curangnya dengan menebang pohon seketika.
+const cleared = new Map();
+const CLEAR_EVERY = 8;
+
+/**
+ * Kalau yang menghalangi cuma daun (atau sebangsanya), sibakkan satu blok.
+ * Balikan true kalau memang ada yang dibabat tick ini.
+ */
+export function clearWay(entity, block) {
+  if (!block) return false;
+  let id;
+  try {
+    if (block.isAir) return false;
+    id = block.typeId;
+  } catch {
+    return false;
+  }
+  if (!SOFT_PATH.has(id) && !LEAVES.has(id)) return false;
+  const last = cleared.get(entity.id) ?? -CLEAR_EVERY;
+  if (system.currentTick - last < CLEAR_EVERY) return false;
+  cleared.set(entity.id, system.currentTick);
+  try {
+    block.setType("minecraft:air");
+  } catch {
+    return false;
+  }
+  logDebug(TAG, `${entStr(entity)} menyibakkan ${id} yang menghalangi jalan.`);
+  try {
+    entity.dimension.playSound("dig.grass", block.location, { volume: 0.4 });
+  } catch {
+    /* versi lama */
+  }
+  return true;
 }
 
 export function isSolid(block) {
@@ -472,6 +558,7 @@ export function isStuck(entity) {
 
 export function stopWalking(id) {
   walking.delete(id);
+  cleared.delete(id);
 }
 
 /**
@@ -489,6 +576,13 @@ export function unstick(entity) {
   const feet = blockAt(dim, a.x, a.y, a.z);
   const head = blockAt(dim, a.x, a.y + 1, a.z);
   if (canOccupy(feet) && canOccupy(head)) return false;
+  // Terjebak di dalam tajuk pohon adalah kasus yang paling sering: daun yang
+  // mengurung badan dibabat dulu, dan biasanya sesudah itu tidak perlu
+  // diangkat ke mana-mana.
+  if (clearWay(entity, feet) || clearWay(entity, head)) {
+    if (canOccupy(blockAt(dim, a.x, a.y, a.z)) &&
+        canOccupy(blockAt(dim, a.x, a.y + 1, a.z))) return false;
+  }
   for (let dy = 1; dy <= 8; dy++) {
     const f = blockAt(dim, a.x, a.y + dy, a.z);
     const h = blockAt(dim, a.x, a.y + dy + 1, a.z);
@@ -520,6 +614,11 @@ function tryStep(entity, nx, nz, a, target) {
     const head = blockAt(dim, nx, a.y + dy + 1, nz);
     const floor = blockAt(dim, nx, a.y + dy - 1, nz);
     if (!feet || !head || !floor) continue;
+    // Daun yang berdiri persis di jalur langkah dibabat, bukan dihindari.
+    // Tanpa ini companion yang tumbuh pohonnya di atas ladang berhenti di
+    // tepi tajuk dan tidak pernah sampai ke petak berikutnya.
+    if (!canOccupy(feet)) clearWay(entity, feet);
+    if (!canOccupy(head)) clearWay(entity, head);
     if (!canOccupy(feet) || !canOccupy(head) || !isStandable(floor)) continue;
     try {
       entity.teleport({ x: nx, y: Math.floor(a.y + dy) + 0.02, z: nz }, {

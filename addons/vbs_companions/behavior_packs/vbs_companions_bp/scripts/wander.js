@@ -11,7 +11,7 @@ import { isGreeting } from "./look.js";
 import { addWaypoint, readWaypoints, writeState } from "./state.js";
 import { ensureStation } from "./station.js";
 import {
-  alive, blockAt, dist2, distXZ, face, isAir, isSolid, makeItem, pick, putIn,
+  alive, blockAt, dist2, distXZ, face, isAir, isFooting, makeItem, pick, putIn,
   sound, steer,
 } from "./util.js";
 import { entStr, logDebug, logInfo, posStr } from "./logger.js";
@@ -77,7 +77,9 @@ function surfaceY(dimension, x, z, from) {
     const here = blockAt(dimension, x, y, z);
     const below = blockAt(dimension, x, y - 1, z);
     if (!here || !below) continue;
-    if (here.isAir && isSolid(below)) return y;
+    // Tajuk pohon bukan permukaan tanah: tanpa isFooting, penjelajah
+    // menuju titik di atas daun dan berdiri mendorong dahan sepanjang jalan.
+    if (here.isAir && isFooting(below)) return y;
   }
   return undefined;
 }

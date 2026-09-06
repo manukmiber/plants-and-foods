@@ -4,7 +4,7 @@ import { makeWorld, makeContainer, makeCompanion, makePlayer } from "./world.mjs
 import { LOG_CONFIG, LogLevel, logStats } from "./scripts/logger.js";
 import { readState, writeState, patchState } from "./scripts/state.js";
 import { setClaim } from "./scripts/state.js";
-import { tickFarm } from "./scripts/farming.js";
+import { tickFarm, plotOf, workArea } from "./scripts/farming.js";
 import { tickMine } from "./scripts/mining.js";
 import { tickCrafter } from "./scripts/crafter.js";
 import { tickLooter } from "./scripts/looter.js";
@@ -110,15 +110,19 @@ console.log("\n== Uji petani: ratakan -> parit -> cangkul -> tanam ==");
   check(farmland > 0, "ada petak yang dicangkul", `${farmland} farmland`);
   check(dryFarmland === 0, "TIDAK ADA farmland yang kering (tanpa supply air)", `${dryFarmland} kering`);
 
-  // Lahan harus rata di satu ketinggian. Kolom yang ditempati perabot
-  // companion (peti, meja kerja, papan, pagar hias) sengaja dikecualikan —
-  // itu memang tidak boleh dibongkar.
+  // Lahan harus rata di satu ketinggian — DI PETAK YANG SEDANG DIGARAP.
+  //
+  // Sejak v1.7 ladang tidak dibuka satu chunk sekaligus: petak inti digarap
+  // sampai benar-benar jadi ladang, baru melebar (config.PLOT). Memeriksa
+  // seluruh chunk berarti menuntut petani sudah menggarap tanah yang memang
+  // belum gilirannya. Yang diperiksa di sini petak yang sedang dikerjakan.
   const FURNITURE = new Set(["minecraft:chest", "minecraft:crafting_table",
     "minecraft:standing_sign", "minecraft:barrel", "minecraft:torch"]);
+  const plot = plotOf(readState(farmer), workArea(farmer, readState(farmer), "P1"));
   let uneven = 0;
   const samples = [];
-  for (let x = 0; x < 16; x++) {
-    for (let z = 0; z < 16; z++) {
+  for (let x = plot.x0; x <= plot.x1; x++) {
+    for (let z = plot.z0; z <= plot.z1; z++) {
       const at65 = W.dimension.getBlock({ x, y: 65, z });
       const at66 = W.dimension.getBlock({ x, y: 66, z });
       if (FURNITURE.has(at65.typeId) || FURNITURE.has(at66.typeId)) continue;
@@ -129,8 +133,8 @@ console.log("\n== Uji petani: ratakan -> parit -> cangkul -> tanam ==");
       if (solid65) { uneven++; if (samples.length < 5) samples.push(`${x},${z}=${at65.typeId}`); }
     }
   }
-  check(uneven === 0, "permukaan ladang rata di satu ketinggian",
-        `${uneven} kolom menyimpang ${samples.join(" ")}`);
+  check(uneven === 0, "permukaan petak yang digarap rata di satu ketinggian",
+        `${uneven} kolom menyimpang di petak (${plot.x0}..${plot.x1}, ${plot.z0}..${plot.z1}) ${samples.join(" ")}`);
   const planted = (() => {
     let n = 0;
     for (let x = 0; x < 16; x++) for (let z = 0; z < 16; z++) {
@@ -925,7 +929,12 @@ console.log("\n== Uji sasaran kayu: yang terdekat, dan dipegang sampai habis =="
     advance(10);
   }
   const wood = Object.values(summarize(box)).reduce((a, b) => a + b, 0);
-  check(wood >= 100, "berdiri di hutan rapat: kayunya benar-benar terkumpul",
+  // Ambangnya diturunkan dari 100 sejak v1.7: membongkar blok sekarang BUTUH
+  // WAKTU (dig.js), dan satu batang oak dengan tangan kosong makan tiga detik
+  // persis seperti di Minecraft asli. Tiga ribu tick tangan kosong tidak
+  // mungkin lagi menghasilkan seratus batang — dan memang tidak boleh.
+  // Yang diuji tetap sama: kayunya benar-benar masuk peti, bukan mondar-mandir.
+  check(wood >= 12, "berdiri di hutan rapat: kayunya benar-benar terkumpul",
         `${wood} kayu dalam 300 denyut`);
 }
 

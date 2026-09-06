@@ -287,6 +287,36 @@ export const DIGGABLE_EXTRA = new Set([
   "minecraft:raw_iron_block", "minecraft:raw_copper_block",
 ]);
 
+// Daun. Dulu daun tidak ada di daftar mana pun, dan akibatnya dua hal buruk
+// sekaligus: isSolid() menganggapnya lantai yang sah (peti, meja kerja dan
+// papan nama jadi bisa berdiri melayang di atas tajuk pohon) sementara
+// isPassable() menganggapnya dinding (companion berdiri mendorong daun dan
+// tidak pernah sampai ke tujuannya). Sekarang daun punya namanya sendiri:
+// tidak bisa dipijak, tidak bisa ditembus — TAPI boleh dibabat kalau dia yang
+// menghalangi jalan (util.js » clearWay).
+export const LEAVES = new Set([
+  "minecraft:leaves", "minecraft:leaves2",
+  "minecraft:oak_leaves", "minecraft:spruce_leaves", "minecraft:birch_leaves",
+  "minecraft:jungle_leaves", "minecraft:acacia_leaves", "minecraft:dark_oak_leaves",
+  "minecraft:mangrove_leaves", "minecraft:cherry_leaves", "minecraft:pale_oak_leaves",
+  "minecraft:azalea_leaves", "minecraft:azalea_leaves_flowered",
+]);
+
+// Blok lunak yang boleh dibabat companion supaya jalannya terbuka. Semuanya
+// murah dan tidak ada yang menyesal kalau hilang — daun, sulur, salju tipis,
+// tanaman gua. Batang pohon TIDAK ada di sini: menebang pohon adalah pekerjaan,
+// bukan efek samping berjalan kaki.
+export const SOFT_PATH = new Set([
+  ...LEAVES,
+  "minecraft:vine", "minecraft:snow_layer", "minecraft:cave_vines",
+  "minecraft:cave_vines_body_with_berries", "minecraft:cave_vines_head_with_berries",
+  "minecraft:twisting_vines", "minecraft:weeping_vines", "minecraft:hanging_roots",
+  "minecraft:glow_lichen", "minecraft:bamboo", "minecraft:big_dripleaf",
+  "minecraft:small_dripleaf_block", "minecraft:spore_blossom",
+  "minecraft:brown_mushroom_block", "minecraft:red_mushroom_block",
+  "minecraft:mangrove_roots", "minecraft:moss_carpet", "minecraft:pink_petals",
+]);
+
 export const PROTECTED = new Set([
   "minecraft:chest", "minecraft:trapped_chest", "minecraft:barrel",
   "minecraft:furnace", "minecraft:blast_furnace", "minecraft:smoker",
@@ -453,6 +483,39 @@ export const CHAT = {
   bubbleRadius: 18,
   bubbleTicks: 90,
   chatRadius: 64,
+};
+
+// Balai kerja bersama — satu titik yang DISEPAKATI seluruh companion satu
+// pemilik sebagai tempat peti gudang, meja kerja dan tungku berdiri. Sebelum
+// ini tiap companion memasang petinya di mana pun kakinya kebetulan berhenti,
+// jadi pembangun yang butuh kayu dan pencari barang yang membawa kayu bisa
+// berdiri di dua peti berbeda yang berjarak lima puluh blok.
+export const DEPOT = {
+  // Sejauh apa peti/meja/tungku boleh berdiri dari titik balai.
+  radius: 12,
+  // Companion sedekat ini dianggap "sudah sampai" dan boleh mulai memasang.
+  arrive: 7,
+  // Sejauh ini dari balai, companion berjalan ke sana dulu sebelum bekerja.
+  travel: 10,
+  // Jarak aman minimum dari tepi chunk berpatok ladang saat memilih titik baru.
+  clearOfClaim: 6,
+  // Sampai berapa jauh titik baru boleh dicari dari usulan pertama.
+  search: 48,
+  // Sabar berjalan ke balai. Lewat ini — atau kalau langkahnya mentok —
+  // companion memasang petinya di tempat dia berdiri. Balai itu kesepakatan,
+  // bukan penjara: lebih baik gudang di tempat yang salah daripada companion
+  // yang berjalan ke tujuan yang tidak bisa dicapai selamanya.
+  giveUp: 600,
+};
+
+// Ladang tidak digarap sekaligus satu chunk penuh. Petak inti dikerjakan dulu
+// sampai benar-benar jadi ladang, baru melebar. Menggarap 16x16 sekaligus itu
+// yang membuat petani terlihat "tidak bertindak": dia menghabiskan menit-menit
+// pertama meratakan sudut chunk yang jauh dari mana pun pemain melihat.
+export const PLOT = {
+  start: 7,      // sisi petak inti pertama
+  grow: 4,       // pelebaran tiap kali petak sebelumnya tuntas
+  clearHeight: 12,   // setinggi apa di atas ladang yang harus dibersihkan
 };
 
 export const TICKS = {

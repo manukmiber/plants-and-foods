@@ -23,7 +23,7 @@ import {
 // keluhan itu.
 export { getClaim };
 import {
-  blockAt, chunkCenter, chunkOf, dist2, isFooting, particle, sound,
+  chunkCenter, chunkOf, dist2, particle, sound, surfaceScan,
 } from "./util.js";
 import { entStr, logDebug, logInfo, logWarn, posStr } from "./logger.js";
 
@@ -60,31 +60,22 @@ function findMarker(dimension, cx, cz) {
 }
 
 /**
- * Ketinggian tempat BERDIRI di satu kolom: blok udara pertama yang punya
- * lantai padat di bawahnya. Dipakai untuk menaruh penanda patok, yang memang
- * berdiri DI ATAS tanah.
+ * Ketinggian tempat BERDIRI di satu kolom: satu blok di atas tanahnya. Dipakai
+ * untuk menaruh penanda patok, yang memang berdiri DI ATAS tanah.
  */
 function groundAt(dimension, x, z, from) {
-  logDebug(TAG, `groundAt: mencari permukaan di (${x}, ${z}) mulai Y=${from}`);
-  for (let y = Math.min(from + 12, 318); y > from - 40; y--) {
-    const here = blockAt(dimension, x, y, z);
-    const below = blockAt(dimension, x, y - 1, z);
-    if (!here || !below) continue;
-    // isFooting, bukan isSolid: daun dihitung "padat" oleh isSolid, dan
-    // itulah sebabnya penanda patok bisa melayang di tengah tajuk pohon
-    // alih-alih berdiri di tanah yang dipatok.
-    if (here.isAir && isFooting(below)) {
-      logDebug(TAG, `groundAt: ditemukan Y=${y}`);
-      return y;
-    }
+  const found = surfaceScan(dimension, x, z, from);
+  if (typeof found.y === "number") {
+    logDebug(TAG, `groundAt: ditemukan Y=${found.y + 1}`);
+    return found.y + 1;
   }
   logDebug(TAG, `groundAt: fallback ke Y=${from}`);
   return from;
 }
 
 /**
- * Ketinggian TANAHNYA sendiri — blok padat paling atas, satu di bawah tempat
- * berdiri. `undefined` kalau kolomnya tidak terbaca (chunk belum dimuat).
+ * Ketinggian TANAHNYA sendiri — blok padat teratas, satu di bawah tempat
+ * berdiri. `undefined` kalau kolomnya tidak terbaca.
  *
  * Bedanya dengan groundAt cuma satu blok, dan satu blok itulah yang selama ini
  * membuat ladang tidak pernah jalan. `entry.y` dibaca farming.js sebagai
@@ -95,15 +86,15 @@ function groundAt(dimension, x, z, from) {
  * "cekung", petani menghabiskan seluruh waktunya meminta tanah timbun yang
  * tidak pernah cukup, dan dari luar dia terlihat cuma berdiri diam di samping
  * petinya. Itulah "patoknya tidak jalan" dan "petaninya diam saja".
+ *
+ * Pembacaannya sendiri sekarang di util.js » surfaceScan, dan itu perbaikan
+ * kedua: aturan lama menuntut UDARA tepat di atas blok padat, jadi kolom yang
+ * tertutup air tidak pernah terbaca sama sekali — di dasar danau yang ada di
+ * atas tanah bukan udara, tapi air. Chunk tepi danau lalu dilaporkan "belum
+ * dimuat", dan patoknya menyimpan tinggi kaki pemain.
  */
 function solidTopAt(dimension, x, z, from) {
-  for (let y = Math.min(from + 12, 318); y > from - 40; y--) {
-    const here = blockAt(dimension, x, y, z);
-    const below = blockAt(dimension, x, y - 1, z);
-    if (!here || !below) continue;
-    if (here.isAir && isFooting(below)) return y - 1;
-  }
-  return undefined;
+  return surfaceScan(dimension, x, z, from).y;
 }
 
 export function surfaceY(dimension, x, z, from) {
@@ -131,19 +122,31 @@ const SAMPLES = [-6, -3, 0, 3, 6];
 export function chunkSurfaceY(dimension, cx, cz, from) {
   const { x, z } = chunkCenter(cx, cz);
   const ys = [];
+  let loaded = 0;
+  let columns = 0;
   for (const dx of SAMPLES) {
     for (const dz of SAMPLES) {
-      const y = solidTopAt(dimension, x + dx, z + dz, from);
-      if (typeof y === "number") ys.push(y);
+      columns++;
+      const found = surfaceScan(dimension, x + dx, z + dz, from);
+      if (found.loaded) loaded++;
+      if (typeof found.y === "number") ys.push(found.y);
     }
   }
-  if (ys.length < SAMPLES.length ** 2 / 2) {
-    logWarn(TAG, `chunkSurfaceY (${cx}, ${cz}): cuma ${ys.length}/${SAMPLES.length ** 2} kolom terbaca; chunk belum dimuat.`);
+  if (loaded < columns) {
+    logWarn(TAG, `chunkSurfaceY (${cx}, ${cz}): cuma ${loaded}/${columns} kolom terbaca; chunk belum dimuat.`);
+    return undefined;
+  }
+  if (!ys.length) {
+    // Terbaca seluruhnya, dan memang tidak ada tanahnya: langit di atas jurang,
+    // atau laut yang lebih dalam dari jangkauan sapuan. Itu bukan "belum
+    // dimuat", dan menyebutnya begitu membuat pemain menunggu sesuatu yang
+    // tidak akan terjadi.
+    logWarn(TAG, `chunkSurfaceY (${cx}, ${cz}): tidak ada tanah dalam jangkauan dari y=${from}.`);
     return undefined;
   }
   ys.sort((a, b) => a - b);
   const median = ys[Math.floor(ys.length / 2)];
-  logDebug(TAG, `chunkSurfaceY (${cx}, ${cz}): ${ys.length} kolom -> median ${median}`);
+  logDebug(TAG, `chunkSurfaceY (${cx}, ${cz}): ${ys.length}/${columns} kolom bertanah -> median ${median}`);
   return median;
 }
 

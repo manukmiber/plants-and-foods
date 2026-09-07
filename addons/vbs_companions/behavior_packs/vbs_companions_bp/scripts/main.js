@@ -40,6 +40,7 @@ import {
 import { openMenu } from "./ui.js";
 import { deliver, orderMode, wireUserTalk } from "./usertalk.js";
 import { tickWander } from "./wander.js";
+import { forget as forgetWork } from "./work.js";
 import {
   alive, allCompanions, applyMode, dist2, getMode, getOwnerId, info, isCompanion,
   resolveOwner, setMode, stopWalking, tickSteer,
@@ -115,6 +116,7 @@ function forgetAll(id) {
   forgetSocial(id);
   forgetSurvival(id);
   forgetTaming(id);
+  forgetWork(id);
   stopWalking(id);
   chatterAt.delete(id);
 }

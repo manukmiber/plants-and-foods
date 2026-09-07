@@ -59,6 +59,11 @@ const STEPS = [
   { dx: -1, dz: -1, cost: 1.4142 },
 ];
 
+// Beda tinggi yang boleh ditempuh satu langkah, diurutkan dari yang paling
+// kecil. Yang basah boleh naik lebih tinggi: itu berenang, bukan memanjat.
+const WALK_STEPS = [0, -1, 1, -2, -3, 2];
+const SWIM_STEPS = [0, -1, 1, 2, 3, -2, -3];
+
 function key(x, y, z) {
   return `${x},${y},${z}`;
 }
@@ -141,13 +146,36 @@ function settle(dimension, x, y, z, opts) {
   return undefined;
 }
 
-/** Petak berpijak terdekat di sekitar satu titik — dipakai untuk tujuan. */
+/**
+ * Petak berpijak terdekat di sekitar satu titik — dipakai untuk tujuan.
+ *
+ * Cincinnya dilebarkan sampai `PATH.goalRadius`, bukan cuma delapan tetangga.
+ * Tujuan yang diberikan mode kerja sering berada di tempat yang memang tidak
+ * bisa dipijak siapa pun: di dalam blok yang mau dibongkar, di tengah parit
+ * yang baru digali, di atas peti. Dengan satu cincin saja, kolam kecil atau
+ * dinding satu blok di sekelilingnya sudah cukup untuk membuat seluruh
+ * perjalanan dinyatakan mustahil.
+ */
 function nearGoal(dimension, goal, opts) {
   const direct = settle(dimension, goal.x, goal.y, goal.z, opts);
   if (direct) return direct;
-  for (const step of STEPS) {
-    const spot = settle(dimension, goal.x + step.dx, goal.y, goal.z + step.dz, opts);
-    if (spot) return spot;
+  const radius = opts.goalRadius ?? PATH.goalRadius;
+  let best;
+  let bestD = Infinity;
+  for (let r = 1; r <= radius; r++) {
+    for (let dx = -r; dx <= r; dx++) {
+      for (let dz = -r; dz <= r; dz++) {
+        if (Math.max(Math.abs(dx), Math.abs(dz)) !== r) continue;
+        const spot = settle(dimension, goal.x + dx, goal.y, goal.z + dz, opts);
+        if (!spot) continue;
+        const d = dx * dx + dz * dz + (spot.y - goal.y) ** 2;
+        if (d < bestD) {
+          bestD = d;
+          best = spot;
+        }
+      }
+    }
+    if (best) return best;
   }
   logDebug(TAG, `Tidak ada petak berpijak di sekitar ${posStr(goal)}.`);
   return undefined;
@@ -322,7 +350,14 @@ function search(dimension, from, to, opts, budget, maxRange) {
       // Naik-turun diperiksa dari beda tinggi TERKECIL: datar dulu, lalu turun
       // satu, lalu naik satu. Kalau naik didahulukan, penambang memanjat keluar
       // dari tangganya sendiri tiap langkah.
-      for (const dy of [0, -1, 1, -2, -3, 2]) {
+      //
+      // Dari DALAM AIR pilihannya lebih tinggi, karena di dalam air memang bisa
+      // berenang naik. Tanpa itu, companion yang sudah terlanjur berada di dasar
+      // danau tidak punya satu pun langkah sah menuju tepian yang tiga blok di
+      // atas kepalanya: pathfinding melaporkan "tidak ada jalur" dan dia
+      // benar-benar terkurung di dasar danau sampai ada yang menariknya.
+      const wet = isWaterBlock(blockAt(dimension, here.x, here.y, here.z));
+      for (const dy of (wet ? SWIM_STEPS : WALK_STEPS)) {
         const ny = here.y + dy;
         const extra = stepCost(dimension, nx, ny, nz, opts);
         if (extra === undefined) continue;
@@ -331,6 +366,10 @@ function search(dimension, from, to, opts, budget, maxRange) {
           if (stepCost(dimension, nx, ny, here.z, opts) === undefined &&
               stepCost(dimension, here.x, ny, nz, opts) === undefined) continue;
         }
+        // Memanjat butuh ruang DI ATAS kepala di petak asal. Tanpa uji ini
+        // jalur bisa memanjat lewat langit-langit gua atau lewat lantai rumah,
+        // dan companion menabrak plafon tiap langkah sampai dianggap mentok.
+        if (dy > 0 && !headroom(dimension, here, dy)) continue;
         // Naik lebih dari satu blok cuma boleh kalau memang ada yang dipanjat;
         // turun jauh diberi biaya, karena jatuh itu murah tapi naik lagi tidak.
         const climb = dy > 1 ? PATH.climbCost * (dy - 1) : 0;
@@ -352,8 +391,32 @@ function search(dimension, from, to, opts, budget, maxRange) {
     logDebug(TAG, `Tidak ada jalur ke ${posStr(goal)} (${looked} simpul diperiksa).`);
     return undefined;
   }
+  // Jalur yang PALING MENDEKAT, bukan jalur ke tujuan. Berguna kalau ujungnya
+  // memang tinggal beberapa blok dari tujuan — companion berjalan sampai ke
+  // tepi tembok, lalu pemanggilnya memutuskan sendiri. Kalau ujungnya masih
+  // jauh, jalur itu bukan jawaban melainkan jebakan: companion menyusuri kaki
+  // tebing berpuluh blok mencari tanjakan yang tidak ada, sepanjang jalan
+  // terlihat "sedang berjalan", dan tidak pernah dianggap gagal karena dia
+  // memang bergerak terus.
+  const near = seen.get(best.k).node;
+  const gap = Math.max(Math.abs(near.x - goal.x), Math.abs(near.z - goal.z)) +
+    Math.abs(near.y - goal.y);
+  if (gap > (opts.partialMax ?? PATH.partialMax)) {
+    logDebug(TAG, `Tidak ada jalur ke ${posStr(goal)}; yang terdekat pun ${gap} blok meleset.`);
+    return undefined;
+  }
   logDebug(TAG, `Jalur penuh tidak ada; dipakai yang paling mendekat (${looked} simpul).`);
-  return rebuild(seen, best.k);
+  const out = rebuild(seen, best.k);
+  out.partial = true;
+  return out;
+}
+
+/** Ruang kosong di atas kepala di petak asal, syarat memanjat setinggi `dy`. */
+function headroom(dimension, here, dy) {
+  for (let h = 2; h <= dy + 1; h++) {
+    if (!canOccupy(blockAt(dimension, here.x, here.y + h, here.z))) return false;
+  }
+  return true;
 }
 
 function rebuild(seen, endKey) {
@@ -373,13 +436,20 @@ function rebuild(seen, endKey) {
  * Menjalani jalur
  * ------------------------------------------------------------------ */
 
-const trips = new Map();   // entityId -> { path, at, goal, madeAt, stuckSince, failed }
+const trips = new Map();   // entityId -> lihat newTrip()
 
 export function forget(id) {
   if (trips.delete(id)) logDebug(TAG, `forget jalur untuk ID: ${id}`);
 }
 
-/** Jalur ke tujuan terakhir memang tidak ada? Mode kerja membaca ini. */
+/**
+ * Jalur ke tujuan terakhir memang tidak ada? Mode kerja membaca ini.
+ *
+ * "Tidak ada" berarti salah satu dari tiga hal, dan ketiganya baru bisa
+ * dijawab sesudah dicoba: pencarian tidak menemukan jalur sama sekali; jalur
+ * yang ada habis di tempat yang bukan tujuan (tujuannya melayang di udara);
+ * atau companion berkali-kali tidak bergerak sedikit pun padahal jalurnya sah.
+ */
 export function pathBlocked(entity) {
   return Boolean(trips.get(entity?.id)?.failed);
 }
@@ -396,12 +466,36 @@ function samePlace(a, b) {
     Math.floor(a.y) === Math.floor(b.y) && Math.floor(a.z) === Math.floor(b.z);
 }
 
+function newTrip(now, to, path, tries) {
+  return {
+    path, at: 0, lastAt: 0, goal: { x: to.x, y: to.y, z: to.z },
+    madeAt: now, stuckSince: now, atSince: now, tries,
+    failed: false, failedAt: 0,
+  };
+}
+
+function giveUp(entity, trip, now, why) {
+  if (trip.failed) return;
+  trip.failed = true;
+  trip.failedAt = now;
+  logDebug(TAG, `${entStr(entity)} menyerah menuju ${posStr(trip.goal)}: ${why}.`);
+}
+
 /**
  * Satu langkah menuju `to`, dipanggil tiap denyut. Balikan true begitu sampai.
  *
  * Ini satu-satunya cara mode kerja menyuruh companion berjalan. Jalurnya
  * dihitung sekali, disimpan, dan dijalani; yang dihitung ulang cuma kalau
  * tujuannya berpindah, jalurnya terhalang, atau umurnya habis.
+ *
+ * Yang baru: perjalanan bisa MENYERAH, dan mode kerja bisa membacanya lewat
+ * pathBlocked(). Sebelum ini tidak ada satu pun jalan keluar dari tujuan yang
+ * mustahil. Kalau tujuannya melayang di udara — dan mode kerja memang sering
+ * memberi tujuan begitu: blok daun yang mau dibongkar, batang pohon setinggi
+ * lima meter — A* mengembalikan "jalur yang paling mendekat", jalur itu habis
+ * di bawah tujuannya, dan denyut berikutnya menghitung ulang jalur yang sama
+ * persis. Selamanya. Dari luar: companion berdiri diam melaporkan dirinya
+ * sedang berjalan, dan catatan kejadian penuh "tidak maju 60 tick".
  */
 export function follow(entity, to, opts = {}) {
   if (!entity || !to) return false;
@@ -415,24 +509,69 @@ export function follow(entity, to, opts = {}) {
   }
 
   let trip = trips.get(entity.id);
-  const stale = !trip ||
-    !samePlace(trip.goal, to) ||
-    now - trip.madeAt > PATH.replanEvery ||
-    !trip.path || trip.at >= trip.path.length;
+  if (trip && !samePlace(trip.goal, to)) {
+    trips.delete(entity.id);
+    trip = undefined;
+  }
+
+  // Tujuan yang sudah dinyatakan mustahil tidak dicari ulang tiap denyut: itu
+  // satu pencarian A* penuh, dua kali sedetik, untuk jawaban yang sudah
+  // diketahui. Sesudah jeda dicoba sekali lagi — dunia memang bisa berubah.
+  if (trip?.failed) {
+    if (now - trip.failedAt < PATH.retryBlocked) {
+      stepDirect(entity, to, opts.step ?? PATH.step, opts);
+      return dist2(entity.location, to) <= reach * reach;
+    }
+    trips.delete(entity.id);
+    trip = undefined;
+  }
+
+  // "Habis" berarti kaki companion BENAR-BENAR sudah berada di petak terakhir
+  // jalur, bukan sekadar sedang menuju ke sana. Diuji dengan kursor saja,
+  // seluruh pendekatan terakhir dihitung ulang tiap denyut — dan tiap
+  // perjalanan yang normal berakhir dinyatakan mustahil.
+  const last = trip?.path?.[trip.path.length - 1];
+  const arrived = Boolean(last) && trip.at >= trip.path.length - 1 &&
+    reachedCell(entity.location, last);
+
+  // Dan "habis" juga berarti KURSORNYA TIDAK MAJU-MAJU, walaupun kakinya
+  // bergerak terus.
+  //
+  // Ini yang paling sering terjadi di medan bertingkat, dan yang paling lama
+  // tidak terlihat: petak terakhir jalur berada di atas teras setinggi tiga
+  // blok, companion berdiri tepat di bawahnya, dan reachedCell menolak
+  // menyebutnya "sampai" karena bedanya tiga blok tegak. Kursornya berhenti di
+  // petak itu selamanya; jalurnya tidak pernah dinyatakan habis; perjalanannya
+  // tidak pernah dinyatakan gagal. Yang terlihat pemain: companion bergoyang
+  // maju-mundur setengah blok di kaki tebing, jam demi jam.
+  const stalled = Boolean(trip?.path) &&
+    now - (trip.atSince ?? trip.madeAt) > PATH.cursorStall;
+  const spent = arrived || stalled;
+  const stale = !trip || spent || !trip.path || now - trip.madeAt > PATH.replanEvery;
 
   if (stale) {
+    // Jalur yang HABIS tanpa sampai tujuan itu bukti, bukan kebetulan: jalur
+    // terbaik yang bisa ditemukan berakhir di tempat lain. Dihitung sebagai
+    // percobaan, dan sesudah beberapa kali perjalanannya dinyatakan mustahil.
+    // Jalur yang sejak awal cuma "paling mendekat" sudah menjawab pertanyaannya
+    // begitu dijalani sekali: tujuannya memang tidak bisa dicapai. Tidak ada
+    // gunanya mengulanginya tiga kali.
+    const tries = spent
+      ? (trip.tries ?? 0) + (trip.path.partial ? PATH.giveUpAfter : 1)
+      : (trip?.tries ?? 0);
     const path = findPath(dimension, entity.location, to, opts);
-    trip = {
-      path, at: 0, goal: { x: to.x, y: to.y, z: to.z },
-      madeAt: now, stuckSince: now, failed: !path,
-    };
+    trip = newTrip(now, to, path, tries);
     trips.set(entity.id, trip);
     if (!path) {
-      logDebug(TAG, `${entStr(entity)} tidak menemukan jalur ke ${posStr(to)}.`);
+      giveUp(entity, trip, now, "tidak ada jalur sama sekali");
       // Tidak ada jalur bukan alasan untuk membeku: satu langkah lurus tetap
       // dicoba, dan itu sering cukup untuk keluar dari sudut yang membuat
       // pencarian gagal sejak awal.
-      stepDirect(entity, to, opts.step ?? PATH.step);
+      stepDirect(entity, to, opts.step ?? PATH.step, opts);
+      return false;
+    }
+    if (tries >= PATH.giveUpAfter) {
+      giveUp(entity, trip, now, `${tries} jalur berturut-turut habis sebelum sampai`);
       return false;
     }
     logDebug(TAG, `${entStr(entity)} punya jalur baru: ${path.length} petak ke ${posStr(to)}.`);
@@ -450,10 +589,14 @@ export function follow(entity, to, opts = {}) {
   while (trip.at < path.length - 1 && reachedCell(entity.location, path[trip.at])) {
     trip.at++;
   }
+  if (trip.at !== trip.lastAt) {
+    trip.lastAt = trip.at;
+    trip.atSince = now;
+  }
 
   const target = center(path[trip.at]);
   const before = entity.location;
-  stepDirect(entity, target, opts.step ?? PATH.step);
+  stepDirect(entity, target, opts.step ?? PATH.step, opts);
   const moved = dist2(before, entity.location) > 0.004;
 
   if (moved) {
@@ -464,8 +607,15 @@ export function follow(entity, to, opts = {}) {
     const feet = blockAt(dimension, target.x, target.y, target.z);
     const head = blockAt(dimension, target.x, target.y + 1, target.z);
     if (!clearWay(entity, feet) && !clearWay(entity, head)) {
+      const tries = (trip.tries ?? 0) + 1;
       logDebug(TAG, `${entStr(entity)} mentok di ${posStr(target)}; jalur dihitung ulang.`);
-      trips.delete(entity.id);
+      if (tries >= PATH.giveUpAfter) {
+        trip.tries = tries;
+        giveUp(entity, trip, now, `mentok ${tries} kali di jalur yang sah`);
+        return false;
+      }
+      const again = newTrip(now, to, undefined, tries);
+      trips.set(entity.id, again);
     }
     trip.stuckSince = now;
   }

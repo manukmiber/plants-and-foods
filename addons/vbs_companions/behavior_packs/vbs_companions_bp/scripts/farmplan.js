@@ -28,9 +28,11 @@
  * sesuatu yang tidak akan pernah datang".
  */
 
-import { BAND_WIDTH, CROPS, FARM, PROTECTED, TILLABLE, WATER } from "./config.js";
+import {
+  BAND_WIDTH, CROPS, FARM, FILL_SOURCE, PROTECTED, TILLABLE, WATER,
+} from "./config.js";
 import { chunkBounds } from "./claim.js";
-import { blockAt, isAir } from "./util.js";
+import { blockAt, groundTop, isAir, isCanopy } from "./util.js";
 import { logDebug, logInfo } from "./logger.js";
 
 const TAG = "FARMPLAN";
@@ -189,12 +191,127 @@ export function roleAt(map, x, z) {
 
 export const JOB = {
   level: "ratakan",
+  borrow: "gali tanah timbun",
   dig: "gali parit",
   pour: "tuang air",
   till: "cangkul",
   plant: "tanam",
   harvest: "panen",
 };
+
+/**
+ * Blok mana di kolom ini yang harus dipangkas berikutnya — dan kenapa itu bukan
+ * "yang paling atas".
+ *
+ * Versi sebelumnya menyapu dari `clearHeight` ke bawah dan mengembalikan blok
+ * pertama yang ditemukannya: yang PALING TINGGI. Di padang rumput itu tidak
+ * kelihatan salah. Di hutan birch, yang paling tinggi adalah daun tujuh blok di
+ * atas kepala, dan tidak ada tempat berdiri di mana pun yang bisa menyentuhnya.
+ * Petani berjalan ke bawah pucuk pohon, mendorong udara, dan berdiri di situ
+ * selamanya — inilah baris yang muncul di layar pemain:
+ *
+ *     vbs:kohane@(-2778.5, 64.0, -1317.5) tidak maju 60 tick
+ *     menuju -2779, 69, -1318; dianggap mentok.
+ *
+ * Yang dipilih sekarang mengikuti cara pemain sungguhan mengosongkan lahan:
+ *
+ *   - ada POHON di kolom ini  -> tebang dari PANGKALNYA, batang paling bawah.
+ *     Itu satu-satunya bagian pohon yang bisa dijangkau dari tanah, dan
+ *     sesudahnya batang di atasnya melorot (farming.js » sinkColumn) sehingga
+ *     pangkalnya selalu tetap terjangkau.
+ *   - cuma TANAH -> pangkas dari PUNCAKNYA, dan petani berdiri di atas gundukan
+ *     itu sendiri untuk mengerjakannya. Menggali dari bawah akan melubangi
+ *     bukit dan meninggalkan topinya melayang.
+ */
+export function cutTarget(dimension, x, z, y) {
+  let lowestCanopy;
+  let highestGround;
+  for (let dy = 1; dy <= FARM.clearHeight; dy++) {
+    const above = blockAt(dimension, x, y + dy, z);
+    if (!above || isAir(above) || above.isLiquid) continue;
+    if (CROPS[above.typeId]) continue;   // tanaman sendiri, bukan penghalang
+    if (isCanopy(above)) {
+      if (lowestCanopy === undefined) lowestCanopy = y + dy;
+      continue;
+    }
+    highestGround = y + dy;
+  }
+  // TANAH lebih dulu, POHON belakangan — dan urutan itu bukan selera.
+  //
+  // Pohon yang tumbuh di atas gundukan berdiri LEBIH TINGGI daripada
+  // gundukannya. Ditebang lebih dulu, pangkalnya berada di luar jangkauan dari
+  // tanah datar di bawah, dan petani menghabiskan seluruh waktunya berjalan
+  // bolak-balik di kaki gundukan menuju daun yang tidak akan pernah bisa
+  // disentuhnya. Dipangkas gundukannya dulu, pohonnya ikut MELOROT bersama
+  // tanah yang dipangkas (farming.js » sinkColumn) sampai pangkalnya berada
+  // tepat di permukaan ladang — dan di situ dia bisa ditebang sambil berdiri.
+  if (highestGround !== undefined) return { y: highestGround, canopy: false };
+  // Pohon yang menggantung jauh di atas kepala DIBIARKAN.
+  //
+  // Yang tersisa di ketinggian itu hampir selalu daun dari pohon yang batangnya
+  // sudah ditebang, dan daun tanpa batang gugur sendiri di Minecraft. Dikejar,
+  // petani berjalan bolak-balik di bawahnya menuju tempat berdiri yang tidak
+  // ada, menyerah, lalu mencobanya lagi semenit kemudian — selamanya. Batang
+  // yang benar-benar tumbuh di sini tidak akan terlewat: pangkalnya ada di
+  // permukaan, dan sisa batangnya melorot tiap kali pangkalnya ditebang.
+  if (lowestCanopy !== undefined && lowestCanopy <= y + FARM.canopyMax) {
+    return { y: lowestCanopy, canopy: true };
+  }
+  return undefined;
+}
+
+/**
+ * Satu kolom tanah yang boleh DIGALI untuk menambal cekungan ladang.
+ *
+ * Ini jawaban untuk kebuntuan yang paling sering terlihat di dunia sungguhan:
+ * ladang yang bergelombang butuh tanah timbun, petinya kosong, dan petani
+ * menyerah petak demi petak sampai ladangnya tinggal seperempat. Padahal tanah
+ * timbunnya ada di sekelilingnya — itu gundukan yang memang harus dipangkas.
+ *
+ * Urutan pilihannya sengaja: yang lebih TINGGI dari permukaan ladang lebih dulu
+ * (menggalinya sekaligus meratakan tanah), baru sesudah itu permukaan datar di
+ * luar petak, dan tidak pernah lebih dalam dari `FARM.borrowDepth`. Petak yang
+ * sedang digarap tidak pernah disentuh: menggali lubang di ladang sendiri untuk
+ * menambal lubang lain di ladang yang sama tidak akan pernah selesai.
+ */
+export function borrowSpot(dimension, area, plot, from, floorY) {
+  const inPlot = (x, z) => x >= plot.x0 && x <= plot.x1 && z >= plot.z0 && z <= plot.z1;
+  const inField = (x, z) => x >= area.x0 && x <= area.x1 && z >= area.z0 && z <= area.z1;
+  const bx = Math.floor(from.x);
+  const bz = Math.floor(from.z);
+  const limit = Math.min(FARM.borrowRadius,
+    Math.max(area.x1 - area.x0, area.z1 - area.z0));
+
+  let flat;
+  for (let r = 1; r <= limit; r++) {
+    for (let dx = -r; dx <= r; dx++) {
+      for (let dz = -r; dz <= r; dz++) {
+        if (Math.max(Math.abs(dx), Math.abs(dz)) !== r) continue;
+        const x = bx + dx;
+        const z = bz + dz;
+        if (!inField(x, z) || inPlot(x, z)) continue;
+        const top = groundTop(dimension, x, z, floorY,
+                              { up: FARM.clearHeight, down: FARM.borrowDepth + 1 });
+        // Tidak pernah menggali di bawah permukaan ladang. Menggali lubang
+        // untuk menambal lubang itu pekerjaan yang tidak akan pernah selesai —
+        // dan lebih buruk lagi, lubang barunya jadi jebakan yang membuat
+        // petani jatuh ke dalamnya tiap kali lewat.
+        if (top === undefined || top < floorY) continue;
+        const block = blockAt(dimension, x, top, z);
+        if (!block || !FILL_SOURCE.has(block.typeId)) continue;
+        // Gundukan menang seketika: menggalinya adalah pekerjaan yang memang
+        // harus dilakukan, dan hasilnya persis bahan yang sedang dicari.
+        if (top > floorY) {
+          logDebug(TAG, `Tanah timbun diambil dari gundukan (${x}, ${z}) di y=${top}.`);
+          return { kind: JOB.borrow, x, z, y: top };
+        }
+        if (!flat) flat = { kind: JOB.borrow, x, z, y: top };
+      }
+    }
+  }
+  if (flat) logDebug(TAG, `Tanah timbun diambil dari tanah datar (${flat.x}, ${flat.z}).`);
+  return flat;
+}
 
 /**
  * Apa yang masih kurang di satu kolom, dibaca dari dunia apa adanya.
@@ -207,12 +324,8 @@ export function needAt(dimension, map, x, z, container) {
 
   // 1. Apa pun yang berdiri di atas permukaan ladang harus turun dulu —
   //    rumput, bunga, pohon, gundukan tanah.
-  for (let dy = FARM.clearHeight; dy >= 1; dy--) {
-    const above = blockAt(dimension, x, y + dy, z);
-    if (!above || isAir(above) || above.isLiquid) continue;
-    if (CROPS[above.typeId]) continue;   // tanaman sendiri, bukan penghalang
-    return { kind: JOB.level, x, z, y: y + dy };
-  }
+  const cut = cutTarget(dimension, x, z, y);
+  if (cut) return { kind: JOB.level, x, z, y: cut.y, canopy: cut.canopy };
 
   const ground = blockAt(dimension, x, y, z);
   if (!ground) return undefined;
@@ -233,7 +346,12 @@ export function needAt(dimension, map, x, z, container) {
     return { kind: JOB.level, x, z, y, fill: true };
   }
   if (ground.typeId !== "minecraft:farmland") {
-    if (!TILLABLE.has(ground.typeId)) return undefined;
+    // Batu, pasir, kerikil: tidak bisa dicangkul, jadi permukaannya DIGANTI.
+    // Bongkar satu blok, dan denyut berikutnya membaca kolomnya sebagai cekung
+    // lalu menimbunnya dengan tanah. Dulu kolom seperti ini cuma dibiarkan:
+    // ladang di tepi pantai atau di atas singkapan batu berakhir belang, dan
+    // tidak ada satu pun pesan yang menjelaskan kenapa.
+    if (!TILLABLE.has(ground.typeId)) return { kind: JOB.level, x, z, y, swap: true };
     if (!hydrated(dimension, map, x, z)) return undefined;   // nanti, sesudah airnya ada
     return { kind: JOB.till, x, z, y };
   }
@@ -265,13 +383,24 @@ export function hydrated(dimension, map, x, z) {
  * Sapuannya dibatasi `budget` kolom per denyut. Ladang 16x16 itu 256 kolom,
  * dan memeriksa semuanya tiap setengah detik jauh lebih mahal daripada
  * pekerjaan yang sebenarnya dikerjakan.
+ *
+ * `offset` yang membuat batas itu tidak berubah jadi KEBUTAAN. Sapuan selalu
+ * dimulai dari petak tempat companion berdiri, jadi selama dia diam, sembilan
+ * puluh enam kolom yang sama itu juga yang diperiksa — tiap denyut, selamanya.
+ * Seratus enam puluh kolom sisanya tidak pernah dilihat sekali pun. Itulah
+ * sebabnya ladang bisa berhenti dengan sudut-sudutnya masih bergelombang
+ * sementara petaninya berdiri diam melaporkan "ladang sudah rapi": pekerjaannya
+ * memang ada, cuma di luar jendela sapuan. Pemanggil menggeser offset tiap kali
+ * sapuan pulang dengan tangan kosong, jadi seluruh petak kebagian diperiksa
+ * dalam beberapa denyut.
  */
-export function nextJob(dimension, map, from, container, skip, budget = FARM.scanPerTick) {
+export function nextJob(dimension, map, from, container, skip,
+                        budget = FARM.scanPerTick, offset = 0) {
   const total = map.w * map.h;
   let best;
   let bestD = Infinity;
   let looked = 0;
-  const start = cursorOf(map, from);
+  const start = (cursorOf(map, from) + offset + total) % total;
 
   for (let n = 0; n < total && looked < budget; n++) {
     const i = (start + n) % total;
@@ -282,10 +411,16 @@ export function nextJob(dimension, map, from, container, skip, budget = FARM.sca
     const need = needAt(dimension, map, x, z, container);
     if (!need) continue;
     const d = (x - from.x) ** 2 + (z - from.z) ** 2;
-    // Meratakan didahulukan apa pun jaraknya: petak yang belum rata membuat
-    // parit di sebelahnya bocor, dan air yang bocor merusak ladang yang sudah
-    // jadi. Urutan itu satu-satunya urutan yang benar-benar harus dijaga.
-    const rank = need.kind === JOB.level ? 0 : need.kind === JOB.dig ? 1 : 2;
+    // Urutannya bukan selera: memangkas dulu, baru menimbun.
+    //
+    // Dua-duanya "meratakan", tapi memangkas MENGHASILKAN tanah dan menimbun
+    // MENGHABISKANNYA. Dikerjakan dengan urutan acak, petani menemui petak
+    // cekung pertama selagi petinya masih kosong, menyerah, dan begitu terus —
+    // ladang berakhir sebagai saringan berlubang padahal tanah timbunnya ada
+    // di gundukan sebelah, tinggal dipangkas. Sesudah itu barulah parit,
+    // karena petak yang belum rata membuat parit di sebelahnya bocor.
+    const rank = need.kind === JOB.level ? (need.fill ? 1 : 0)
+      : need.kind === JOB.dig ? 2 : 3;
     const score = rank * 1e6 + d;
     if (score < bestD) {
       bestD = score;

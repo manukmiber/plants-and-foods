@@ -489,6 +489,96 @@ export function isSolid(block) {
   }
 }
 
+// Batang pohon dalam segala ejaannya. LOGS di config.js cuma menyebut batang
+// biasa; hutan sungguhan juga berisi kayu terkupas, kayu berkulit penuh, dan
+// dua identifier warisan ("minecraft:log", "minecraft:log2") yang masih dipakai
+// dunia lama.
+const LOG_SUFFIX = ["_log", "_stem", "_wood", "_hyphae"];
+const LOG_LEGACY = new Set(["minecraft:log", "minecraft:log2"]);
+
+export function isLogId(id) {
+  if (typeof id !== "string") return false;
+  return LOG_LEGACY.has(id) || LOG_SUFFIX.some((suffix) => id.endsWith(suffix));
+}
+
+export function isLog(block) {
+  if (!block) return false;
+  try {
+    return isLogId(block.typeId);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Blok yang bagian dari POHON, bukan bagian dari tanah: batang dan daun.
+ *
+ * Dipakai pencarian ketinggian permukaan. Tanpa pemisahan ini, satu batang
+ * birch yang tumbuh di tengah chunk membuat seluruh chunk terbaca setinggi
+ * pucuk pohonnya, dan patok ladang menyimpan ketinggian yang tujuh blok terlalu
+ * tinggi — setiap kolomnya lalu terbaca "cekung sekali".
+ */
+export function isCanopy(block) {
+  if (!block) return false;
+  try {
+    return LEAVES.has(block.typeId) || isLog(block);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Permukaan TANAH di satu kolom: blok padat teratas yang bukan pohon, bukan
+ * tanaman, dan bukan air.
+ *
+ * Ini bukan `isFooting`. isFooting menjawab "boleh ditaruhi peti?" dan menolak
+ * pasir, kerikil, tanah ladang, dan es — semuanya permukaan tanah yang sah.
+ * Yang dijawab di sini "setinggi apa tanahnya", dan pantai berpasir punya
+ * tinggi tanah seperti padang rumput.
+ */
+function isGroundTop(block) {
+  if (!block) return false;
+  try {
+    if (isCanopy(block)) return false;
+    return isSolid(block);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Menyapu satu kolom dari atas ke bawah mencari permukaan tanahnya.
+ *
+ * Balikannya SELALU dua hal, dan bedanya penting:
+ *
+ *   { loaded: false }            chunk-nya memang belum dimuat — jangan menebak
+ *   { loaded: true, y: 63 }      tanahnya ada, di situ
+ *   { loaded: true }             kolomnya terbaca tapi tidak ada tanah sama
+ *                                sekali dalam jangkauan (jurang, gua, langit)
+ *
+ * Versi lama menuntut "udara di atas blok padat", dan itu membuat SELURUH
+ * kolom berair tidak terbaca: di dasar danau tidak ada udara di atas tanah, ada
+ * air. Chunk yang setengahnya danau lalu dilaporkan "belum dimuat", patoknya
+ * menyimpan tinggi kaki pemain, dan ladangnya tidak pernah bisa digarap.
+ */
+export function surfaceScan(dimension, x, z, from, { up = 24, down = 48 } = {}) {
+  const top = Math.min(Math.floor(from) + up, 319);
+  const bottom = Math.max(Math.floor(from) - down, -64);
+  let loaded = false;
+  for (let y = top; y >= bottom; y--) {
+    const block = blockAt(dimension, x, y, z);
+    if (!block) continue;
+    loaded = true;
+    if (isGroundTop(block)) return { loaded: true, y };
+  }
+  return { loaded };
+}
+
+/** Tinggi tanah di satu kolom, atau undefined kalau tidak terbaca. */
+export function groundTop(dimension, x, z, from, span) {
+  return surfaceScan(dimension, x, z, from, span).y;
+}
+
 export function yawTo(a, b) {
   return (Math.atan2(b.z - a.z, b.x - a.x) * 180) / Math.PI - 90;
 }
@@ -561,6 +651,19 @@ export function steer(entity, target, step = 0.32, opts = {}) {
   row.at = system.currentTick;
   walking.set(entity.id, row);
   const done = follow(entity, target, { ...opts, step });
+  // Sudah SAMPAI itu bukan mentok, walaupun sama-sama tidak bergerak.
+  //
+  // Bedanya tidak dibuat sebelum ini, dan akibatnya besar: companion yang
+  // berdiri tepat di petak tujuannya — persis di tempat yang benar, sedang
+  // menunggu ayunan berikutnya — dihitung "tidak maju 60 tick" lalu dianggap
+  // mentok oleh mode kerja yang membaca isStuck(). Petak yang sudah dijangkau
+  // dengan sempurna ditandai mustahil dan dilewati.
+  if (done) {
+    row.stillSince = system.currentTick;
+    row.warned = false;
+    row.lastPos = { ...entity.location };
+    return done;
+  }
   noteProgress(entity, row);
   return done;
 }
@@ -573,6 +676,12 @@ export function tickSteer(entity) {
     return false;
   }
   const done = follow(entity, row.target, { ...(row.opts ?? {}), step: row.step });
+  if (done) {
+    row.stillSince = system.currentTick;
+    row.warned = false;
+    row.lastPos = { ...entity.location };
+    return done;
+  }
   noteProgress(entity, row);
   return done;
 }
@@ -662,15 +771,34 @@ function landOn(entity, nx, ny, nz, a, target) {
  * yang dituju, barulah air diinjak — supaya companion yang sudah terlanjur
  * berada di tengah air tetap bisa berenang keluar (survival.js).
  */
-function tryStep(entity, nx, nz, a, target) {
+// Beda tinggi yang boleh dicoba satu langkah kaki, diurutkan dari perubahan
+// TERKECIL: datar, lalu turun satu, lalu naik satu. Kalau naik didahulukan,
+// penambang memanjat keluar dari tangganya sendiri tiap langkah dan tidak
+// pernah sampai ke dasar. Naik dua blok tetap tersedia (tepi ladang yang baru
+// ditimbun), tapi paling belakang.
+const STEP_DYS = [0, -1, 1, -2, 2, -3];
+
+/**
+ * Urutan beda tinggi untuk satu langkah, dengan TINGGI TUJUAN sebagai acuan.
+ *
+ * Ini bukan penghalusan. Jalur yang sudah dihitung menyebutkan ketinggian tiap
+ * petak, dan langkah kaki yang mengabaikannya akan JATUH ke lubang yang jalur
+ * itu justru susah payah dihindari: berjalan menyusuri bibir lubang sedalam
+ * tiga blok, turun tiga blok karena "turun" memang salah satu pilihan yang
+ * sah, lalu memanjat keluar lagi, lalu jatuh lagi di tempat yang sama. Yang
+ * terlihat pemain: companion berputar-putar di tepi lubang tanpa henti.
+ */
+function stepOrder(a, target) {
+  if (!target || typeof target.y !== "number") return STEP_DYS;
+  const want = Math.round(target.y - a.y);
+  return STEP_DYS.slice().sort((p, q) =>
+    (Math.abs(p - want) - Math.abs(q - want)) || (Math.abs(p) - Math.abs(q)));
+}
+
+function tryStep(entity, nx, nz, a, target, wade) {
   const dim = entity.dimension;
   let wetY;
-  // Urutannya sengaja dari perubahan tinggi TERKECIL dulu: datar, lalu turun
-  // satu, lalu naik satu. Kalau naik didahulukan, penambang memanjat keluar
-  // dari tangganya sendiri tiap langkah dan tidak pernah sampai ke dasar.
-  // Naik dua blok tetap tersedia (tepi ladang yang baru ditimbun), tapi
-  // paling belakang.
-  for (const dy of [0, -1, 1, -2, 2, -3]) {
+  for (const dy of stepOrder(a, target)) {
     const feet = blockAt(dim, nx, a.y + dy, nz);
     const head = blockAt(dim, nx, a.y + dy + 1, nz);
     const floor = blockAt(dim, nx, a.y + dy - 1, nz);
@@ -687,7 +815,7 @@ function tryStep(entity, nx, nz, a, target) {
     }
     return landOn(entity, nx, a.y + dy, nz, a, target);
   }
-  if (wetY === undefined) return false;
+  if (wetY === undefined || !wade) return false;
   logDebug(TAG, `${entStr(entity)} tidak punya langkah kering ke (${nx.toFixed(1)}, ${nz.toFixed(1)}); menginjak air.`);
   return landOn(entity, nx, wetY, nz, a, target);
 }
@@ -699,7 +827,17 @@ function tryStep(entity, nx, nz, a, target) {
  * situ jaraknya paling satu blok dan langkah rakus memang jawaban yang benar.
  * Jangan panggil ini langsung dari mode kerja; pakai steer().
  */
-export function stepDirect(entity, target, step) {
+export function stepDirect(entity, target, step, opts = {}) {
+  // Melangkah ke air cuma boleh kalau pemanggilnya memang meminta (survival.js
+  // waktu badannya terbakar, dan waktu dia harus berenang keluar dari danau).
+  //
+  // Bawaannya kering, dan itu perbaikan yang penting: langkah lurus ini juga
+  // jaring pengaman ketika pathfinding tidak menemukan jalur sama sekali.
+  // Dibiarkan boleh basah, jaring pengaman itu berubah jadi jebakan — tujuan
+  // di seberang danau membuat companion berjalan lurus ke tengahnya, turun ke
+  // dasar, lalu tidak bisa memanjat keluar lagi. Dari luar: petani "hilang"
+  // dan seluruh ladangnya berhenti.
+  const wade = opts.avoidWater === false;
   unstick(entity);
   const a = entity.location;
   const dx = target.x - a.x;
@@ -715,12 +853,12 @@ export function stepDirect(entity, target, step) {
   const nx = a.x + (dx / flat) * move;
   const nz = a.z + (dz / flat) * move;
 
-  if (tryStep(entity, nx, nz, a, target)) return false;
+  if (tryStep(entity, nx, nz, a, target, wade)) return false;
   const zFirst = Math.abs(dz) > Math.abs(dx);
   const first = zFirst ? [a.x, nz] : [nx, a.z];
   const second = zFirst ? [nx, a.z] : [a.x, nz];
-  if (tryStep(entity, first[0], first[1], a, target)) return false;
-  if (tryStep(entity, second[0], second[1], a, target)) return false;
+  if (tryStep(entity, first[0], first[1], a, target, wade)) return false;
+  if (tryStep(entity, second[0], second[1], a, target, wade)) return false;
   return false;
 }
 

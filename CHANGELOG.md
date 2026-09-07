@@ -24,6 +24,104 @@ lama tidak berubah. Yang berubah lapisan paling bawahnya: cara companion
 peran baru masuk — masing-masing menutup satu lubang di rantai kerja yang
 selama ini berhenti di peti.
 
+Sesi keempat datang dari dua tangkapan layar dan satu kalimat: *"farmer masih
+belum bisa membuat ladang, meratakan sawah dengan menghancurkan tanah sekitar
+untuk menambal."* Di layar itu ada dua baris peringatan yang ternyata menjelaskan
+hampir semuanya:
+
+```
+vbs:kohane@(-2778.5, 64.0, -1317.5) tidak maju 60 tick menuju -2779, 69, -1318
+chunkSurfaceY (-174, -85): cuma 2/25 kolom terbaca; chunk belum dimuat
+```
+
+Kaki di y=64, tujuan di y=69 — sebuah **blok daun di udara** yang tidak punya
+lantai di mana pun. Dan sebuah chunk tepi danau yang dilaporkan "belum dimuat"
+padahal pemainnya berdiri di atasnya.
+
+**Menjangkau blok kerja (`scripts/work.js`, baru):**
+
+- Mode kerja tidak lagi menyuruh companion **berjalan ke dalam blok** yang mau
+  dikerjakan. Yang dicari sekarang tempat berdiri yang dari situ bloknya bisa
+  disentuh — jangkauannya diukur dari **mata**, 4,2 blok, seperti pemain. Diukur
+  dari kaki dengan ambang 2,8 blok, companion menolak menyentuh apa pun yang
+  lebih tinggi dari bahunya sendiri.
+- Kolom bloknya sendiri ikut dicoba: berdiri **di atas** gundukan yang mau
+  dipangkas adalah cara pemain meratakan bukit.
+- Petak berdiri yang **basah** dihukum berat. Air memenuhi semua syarat berpijak,
+  jadi tempat berdiri terdekat dari sebuah blok air adalah air itu sendiri — dan
+  petani yang cuma mau mengisi ember berjalan ke tengah danau lalu turun ke
+  dasarnya, yang tepiannya tiga blok di atas kepala.
+- Jawaban ketiga yang selama ini tidak ada: **BLOCKED**. Mode kerja yang
+  menerimanya tahu petak itu tidak bisa dikerjakan dari mana pun, dan melewatinya
+  — sementara, dua menit, bukan dicoret permanen.
+
+**Pathfinding: perjalanan yang boleh menyerah (`scripts/path.js`):**
+
+- Tiga tanda mengakhiri perjalanan yang mustahil: tidak ada jalur sama sekali,
+  jalur "paling mendekat" habis di tempat lain, atau **kursor jalur tidak
+  maju-maju walau kakinya bergerak**. Yang ketiga yang paling lama tidak terlihat
+  — petak terakhir jalur di atas teras tiga blok, companion bergoyang maju-mundur
+  setengah blok di kaki tebing, jam demi jam.
+- Jalur "paling mendekat" yang melesetnya lebih dari tiga blok tidak lagi
+  dikembalikan sama sekali: itu bukan jawaban, itu jebakan yang membuat companion
+  menyusuri kaki tebing berpuluh blok mencari tanjakan yang tidak ada.
+- **Langkah lurus cadangan sekarang kering.** Dibiarkan basah, jaring pengaman
+  itu berubah jadi jebakan: tujuan di seberang danau membuat companion berjalan
+  lurus ke tengahnya lalu tidak bisa keluar lagi.
+- Dari **dalam air** boleh naik lebih tinggi (berenang, bukan memanjat), dan
+  memanjat butuh ruang di atas kepala.
+- Langkah kaki mengikuti **ketinggian petak jalur**. Tanpa itu companion jatuh ke
+  lubang yang jalurnya justru susah payah dihindari, memanjat keluar, lalu jatuh
+  lagi di tempat yang sama — berputar di tepi lubang tanpa henti.
+- "Sudah sampai" bukan "mentok": companion yang berdiri tepat di petak tujuannya
+  tidak lagi dihitung tidak maju lalu ditandai mustahil oleh mode kerjanya
+  sendiri.
+
+**Mode bertani: ladang yang benar-benar jadi (`farming.js`, `farmplan.js`):**
+
+- **Pangkas dulu, baru timbun.** Memangkas menghasilkan tanah, menimbun
+  menghabiskannya. Dikerjakan dengan urutan acak, petani menemui petak cekung
+  pertama selagi petinya kosong, menyerah, dan ladangnya berakhir seperti
+  saringan berlubang padahal tanah timbunnya ada di gundukan sebelah.
+- **Petani menggali tanah timbunnya sendiri** di pinggir ladang waktu petinya
+  kosong — gundukan lebih dulu, dan **tidak pernah lebih rendah dari permukaan
+  ladang**. Menggali lubang untuk menambal lubang tidak pernah selesai, dan
+  lubang barunya jadi jebakan yang membuat petani jatuh tiap kali lewat.
+- **Pohon ditebang dari pangkalnya**, dan batang di atasnya **melorot** mengisi
+  lubangnya sendiri — jadi ayunan berikutnya lagi-lagi mengenai pangkal. Pohon
+  yang tumbuh di atas gundukan ikut melorot bersama tanah yang dipangkas. Versi
+  sebelumnya menyasar blok **paling tinggi** di kolomnya: di hutan birch itu daun
+  tujuh blok di atas kepala, dan tidak ada tempat berdiri di mana pun yang bisa
+  menyentuhnya.
+- Daun yang menggantung lebih dari lima blok di atas ladang **dibiarkan gugur
+  sendiri** — mengejarnya cuma menghabiskan waktu petani di bawah tempat berdiri
+  yang tidak ada.
+- Permukaan yang **tidak bisa dicangkul** (batu, pasir, kerikil) tidak lagi
+  dibiarkan belang: dibongkar satu blok, lalu ditimbun tanah.
+- **Jendela sapuan tugas sekarang bergeser.** Sapuan selalu dimulai dari petak
+  tempat petani berdiri, jadi selama dia diam, sembilan puluh enam kolom yang
+  sama itu juga yang diperiksa — seratus enam puluh kolom sisanya tidak pernah
+  dilihat sekali pun. Itulah sebabnya ladang berhenti dengan sudut-sudutnya masih
+  bergelombang sementara petaninya melaporkan "ladang sudah rapi".
+
+**Patok: tinggi chunk di tepi danau dan di bawah pohon (`claim.js`, `util.js`):**
+
+- Pembacaan permukaan menuntut **udara tepat di atas blok padat**, jadi seluruh
+  kolom yang tertutup air tidak pernah terbaca — di dasar danau yang ada di atas
+  tanah bukan udara, tapi air. Chunk tepi danau dilaporkan "belum dimuat" dan
+  patoknya menyimpan tinggi kaki pemain.
+- Batang dan daun tidak lagi dihitung sebagai permukaan tanah. Satu pohon birch
+  di tengah chunk membuat seluruh chunk terbaca setinggi pucuknya.
+- Pesan "chunk belum dimuat" sekarang benar-benar berarti itu; kolom yang terbaca
+  tapi memang tidak bertanah punya pesannya sendiri.
+
+**Simulasi (`tools/sim`):** empat adegan baru — jangkauan kerja, tinggi chunk di
+danau dan hutan, ladang di bukit berpohon dengan peti tanpa sebutir tanah pun,
+dan cekungan yang harus ditambal dari tanah sekitar. Ditambah satu pemeriksaan
+lama yang ternyata **tidak pernah menguji apa pun**: argumen `plotOf` tertukar,
+petaknya terbaca `NaN..NaN`, dan seluruh pemeriksaan kerataan lahan lolos tanpa
+melihat satu kolom pun.
+
 **Pathfinding sungguhan (`scripts/path.js`, baru):**
 
 - A* di atas voxel, dengan tumpukan biner, heuristik Chebyshev berbobot yang

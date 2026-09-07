@@ -226,6 +226,47 @@ export const TILLABLE = new Set([
 
 export const WATER = new Set(["minecraft:water", "minecraft:flowing_water"]);
 
+// Bahan timbun yang boleh dipakai meratakan cekungan ladang. Semuanya bisa
+// dicangkul jadi farmland, jadi petani tidak mentok cuma karena yang ada di
+// peti "rumput" dan bukan "tanah" — dua-duanya sama saja untuk ladang.
+export const FILL_BLOCK = "minecraft:dirt";
+
+export const FILLS = [
+  "minecraft:dirt", "minecraft:coarse_dirt", "minecraft:grass_block",
+  "minecraft:rooted_dirt", "minecraft:podzol",
+];
+
+/**
+ * Apa yang tersisa di tangan sesudah memangkas satu blok saat meratakan.
+ *
+ * Dipakai dua arah. Ke depan: hasil pangkasan masuk peti. Ke belakang: kolom
+ * yang hasil pangkasannya berupa TANAH adalah kolom yang boleh digali petani
+ * untuk menambal cekungan di ladangnya sendiri (farmplan.js » borrowSpot).
+ */
+export const SPOIL = {
+  "minecraft:grass_block": FILL_BLOCK,
+  "minecraft:dirt": FILL_BLOCK,
+  "minecraft:coarse_dirt": FILL_BLOCK,
+  "minecraft:rooted_dirt": FILL_BLOCK,
+  "minecraft:podzol": FILL_BLOCK,
+  "minecraft:mycelium": FILL_BLOCK,
+  "minecraft:moss_block": FILL_BLOCK,
+  "minecraft:dirt_with_roots": FILL_BLOCK,
+  "minecraft:farmland": FILL_BLOCK,
+  "minecraft:sand": "minecraft:sand",
+  "minecraft:gravel": "minecraft:gravel",
+  "minecraft:stone": "minecraft:cobblestone",
+  "minecraft:cobblestone": "minecraft:cobblestone",
+  "minecraft:andesite": "minecraft:andesite",
+  "minecraft:diorite": "minecraft:diorite",
+  "minecraft:granite": "minecraft:granite",
+  "minecraft:deepslate": "minecraft:cobbled_deepslate",
+};
+
+// Kolom yang boleh digali untuk bahan timbun: yang hasilnya benar-benar tanah.
+export const FILL_SOURCE = new Set(
+  Object.keys(SPOIL).filter((id) => SPOIL[id] === FILL_BLOCK));
+
 export const ORES = {
   "minecraft:coal_ore": "minecraft:coal",
   "minecraft:deepslate_coal_ore": "minecraft:coal",
@@ -921,21 +962,52 @@ export const FARM = {
   channelOffset: 3,     // letak paritnya di dalam pola itu
   sourceEvery: 6,       // sumber air tiap sekian blok sepanjang parit
   clearHeight: 12,      // setinggi apa di atas ladang yang harus dibersihkan
+  canopyMax: 5,         // daun/batang lebih tinggi dari ini dibiarkan gugur sendiri
   scanPerTick: 96,      // kolom yang diperiksa mencari tugas berikutnya
   riverRadius: 20,      // sejauh apa mencari air untuk mengisi ember
   plotStart: 7,         // sisi petak inti pertama
   plotGrow: 4,          // pelebaran tiap kali petak sebelumnya tuntas
-  reach: 2.8,           // sedekat ini satu petak bisa dikerjakan
+  // Jangkauan tangan petani TIDAK lagi diatur di sini: satu angka untuk semua
+  // mode kerja, diukur dari mata seperti pemain, ada di WORK.reach di bawah.
   giveUpAfter: 3,       // gagal sekian kali -> petak itu ditandai mustahil
   harvestTicks: 30,     // lama satu ayunan panen
   tillPerTick: 3,       // petak yang boleh dicangkul dalam satu denyut
   plantPerTick: 3,      // petak yang boleh ditanami dalam satu denyut
+  borrowRadius: 24,     // sejauh apa mencari tanah galian untuk menambal
+  borrowDepth: 2,       // sedalam apa boleh menggali di bawah permukaan ladang
+  sinkPerBreak: 16,     // batang pohon yang melorot tiap satu batang ditebang
+  asideFor: 2400,       // lama satu petak yang belum terjangkau dilewati (~2 menit)
 };
 
 export const PLOT = {
   start: 7,      // sisi petak inti pertama
   grow: 4,       // pelebaran tiap kali petak sebelumnya tuntas
   clearHeight: 12,   // setinggi apa di atas ladang yang harus dibersihkan
+};
+
+/**
+ * Menjangkau blok kerja (work.js).
+ *
+ * Angka `reach` diukur dari MATA ke tengah blok, persis seperti jangkauan
+ * pemain di Minecraft. Sebelum ada berkas ini, tiap mode kerja memakai jarak
+ * dari KAKI ke titik blok, dan itu dua kesalahan sekaligus: blok setinggi dada
+ * terhitung jauh, dan — jauh lebih parah — mode kerja menyuruh companion
+ * BERJALAN KE DALAM blok yang mau dibongkar. Blok di ketinggian lima meter
+ * tidak punya lantai; companion berjalan ke bawahnya, mendorong udara, dan
+ * berdiri di situ selamanya sambil melaporkan dirinya "sedang berjalan".
+ */
+export const WORK = {
+  reach: 4.2,          // jarak mata ke tengah blok yang masih bisa disentuh
+  standRadius: 3,      // sejauh apa mencari tempat berdiri di sekitar blok
+  standLevels: [0, 1, -1, 2, -2, 3, -3, 4, -4],   // beda tinggi yang dicoba
+  keepSpot: 200,       // umur tempat berdiri yang sudah dipilih (tick)
+  stepReach: 0.75,     // sedekat ini tempat berdirinya dianggap tercapai
+  // Sisa jangkauan yang disisihkan waktu MEMILIH tempat berdiri. Kaki
+  // companion berhenti di mana saja di dalam petak, bukan tepat di tengahnya,
+  // jadi tempat berdiri yang cuma pas-pasan terjangkau dari titik tengah bisa
+  // saja tidak terjangkau dari tempat kakinya benar-benar berhenti — dan
+  // companion berdiri di petak yang benar sambil menyatakan petaknya mustahil.
+  slack: 1,
 };
 
 /**
@@ -958,6 +1030,11 @@ export const PATH = {
   hazardCost: 40,       // lava, api, kaktus: praktis terlarang, bukan mustahil
   climbCost: 2.5,       // memanjat lebih dari satu blok
   dropCost: 1.2,        // turun lebih dari satu blok (naik lagi itu mahal)
+  goalRadius: 3,        // sejauh apa mencari petak berpijak di sekitar tujuan
+  giveUpAfter: 3,       // jalur habis / mentok sekian kali -> tujuan mustahil
+  retryBlocked: 200,    // jeda sebelum tujuan mustahil dicoba sekali lagi
+  partialMax: 3,        // "paling mendekat" masih berguna kalau melesetnya segini
+  cursorStall: 40,      // kursor jalur tidak maju selama ini -> jalurnya habis
   hazards: new Set([
     "minecraft:lava", "minecraft:flowing_lava", "minecraft:fire",
     "minecraft:soul_fire", "minecraft:magma", "minecraft:cactus",

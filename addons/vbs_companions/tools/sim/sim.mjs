@@ -26,7 +26,8 @@ import { hasHelper, gatherOwn } from "./scripts/selfhelp.js";
 import { findMaterial, forget as forgetGather } from "./scripts/gather.js";
 import { pickSmelt } from "./scripts/smelting.js";
 import {
-  chunkMap, ensureClaimHeight, nearestClaimHint, toggleClaimAt, claimsNear,
+  chunkMap, chunkSurfaceY, ensureClaimHeight, nearestClaimHint, toggleClaimAt,
+  claimsNear,
 } from "./scripts/claim.js";
 import { askOwner, pendingAsks, answerAsk, answerLatestYesNo } from "./scripts/ask.js";
 import { openBook } from "./scripts/bookui.js";
@@ -42,7 +43,8 @@ import { tickRancher, penBounds, insidePen, census } from "./scripts/rancher.js"
 import { cookStep, nextMeal, nextRoast, mealsReady } from "./scripts/kitchen.js";
 import { assignHome, nextRoad, roadPlan, darkSpot } from "./scripts/village.js";
 import { readVillageHomes } from "./scripts/state.js";
-import { findPath } from "./scripts/path.js";
+import { findPath, pathBlocked } from "./scripts/path.js";
+import { BLOCKED, READY, canTouch, reachBlock, standNear } from "./scripts/work.js";
 
 LOG_CONFIG.minLevel = LogLevel.WARN;   // simulasi: cuma tampilkan yang penting
 
@@ -152,7 +154,8 @@ console.log("\n== Uji petani: ratakan -> parit -> cangkul -> tanam ==");
   // belum gilirannya. Yang diperiksa di sini petak yang sedang dikerjakan.
   const FURNITURE = new Set(["minecraft:chest", "minecraft:crafting_table",
     "minecraft:standing_sign", "minecraft:barrel", "minecraft:torch"]);
-  const plot = plotOf(readState(farmer), workArea(farmer, readState(farmer), "P1"));
+  const planNow = readState(farmer).plan?.farm;
+  const plot = plotOf(workArea(farmer, readState(farmer), "P1"), planNow?.plot ?? 7);
   let uneven = 0;
   const samples = [];
   for (let x = plot.x0; x <= plot.x1; x++) {
@@ -1786,6 +1789,228 @@ console.log("\n== Uji kampung: rumah BENAR-BENAR ditugaskan, jalan, obor ==");
         `sisa ${allStock(W)["minecraft:torch"] ?? 0}`);
 
   __setPlayers([]);
+  __setDimension(undefined);
+}
+
+
+/* ---------------- Uji: menjangkau blok kerja, bukan berjalan ke dalamnya --- */
+console.log("\n== Uji jangkauan kerja: blok di udara, blok di atas kepala ==");
+{
+  const W = makeWorld({ groundY: 64 });
+  __setDimension(W.dimension);
+  const hand = makeCompanion(W.dimension, "vbs:an", { x: 0, y: 65, z: 0 });
+
+  // Blok setinggi dada di sebelah: harus terjangkau sambil berdiri di tanah.
+  W.put(3, 66, 0, "minecraft:dirt");
+  const spot = standNear(W.dimension, { x: 3, y: 66, z: 0 }, { from: hand.location });
+  check(Boolean(spot), "ada tempat berdiri untuk blok setinggi dada",
+        JSON.stringify(spot));
+  check(!spot || spot.y === 65, "tempat berdirinya di TANAH, bukan melayang",
+        `y=${spot?.y}`);
+
+  // Daun tujuh blok di atas ladang: TIDAK ada tempat berdiri, dan itu harus
+  // dijawab BLOCKED dalam beberapa denyut — bukan dikejar selamanya. Inilah
+  // kasus yang dulu berakhir sebagai "tidak maju 60 tick" di layar pemain.
+  W.put(6, 72, 0, "minecraft:birch_leaves");
+  const high = { x: 6, y: 72, z: 0 };
+  check(!standNear(W.dimension, high, { from: hand.location }),
+        "blok tujuh blok di udara memang tidak punya tempat berdiri");
+  let verdict = "";
+  let ticks = 0;
+  for (; ticks < 40; ticks++) {
+    verdict = reachBlock(hand, high);
+    if (verdict === BLOCKED) break;
+    advance(4);
+  }
+  check(verdict === BLOCKED, "blok yang mustahil dijawab BLOCKED, bukan digantung",
+        `${verdict} sesudah ${ticks} denyut`);
+  check(ticks < 20, "dan jawabannya datang cepat", `${ticks} denyut`);
+
+  // Berdiri di atas gundukan yang mau dipangkas: itu cara pemain meratakan
+  // bukit, dan tanpa ini kolom yang lebih tinggi dari bahu tidak pernah bisa
+  // dipangkas sama sekali.
+  for (let y = 65; y <= 67; y++) W.put(9, y, 0, "minecraft:dirt");
+  const mound = standNear(W.dimension, { x: 9, y: 67, z: 0 }, { from: hand.location });
+  check(Boolean(mound), "gundukan tetap punya tempat berdiri", JSON.stringify(mound));
+  check(!mound || canTouch({ x: mound.x + 0.5, y: mound.y, z: mound.z + 0.5 },
+                           { x: 9, y: 67, z: 0 }),
+        "dan dari situ puncaknya memang terjangkau");
+  __setDimension(undefined);
+}
+
+/* ---------------- Uji: tinggi tanah di kolom berair dan berpohon ---------- */
+console.log("\n== Uji tinggi chunk: danau dan tajuk pohon bukan permukaan ==");
+{
+  const W = makeWorld({ groundY: 64 });
+  __setDimension(W.dimension);
+  // Setengah chunk (0,0) jadi danau sedalam tiga blok...
+  for (let x = 0; x < 8; x++) {
+    for (let z = 0; z < 16; z++) {
+      for (let y = 62; y <= 64; y++) W.put(x, y, z, "minecraft:water");
+      W.put(x, 61, z, "minecraft:dirt");
+    }
+  }
+  // ...dan separuhnya lagi hutan birch setinggi tujuh.
+  for (let x = 9; x < 16; x += 2) {
+    for (let z = 1; z < 16; z += 3) {
+      for (let y = 65; y < 72; y++) W.put(x, y, z, "minecraft:birch_log");
+      for (let dx = -1; dx <= 1; dx++) {
+        for (let dz = -1; dz <= 1; dz++) W.put(x + dx, 72, z + dz, "minecraft:birch_leaves");
+      }
+    }
+  }
+  const y = chunkSurfaceY(W.dimension, 0, 0, 65);
+  check(y === 64 || y === 61, "chunk tepi danau tetap terbaca tingginya", String(y));
+  check(typeof y === "number", "dan TIDAK dilaporkan 'chunk belum dimuat'");
+  check(y < 65, "tajuk pohon tidak dihitung sebagai permukaan tanah", `y=${y}`);
+  __setDimension(undefined);
+}
+
+/* ---------------- Uji petani di hutan berbukit ---------------------------- */
+console.log("\n== Uji petani: bukit berpohon, peti tanpa sebutir tanah pun ==");
+{
+  const W = makeWorld({ groundY: 64, jagged: false });
+  __setDimension(W.dimension);
+
+  // Bukit berteras di separuh timur, dengan lereng bertangga.
+  for (let x = 8; x < 16; x++) {
+    const rise = Math.min(3, x - 7);
+    for (let z = 0; z < 16; z++) {
+      for (let y = 65; y <= 64 + rise; y++) {
+        W.put(x, y, z, y === 64 + rise ? "minecraft:grass_block" : "minecraft:dirt");
+      }
+    }
+  }
+  // Enam pohon birch, sebagian tumbuh DI ATAS bukit.
+  for (const [tx, tz] of [[2, 8], [5, 12], [6, 3], [10, 9], [13, 5], [3, 14]]) {
+    const base = tx >= 10 ? 68 : (tx >= 9 ? 67 : (tx >= 8 ? 66 : 65));
+    for (let y = base; y < base + 7; y++) W.put(tx, y, tz, "minecraft:birch_log");
+    for (let dx = -2; dx <= 2; dx++) {
+      for (let dz = -2; dz <= 2; dz++) {
+        for (let dy = 4; dy <= 7; dy++) {
+          if (dx === 0 && dz === 0 && dy < 7) continue;
+          W.put(tx + dx, base + dy, tz + dz, "minecraft:birch_leaves");
+        }
+      }
+    }
+  }
+  // Danau kecil di barat: sumber air untuk ember.
+  for (let z = -4; z < 20; z++) {
+    for (let x = -6; x < -3; x++) {
+      for (let y = 62; y <= 64; y++) W.put(x, y, z, "minecraft:water");
+    }
+  }
+
+  const farmer = makeCompanion(W.dimension, "vbs:kohane", { x: 8, y: 68, z: 8 });
+  farmer.setDynamicProperty("vbs:owner", "PH");
+  farmer.setDynamicProperty("vbs:mode", "farm");
+  setClaim("minecraft:overworld", 0, 0,
+           { by: "PH", worked: false, kind: "farm", y: 64, v: 2 });
+  W.put(-1, 65, -1, "minecraft:chest");
+  patchState(farmer, { station: { x: -1, y: 65, z: -1 }, seedSelf: "tidak" });
+  const chest = W.dimension.getBlock({ x: -1, y: 65, z: -1 })
+    .getComponent("minecraft:inventory").container;
+  // SENGAJA tanpa sebutir tanah timbun pun. Yang ada cuma alat dan bibit.
+  chest.addItem({ typeId: "minecraft:oak_planks", amount: 64 });
+  chest.addItem({ typeId: "minecraft:stick", amount: 16 });
+  chest.addItem({ typeId: "minecraft:iron_ingot", amount: 3 });
+  for (let k = 0; k < 4; k++) chest.addItem({ typeId: "minecraft:wheat_seeds", amount: 64 });
+  setGear(farmer, "mainhand", "minecraft:iron_hoe");
+
+  const seen = new Set();
+  for (let i = 0; i < 4500; i++) {
+    const state = readState(farmer);
+    seen.add(tickFarm(farmer, state, undefined));
+    writeState(farmer, state);
+    advance(10);
+  }
+
+  let farmland = 0;
+  let planted = 0;
+  let standing = 0;
+  for (let x = 0; x < 16; x++) {
+    for (let z = 0; z < 16; z++) {
+      if (W.dimension.getBlock({ x, y: 64, z }).typeId === "minecraft:farmland") farmland++;
+      if (W.dimension.getBlock({ x, y: 65, z }).typeId.includes("wheat")) planted++;
+      // Pohon yang masih berdiri DI DALAM jangkauan ladang: batang setinggi
+      // kaki sampai kepala. Yang menggantung tinggi memang dibiarkan gugur.
+      for (let y = 65; y <= 69; y++) {
+        if (W.dimension.getBlock({ x, y, z }).typeId.includes("_log")) standing++;
+      }
+    }
+  }
+  check(farmland > 60, "ladang benar-benar jadi walau tanahnya berbukit dan berpohon",
+        `${farmland} farmland`);
+  check(planted > 60, "dan benar-benar ditanami", `${planted} tanaman`);
+  check(standing === 0, "tidak ada batang pohon tersisa berdiri di atas ladang",
+        `${standing} batang`);
+  check((allStock(W)["minecraft:dirt"] ?? 0) > 0,
+        "tanah timbunnya digali sendiri dari sekitar ladang, bukan diminta",
+        `${allStock(W)["minecraft:dirt"] ?? 0} tanah di peti`);
+  check(![...seen].some((line) => /menunggu.*tanah timbun/.test(String(line))),
+        "dan petani tidak pernah berhenti menunggu kiriman tanah");
+  __setDimension(undefined);
+}
+
+/* ---------------- Uji: cekungan ditambal dari tanah sekitar --------------- */
+console.log("\n== Uji tanah timbun: peti kosong, cekungan tetap tertambal ==");
+{
+  const W = makeWorld({ groundY: 64, jagged: false });
+  __setDimension(W.dimension);
+  // Cekungan 6x6 sedalam dua blok tepat di tengah petak inti.
+  for (let x = 4; x <= 9; x++) {
+    for (let z = 4; z <= 9; z++) {
+      W.put(x, 64, z, "minecraft:air");
+      W.put(x, 63, z, "minecraft:air");
+    }
+  }
+  for (let z = -4; z < 20; z++) {
+    for (let x = -6; x < -3; x++) W.put(x, 64, z, "minecraft:water");
+  }
+
+  const farmer = makeCompanion(W.dimension, "vbs:an", { x: 2, y: 65, z: 2 });
+  farmer.setDynamicProperty("vbs:owner", "PD");
+  farmer.setDynamicProperty("vbs:mode", "farm");
+  setClaim("minecraft:overworld", 0, 0,
+           { by: "PD", worked: false, kind: "farm", y: 64, v: 2 });
+  W.put(-1, 65, -1, "minecraft:chest");
+  patchState(farmer, { station: { x: -1, y: 65, z: -1 }, seedSelf: "tidak" });
+  const chest = W.dimension.getBlock({ x: -1, y: 65, z: -1 })
+    .getComponent("minecraft:inventory").container;
+  chest.addItem({ typeId: "minecraft:oak_planks", amount: 64 });
+  chest.addItem({ typeId: "minecraft:stick", amount: 16 });
+  chest.addItem({ typeId: "minecraft:iron_ingot", amount: 3 });
+  for (let k = 0; k < 4; k++) chest.addItem({ typeId: "minecraft:wheat_seeds", amount: 64 });
+  setGear(farmer, "mainhand", "minecraft:iron_hoe");
+
+  for (let i = 0; i < 4000; i++) {
+    const state = readState(farmer);
+    tickFarm(farmer, state, undefined);
+    writeState(farmer, state);
+    advance(10);
+  }
+
+  let open = 0;
+  let deeper = 0;
+  for (let x = 4; x <= 9; x++) {
+    for (let z = 4; z <= 9; z++) {
+      if (W.dimension.getBlock({ x, y: 64, z }).isAir) open++;
+    }
+  }
+  // Menggali di BAWAH permukaan ladang tidak pernah boleh: lubang baru untuk
+  // menambal lubang lama adalah pekerjaan yang tidak pernah selesai — dan
+  // lubangnya sendiri berubah jadi jebakan yang membuat petani jatuh ke
+  // dalamnya tiap kali lewat. Yang dihitung cuma lubang DI LUAR cekungan asli.
+  for (let x = 0; x < 16; x++) {
+    for (let z = 0; z < 16; z++) {
+      if (x >= 4 && x <= 9 && z >= 4 && z <= 9) continue;   // cekungan bawaan uji
+      if (W.dimension.getBlock({ x, y: 63, z }).isAir) deeper++;
+    }
+  }
+  check(open === 0, "cekungan benar-benar tertambal walau petinya kosong",
+        `${open} kolom masih berlubang`);
+  check(deeper === 0, "dan tidak ada lubang baru yang digali di bawah permukaan",
+        `${deeper} kolom terlalu dalam`);
   __setDimension(undefined);
 }
 

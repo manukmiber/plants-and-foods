@@ -32,7 +32,9 @@
 
 import { system } from "@minecraft/server";
 
-import { CROPS, FARM, POSE, SEEDS, WATER } from "./config.js";
+import {
+  CROPS, FARM, FILL_BLOCK, FILL_SOURCE, FILLS, POSE, SEEDS, SPOIL, WATER,
+} from "./config.js";
 import { report, sayFrom } from "./chat.js";
 import { craftItemStep, craftStep, labelOf } from "./crafting.js";
 import { decorateStep } from "./decorate.js";
@@ -42,8 +44,8 @@ import { hold } from "./hold.js";
 import { isGreeting } from "./look.js";
 import { claimAt, claimsNear, ensureClaimHeight, markWorked } from "./claim.js";
 import {
-  CELL, JOB, drawField, fieldBounds, hydrated, nextJob, plotOf, roleAt,
-  seedForColumn,
+  CELL, JOB, borrowSpot, drawField, fieldBounds, hydrated, nextJob, plotOf,
+  roleAt, seedForColumn,
 } from "./farmplan.js";
 import { requestItem, requestMaterial, requestTool } from "./requests.js";
 import { askOwner } from "./ask.js";
@@ -52,42 +54,15 @@ import { patchState, writeState } from "./state.js";
 import { ensureStation, refreshSign, stationsIn, stationTravel } from "./station.js";
 import { workBlocksIn } from "./workshop.js";
 import {
-  alive, blockAt, countIn, dist2, face, getGear, getOwnerId, info, isAir,
-  makeItem, particle, putIn, randomBetween, sound, steer, takeFrom,
+  alive, blockAt, countIn, getGear, getOwnerId, info, isAir, isCanopy, isLogId,
+  makeItem, particle, putIn, randomBetween, sound, takeFrom,
 } from "./util.js";
+import { BLOCKED, READY, reachBlock } from "./work.js";
 import { entStr, logDebug, logError, logInfo, logWarn, posStr } from "./logger.js";
 
 const TAG = "FARMING";
 const BUCKET = "minecraft:bucket";
 const WATER_BUCKET = "minecraft:water_bucket";
-
-// Bahan timbun yang boleh dipakai meratakan cekungan. Semuanya bisa dicangkul
-// jadi farmland, jadi petani tidak mentok cuma karena yang ada di peti
-// "rumput" dan bukan "tanah" — dua-duanya sama saja untuk ladang.
-const FILLS = [
-  "minecraft:dirt", "minecraft:coarse_dirt", "minecraft:grass_block",
-  "minecraft:rooted_dirt", "minecraft:podzol",
-];
-const FILL_BLOCK = "minecraft:dirt";
-
-// Apa yang tersisa di tangan sesudah memangkas satu blok saat meratakan.
-const SPOIL = {
-  "minecraft:grass_block": FILL_BLOCK,
-  "minecraft:dirt": FILL_BLOCK,
-  "minecraft:coarse_dirt": FILL_BLOCK,
-  "minecraft:rooted_dirt": FILL_BLOCK,
-  "minecraft:podzol": FILL_BLOCK,
-  "minecraft:mycelium": FILL_BLOCK,
-  "minecraft:moss_block": FILL_BLOCK,
-  "minecraft:sand": "minecraft:sand",
-  "minecraft:gravel": "minecraft:gravel",
-  "minecraft:stone": "minecraft:cobblestone",
-  "minecraft:cobblestone": "minecraft:cobblestone",
-  "minecraft:andesite": "minecraft:andesite",
-  "minecraft:diorite": "minecraft:diorite",
-  "minecraft:granite": "minecraft:granite",
-  "minecraft:deepslate": "minecraft:cobbled_deepslate",
-};
 
 // Sejauh apa petani mau berjalan untuk menggarap patoknya.
 const FIELD_RANGE = 96;
@@ -166,6 +141,7 @@ function farmPlan(state) {
       job: null,              // tugas yang sedang dipegang
       tries: 0,               // berapa kali tugas itu gagal
       skip: [],               // petak yang sudah dinyatakan mustahil
+      scan: 0,                // geseran jendela sapuan mencari tugas berikutnya
       drawnAt: 0,             // kapan peta ladang terakhir digambar
       done: false,            // petak ini sudah tuntas
     };
@@ -182,6 +158,7 @@ function farmPlan(state) {
 const maps = new Map();
 
 export function forget(id) {
+  asides.delete(id);
   if (maps.delete(id)) logDebug(TAG, `forget peta ladang untuk ID: ${id}`);
 }
 
@@ -199,11 +176,55 @@ function mapFor(entity, plan, area) {
   return map;
 }
 
-function skipSet(plan) {
-  return new Set(plan.skip);
+/**
+ * Petak yang untuk sekarang dilewati: tidak terjangkau, tapi belum tentu
+ * mustahil. Disimpan di memori beserta waktunya, bukan di rencana yang
+ * tersimpan — ini keadaan sesaat, dan sesudah semenit petaknya dicoba lagi.
+ */
+const asides = new Map();   // entityId -> Map("x,z" -> tick)
+
+function asideKeys(entity) {
+  const mine = asides.get(entity.id);
+  if (!mine) return undefined;
+  const now = system.currentTick;
+  for (const [key, at] of mine) {
+    if (now - at > FARM.asideFor) mine.delete(key);
+  }
+  if (!mine.size) {
+    asides.delete(entity.id);
+    return undefined;
+  }
+  return mine;
+}
+
+function skipSet(entity, plan) {
+  const out = new Set(plan.skip);
+  const mine = asideKeys(entity);
+  if (mine) for (const key of mine.keys()) out.add(key);
+  return out;
+}
+
+/**
+ * Petak yang sudah dinyatakan mustahil ikut dicoret DI PETA yang tersimpan.
+ *
+ * Daftar `plan.skip` dibatasi seratusan petak — dia tersimpan di dynamic
+ * property, dan daftar yang tumbuh tanpa batas akan menggerus jatah tulisannya.
+ * Batas itu berarti petak yang dicoret paling lama akan dilupakan lalu dicoba
+ * lagi. Peta di memori tidak punya batas seperti itu, jadi selama gambarnya
+ * belum digambar ulang, petak yang mustahil benar-benar tidak disentuh lagi.
+ */
+function markBlocked(entity, x, z) {
+  const cached = maps.get(entity.id);
+  const map = cached?.map;
+  if (!map) return;
+  const ix = x - map.x0;
+  const iz = z - map.z0;
+  if (ix < 0 || iz < 0 || ix >= map.w || iz >= map.h) return;
+  map.cells[iz * map.w + ix] = CELL.blocked;
 }
 
 function giveUp(entity, plan, job, why) {
+  markBlocked(entity, job.x, job.z);
   const key = `${job.x},${job.z}`;
   if (!plan.skip.includes(key)) plan.skip.push(key);
   // Daftar mustahil dibatasi: ladang yang seluruhnya mustahil harus berakhir
@@ -219,20 +240,92 @@ function giveUp(entity, plan, job, why) {
  * Mengerjakan satu tugas
  * ------------------------------------------------------------------ */
 
-function reach(entity, x, y, z) {
-  const target = { x: x + 0.5, y, z: z + 0.5 };
-  if (dist2(entity.location, target) > FARM.reach ** 2) {
-    steer(entity, target);
-    return false;
+/**
+ * Berdiri di tempat yang dari situ petak ini benar-benar bisa dikerjakan.
+ *
+ * Balikannya salah satu dari tiga, dan yang ketiga sama sekali tidak ada
+ * sebelum ini:
+ *
+ *   READY    sudah terjangkau, silakan mengayun
+ *   WALKING  sedang berjalan ke tempat berdirinya
+ *   BLOCKED  tidak ada tempat berdiri di mana pun, atau memang mentok
+ *
+ * Versi lama cuma punya dua: "sudah dekat" dan "sedang berjalan". Tidak ada
+ * jalan keluar dari petak yang mustahil dijangkau, dan karena "sedang berjalan"
+ * bukan kegagalan, hitungan gagal (plan.tries) tidak pernah naik — petani
+ * berjalan ke bawah pucuk pohon dan berdiri di situ sampai dunia ditutup.
+ */
+function workAt(entity, at) {
+  return reachBlock(entity, at);
+}
+
+/**
+ * Petak yang sekarang tidak terjangkau DILEWATI SEMENTARA, bukan dicoret.
+ *
+ * Bedanya dengan giveUp() penting, dan salah memilihnya merusak ladang. "Tidak
+ * terjangkau" hampir selalu keadaan sesaat: petani sedang berdiri di bawah
+ * teras setinggi tiga blok yang belum dipangkasnya sendiri, atau di seberang
+ * parit yang belum ada jembatannya. Dicoret permanen, seluruh sisi ladang yang
+ * kebetulan sedang di seberang tebing hilang untuk selamanya — dan yang
+ * terlihat pemain adalah ladang yang berhenti setengah jadi tanpa alasan.
+ *
+ * Coretannya cuma di peta yang tersimpan di memori, dan peta itu digambar ulang
+ * berkala. Jadi begitu terasnya benar-benar terpangkas, petak di atasnya masuk
+ * antrean lagi dengan sendirinya.
+ */
+function stepAside(entity, plan, job, why) {
+  let mine = asides.get(entity.id);
+  if (!mine) {
+    mine = new Map();
+    asides.set(entity.id, mine);
   }
-  face(entity, target);
-  return true;
+  mine.set(`${job.x},${job.z}`, system.currentTick);
+  plan.job = null;
+  plan.tries = 0;
+  logDebug(TAG, `${entStr(entity)} melewati (${job.x}, ${job.z}) untuk sekarang: ${why}.`);
+  return `petak (${job.x}, ${job.z}) belum terjangkau, mengerjakan yang lain`;
+}
+
+/**
+ * Batang pohon di atas lubang MELOROT satu blok.
+ *
+ * Pohon ditebang dari pangkalnya, karena cuma pangkalnya yang bisa dijangkau
+ * dari tanah. Tanpa yang satu ini, sesudah tiga batang pertama sisanya
+ * menggantung di ketinggian yang tidak terjangkau siapa pun, dan petani
+ * menandai kolomnya mustahil — ladang berlubang tepat di bawah setiap pohon
+ * yang pernah tumbuh di situ.
+ *
+ * Sekarang batangnya turun mengisi lubangnya sendiri, jadi ayunan berikutnya
+ * lagi-lagi mengenai pangkal. Satu ayunan tetap satu batang: tidak ada pohon
+ * yang lenyap sekaligus.
+ */
+function sinkColumn(dimension, x, y, z) {
+  let moved = 0;
+  for (let dy = 0; dy < FARM.sinkPerBreak; dy++) {
+    const hole = blockAt(dimension, x, y + dy, z);
+    const above = blockAt(dimension, x, y + dy + 1, z);
+    if (!hole || !isAir(hole) || !isCanopy(above)) break;
+    try {
+      hole.setType(above.typeId);
+      above.setType("minecraft:air");
+      moved++;
+    } catch (e) {
+      logDebug(TAG, `Batang di (${x}, ${y + dy}, ${z}) gagal melorot`, e);
+      break;
+    }
+  }
+  if (moved) logDebug(TAG, `Pohon di (${x}, ${z}) melorot ${moved} blok.`);
+  return moved;
 }
 
 /** Meratakan: pangkas yang menonjol, timbun yang cekung. */
-function doLevel(entity, plan, job, container, tool) {
+function doLevel(entity, plan, job, map, area, container, tool) {
   const dimension = entity.dimension;
-  if (!reach(entity, job.x, job.y, job.z)) return "berjalan ke petak yang belum rata";
+  const step = workAt(entity, job);
+  if (step === BLOCKED) return stepAside(entity, plan, job, "tidak ada tempat berdiri");
+  if (step !== READY) {
+    return job.fill ? "berjalan ke petak yang cekung" : "berjalan ke petak yang belum rata";
+  }
 
   if (job.fill) {
     const ground = blockAt(dimension, job.x, job.y, job.z);
@@ -242,11 +335,17 @@ function doLevel(entity, plan, job, container, tool) {
     }
     const fill = FILLS.find((id) => countIn(container, id) > 0);
     if (!fill) {
-      // Bahan timbunnya tidak ada. Petak ini DILEWATI, bukan ditunggui:
-      // menunggu kiriman yang mungkin tidak pernah datang adalah persis
-      // cara ladang lama mengunci dirinya sendiri.
-      giveUp(entity, plan, job, "tidak ada bahan timbun");
-      return "petak cekung dilewati, bahan timbun habis";
+      // Petinya kehabisan tanah timbun. Petani TIDAK menunggu kiriman dan tidak
+      // langsung menyerah: dia menggali tanahnya sendiri di pinggir ladang —
+      // gundukan lebih dulu, karena gundukan itu memang harus dipangkas juga.
+      const quarry = borrowSpot(dimension, area, plotRect(map), entity.location, map.y);
+      if (!quarry) {
+        giveUp(entity, plan, job, "tidak ada tanah timbun, dan tidak ada yang bisa digali");
+        return "petak cekung dilewati, tidak ada tanah yang bisa digali";
+      }
+      plan.job = quarry;
+      plan.tries = 0;
+      return `menggali tanah timbun di (${quarry.x}, ${quarry.z})`;
     }
     if (takeFrom(container, fill, 1) !== 1) {
       giveUp(entity, plan, job, "bahan timbun hilang dari peti");
@@ -286,20 +385,62 @@ function doLevel(entity, plan, job, container, tool) {
     return `meratakan lahan (${Math.round(swing.progress * 100)}%)`;
   }
   if (swing.status === "broke") {
-    const keep = SPOIL[swing.id] ?? (swing.id?.endsWith("_log") ? swing.id : undefined);
+    const keep = SPOIL[swing.id] ?? (isLogId(swing.id) ? swing.id : undefined);
     if (keep) putIn(container, makeItem(keep, 1));
+    // Pohon melorot mengisi lubang apa pun yang baru dibuat di bawahnya —
+    // termasuk lubang bekas gundukan tanah yang dipangkas. Itulah yang
+    // membuat pohon di atas bukit akhirnya bisa ditebang: dia turun bersama
+    // bukitnya sampai pangkalnya sejajar permukaan ladang.
+    sinkColumn(dimension, job.x, job.y, job.z);
     plan.job = null;
     plan.tries = 0;
-    return "meratakan lahan";
+    if (job.swap) return "mengganti permukaan yang tidak bisa dicangkul";
+    return job.canopy ? "menebang pohon di atas ladang" : "meratakan lahan";
   }
   plan.tries++;
   return undefined;
 }
 
+/** Menggali tanah timbun di pinggir ladang, karena petinya memang kosong. */
+function doBorrow(entity, plan, job, container, tool) {
+  const dimension = entity.dimension;
+  const step = workAt(entity, job);
+  if (step === BLOCKED) {
+    plan.job = null;
+    return "tanah galian itu tidak terjangkau, mencari yang lain";
+  }
+  if (step !== READY) return "berjalan ke tanah galian";
+
+  const block = blockAt(dimension, job.x, job.y, job.z);
+  if (!block || isAir(block) || !FILL_SOURCE.has(block.typeId)) {
+    plan.job = null;
+    return undefined;
+  }
+  const swing = chipAway(entity, block, tool, { pose: POSE.build, reason: "dig" });
+  if (swing.status === "breaking") {
+    return `menggali tanah timbun (${Math.round(swing.progress * 100)}%)`;
+  }
+  if (swing.status === "broke") {
+    putIn(container, makeItem(SPOIL[swing.id] ?? FILL_BLOCK, 1));
+    plan.job = null;
+    plan.tries = 0;
+    return "menggali tanah timbun untuk menambal ladang";
+  }
+  plan.tries++;
+  return undefined;
+}
+
+/** Petak yang sedang digarap, sebagai kotak — dipakai memilih tanah galian. */
+function plotRect(map) {
+  return { x0: map.x0, x1: map.x0 + map.w - 1, z0: map.z0, z1: map.z0 + map.h - 1 };
+}
+
 /** Menggali lubang parit. */
 function doDig(entity, plan, job, container, tool) {
   const dimension = entity.dimension;
-  if (!reach(entity, job.x, job.y, job.z)) return "berjalan ke parit";
+  const step = workAt(entity, job);
+  if (step === BLOCKED) return stepAside(entity, plan, job, "parit tidak terjangkau");
+  if (step !== READY) return "berjalan ke parit";
 
   // Lantai parit dirapatkan dulu, kalau tidak airnya bocor ke bawah dan
   // seluruh baris petak di sebelahnya tidak pernah kebagian air.
@@ -335,7 +476,19 @@ function doDig(entity, plan, job, container, tool) {
   return undefined;
 }
 
-/** Air alami terdekat, untuk mengisi ember. */
+/**
+ * Air alami terdekat, untuk mengisi ember — dan selalu PERMUKAANNYA.
+ *
+ * Versi lama mengembalikan blok air pertama yang ditemuinya, termasuk yang
+ * tiga blok di bawah kaki: dasar danau. Satu-satunya tempat berdiri yang bisa
+ * menyentuh dasar danau adalah dasar danau itu sendiri, jadi petani berjalan
+ * masuk ke tengah danau untuk mengisi embernya, sampai ke dasarnya — dan dari
+ * sana tepiannya tiga blok di atas kepala. Dia tidak pernah keluar lagi, dan
+ * ladangnya berhenti dengan penggarapnya berdiri di bawah air.
+ *
+ * Sekarang kolomnya ditelusuri ke atas dulu sampai blok air paling atas.
+ * Permukaan bisa dicapai dari tepian, dan itu memang cara ember diisi.
+ */
 function waterNear(dimension, at, radius) {
   const bx = Math.floor(at.x);
   const by = Math.floor(at.y);
@@ -344,11 +497,16 @@ function waterNear(dimension, at, radius) {
     for (let dx = -r; dx <= r; dx++) {
       for (let dz = -r; dz <= r; dz++) {
         if (Math.max(Math.abs(dx), Math.abs(dz)) !== r) continue;
-        for (let dy = -3; dy <= 2; dy++) {
+        for (let dy = 2; dy >= -3; dy--) {
           const b = blockAt(dimension, bx + dx, by + dy, bz + dz);
-          if (b && WATER.has(b.typeId)) {
-            return { x: bx + dx, y: by + dy, z: bz + dz };
+          if (!b || !WATER.has(b.typeId)) continue;
+          let y = by + dy;
+          for (let up = 1; up <= 8; up++) {
+            const higher = blockAt(dimension, bx + dx, y + 1, bz + dz);
+            if (!higher || !WATER.has(higher.typeId)) break;
+            y += 1;
           }
+          return { x: bx + dx, y, z: bz + dz };
         }
       }
     }
@@ -361,7 +519,9 @@ function doPour(entity, state, plan, job, container, ownerId, station) {
   const dimension = entity.dimension;
 
   if (countIn(container, WATER_BUCKET) > 0) {
-    if (!reach(entity, job.x, job.y, job.z)) return "membawa ember ke parit";
+    const step = workAt(entity, job);
+    if (step === BLOCKED) return stepAside(entity, plan, job, "sumber parit tidak terjangkau");
+    if (step !== READY) return "membawa ember ke parit";
     const cell = blockAt(dimension, job.x, job.y, job.z);
     if (!cell || WATER.has(cell.typeId)) {
       plan.job = null;
@@ -414,7 +574,12 @@ function doPour(entity, state, plan, job, container, ownerId, station) {
     report(entity, "Tidak ada air di sekitar sini. Paritnya tidak bisa kuisi.");
     return "tidak ada sumber air, sumber parit dilewati";
   }
-  if (!reach(entity, river.x, river.y, river.z)) return "berjalan ke sungai membawa ember";
+  const trip = workAt(entity, river);
+  if (trip === BLOCKED) {
+    giveUp(entity, plan, job, "sumber airnya tidak bisa didatangi");
+    return "sungainya tidak bisa didatangi, sumber parit dilewati";
+  }
+  if (trip !== READY) return "berjalan ke sungai membawa ember";
   const source = blockAt(dimension, river.x, river.y, river.z);
   if (!source || !WATER.has(source.typeId)) return undefined;
   if (takeFrom(container, BUCKET, 1) !== 1) return undefined;
@@ -434,7 +599,9 @@ function doPour(entity, state, plan, job, container, ownerId, station) {
 /** Mencangkul satu petak jadi farmland. */
 function doTill(entity, plan, job, map) {
   const dimension = entity.dimension;
-  if (!reach(entity, job.x, job.y, job.z)) return "berjalan ke petak yang mau dicangkul";
+  const step = workAt(entity, job);
+  if (step === BLOCKED) return stepAside(entity, plan, job, "tidak terjangkau untuk dicangkul");
+  if (step !== READY) return "berjalan ke petak yang mau dicangkul";
   let tilled = 0;
 
   // Petak tetangga yang sudah siap ikut dicangkul selagi berdiri di sini —
@@ -479,7 +646,9 @@ function doPlant(entity, state, plan, job, map, container, ownerId, station) {
   const dimension = entity.dimension;
   const available = seedsIn(container);
   if (!available.length) return seedHunt(entity, state, ownerId, container, station);
-  if (!reach(entity, job.x, job.y - 1, job.z)) return "berjalan ke petak yang mau ditanami";
+  const step = workAt(entity, { x: job.x, y: job.y - 1, z: job.z });
+  if (step === BLOCKED) return stepAside(entity, plan, job, "tidak terjangkau untuk ditanami");
+  if (step !== READY) return "berjalan ke petak yang mau ditanami";
 
   let planted = 0;
   for (let dx = -1; dx <= 1 && planted < FARM.plantPerTick; dx++) {
@@ -597,7 +766,13 @@ function doHarvest(entity, state, container) {
     state.job = null;
     return undefined;
   }
-  if (!reach(entity, at.x, at.y, at.z)) return "menuju tanaman matang";
+  const step = reachBlock(entity, at);
+  if (step === BLOCKED) {
+    logDebug(TAG, `Tanaman matang di ${posStr(at)} tidak terjangkau; dilepas.`);
+    state.job = null;
+    return undefined;
+  }
+  if (step !== READY) return "menuju tanaman matang";
 
   if (!job.until) {
     job.until = system.currentTick + FARM.harvestTicks;
@@ -755,7 +930,7 @@ export function tickFarm(entity, state, owner) {
   // 5. Satu tugas dari antrean.
   let status;
   try {
-    status = runJob(entity, state, plan, map, container, ownerId, station);
+    status = runJob(entity, state, plan, map, area, container, ownerId, station);
   } catch (err) {
     logError(TAG, "Error saat mengerjakan tugas ladang", err);
     plan.job = null;
@@ -765,13 +940,19 @@ export function tickFarm(entity, state, owner) {
   return status;
 }
 
-function runJob(entity, state, plan, map, container, ownerId, station) {
+function runJob(entity, state, plan, map, area, container, ownerId, station) {
   const dimension = entity.dimension;
-  const skip = skipSet(plan);
+  const skip = skipSet(entity, plan);
 
   if (!plan.job) {
-    plan.job = nextJob(dimension, map, entity.location, container, skip) ?? null;
+    plan.job = nextJob(dimension, map, entity.location, container, skip,
+                       FARM.scanPerTick, plan.scan ?? 0) ?? null;
     plan.tries = 0;
+    // Sapuan yang pulang dengan tangan kosong menggeser jendelanya, supaya
+    // denyut berikutnya melihat petak yang lain. Tanpa ini sudut ladang yang
+    // jauh dari tempat petani berdiri tidak pernah diperiksa sama sekali.
+    const total = map.w * map.h;
+    plan.scan = plan.job ? 0 : (((plan.scan ?? 0) + FARM.scanPerTick) % total);
   }
   if (!plan.job) return finishPlot(entity, state, plan, map, container);
 
@@ -787,7 +968,10 @@ function runJob(entity, state, plan, map, container, ownerId, station) {
   const tool = getGear(entity).mainhand;
   let status;
   switch (job.kind) {
-    case JOB.level: status = doLevel(entity, plan, job, container, tool); break;
+    case JOB.level:
+      status = doLevel(entity, plan, job, map, area, container, tool);
+      break;
+    case JOB.borrow: status = doBorrow(entity, plan, job, container, tool); break;
     case JOB.dig: status = doDig(entity, plan, job, container, tool); break;
     case JOB.pour:
       status = doPour(entity, state, plan, job, container, ownerId, station);

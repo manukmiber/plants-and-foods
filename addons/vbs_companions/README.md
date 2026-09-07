@@ -295,30 +295,143 @@ ladang yang belum panen. Roti baru ditempa kalau memang tidak ada apa-apa.
 
 ---
 
+## Berjalan, dan menjangkau yang mau dikerjakan
+
+Rute companion dihitung dengan **A\*** di atas blok dunia (`path.js`): seluruh
+jalur sampai tujuan dihitung dulu, baru dijalani. Yang digantikannya adalah
+langkah rakus — "maju ke arah tujuan, kalau mentok coba sumbu lain" — yang tidak
+punya rencana, jadi pagar ladang buatan sendiri, tebing empat blok, atau danau
+kecil sudah cukup untuk menghentikannya.
+
+Tiga hal yang membuat rutenya masuk akal, bukan sekadar pendek:
+
+- **Air lebih mahal daripada tanah.** Companion memutari kolam kecil, tapi tetap
+  mau menyeberang kalau memutarinya berarti berjalan jauh lebih jauh.
+- **Memanjat butuh ruang di atas kepala**, dan dari **dalam air** boleh naik
+  lebih tinggi — itu berenang, bukan memanjat. Tanpa yang kedua, companion yang
+  terlanjur berada di dasar danau tidak punya satu pun langkah sah menuju tepian
+  yang tiga blok di atas kepalanya.
+- **Langkah lurus cadangan selalu kering.** Waktu pathfinding benar-benar tidak
+  menemukan jalur, companion tetap mencoba satu langkah lurus untuk keluar dari
+  sudut — tapi tidak pernah ke dalam air. Dibiarkan basah, jaring pengaman itu
+  berubah jadi jebakan: tujuan di seberang danau membuatnya berjalan lurus ke
+  tengahnya, turun ke dasar, dan tidak bisa memanjat keluar lagi.
+
+### Perjalanan yang boleh menyerah
+
+Perjalanan sekarang bisa **dinyatakan mustahil**, dan mode kerja bisa membacanya.
+Sebelum ini tidak ada satu pun jalan keluar dari tujuan yang tidak bisa dicapai:
+jalurnya habis di tempat lain, denyut berikutnya menghitung ulang jalur yang sama
+persis, selamanya. Yang terlihat pemain adalah companion berdiri diam sambil
+melaporkan dirinya sedang berjalan, dan catatan kejadian penuh baris seperti ini:
+
+```
+[VBS-WARN][UTIL] vbs:kohane@(-2778.5, 64.0, -1317.5) tidak maju 60 tick
+menuju -2779, 69, -1318; dianggap mentok.
+```
+
+Kaki di y=64, tujuan di y=69. Tiga hal sekarang mengakhiri perjalanan seperti itu:
+
+| Tanda | Artinya |
+|---|---|
+| Tidak ada jalur sama sekali | Tujuannya memang tidak tersambung ke tempat berdiri |
+| Jalur "paling mendekat" habis | Yang terbaik pun berakhir di tempat lain |
+| **Kursor jalur tidak maju-maju** | Kakinya bergerak, tapi petak jalurnya tidak pernah berganti |
+
+Yang ketiga yang paling lama tidak terlihat: petak terakhir jalur berada di atas
+teras setinggi tiga blok, companion berdiri tepat di bawahnya, dan "sampai" tidak
+pernah terpenuhi karena bedanya tegak. Yang terlihat pemain: companion bergoyang
+maju-mundur setengah blok di kaki tebing, jam demi jam.
+
+### Menjangkau blok, bukan berjalan ke dalamnya
+
+Mode kerja tidak lagi menyuruh companion **berjalan ke blok** yang mau
+dikerjakan (`work.js`). Blok yang mau dibongkar memang berisi sesuatu, dan bisa
+berada lima blok di udara — tidak ada lantai di situ. Yang dicari sekarang
+**tempat berdiri yang dari situ bloknya bisa disentuh**:
+
+- jangkauannya diukur dari **mata**, sejauh 4,2 blok, seperti pemain — jadi blok
+  setinggi dada dan blok tiga meter di atas kepala sama-sama bisa dibongkar tanpa
+  memanjat. Diukur dari kaki dengan ambang 2,8 blok seperti dulu, companion
+  menolak menyentuh apa pun yang lebih tinggi dari bahunya sendiri;
+- **kolom bloknya sendiri ikut dicoba**: berdiri di atas gundukan yang mau
+  dipangkas adalah cara pemain meratakan bukit;
+- petak **basah dihukum berat**. Air memenuhi semua syarat berpijak, jadi tanpa
+  itu tempat berdiri terdekat dari sebuah blok air adalah air itu sendiri — dan
+  petani yang cuma mau mengisi ember berjalan ke tengah danau lalu turun ke
+  dasarnya. Ember juga sekarang diisi di **permukaan** air, bukan di blok air
+  pertama yang kebetulan ditemukan (yang bisa saja dasar danau);
+- kalau memang tidak ada tempat berdiri di mana pun, jawabannya **BLOCKED**, dan
+  petak itu **dilewati sementara** — dua menit, lalu dicoba lagi. Bukan dicoret
+  permanen: "tidak terjangkau" hampir selalu keadaan sesaat, misalnya teras yang
+  belum dipangkas petani itu sendiri.
+
 ## Mode bertani, lengkapnya
 
 Mode ini yang paling banyak berubah. Urutan yang dikerjakan companion selalu sama,
 dan dia berhenti di langkah pertama yang belum beres — **alasannya selalu terbaca
 di baris "Sekarang" di menu utama**, jadi companion yang berdiri diam bukan misteri.
 
-Ladang dikerjakan sebagai **rangkaian fase yang tidak boleh dibalik**:
+Ladangnya **digambar dulu**, baru dikerjakan. Peta peran petak dibuat sekali
+(`farmplan.js`) — mana kolom parit, mana petak tanam, mana yang memang tidak
+bisa dipakai — lalu dari gambar itu diturunkan **antrean tugas yang masing-masing
+berdiri sendiri**:
 
-| Fase | Yang dikerjakan |
+| Tugas | Yang dikerjakan |
 |---|---|
-| **Meratakan** | Seluruh petak berpatok diturunkan/ditimbun ke satu ketinggian |
-| **Mengairi** | Parit digali utuh, ember dibuat dan diisi di sungai, air dituang |
-| **Mencangkul** | Hanya petak yang **sudah kebagian air** yang jadi farmland |
-| **Menanam** | Bibit ditanam berjalur |
-| **Merawat** | Panen, tanam ulang, perbaiki petak yang mengering, menghias |
+| **Ratakan** | Satu kolom: pangkas yang menonjol, atau timbun yang cekung |
+| **Gali tanah timbun** | Menggali tanah di pinggir ladang waktu petinya kosong |
+| **Gali parit** | Satu petak parit, lantainya ditambal supaya airnya tidak bocor |
+| **Tuang air** | Ember dibuat, diisi di permukaan sungai, dituang di sumber parit |
+| **Cangkul** | Hanya petak yang **sudah kebagian air** yang jadi farmland |
+| **Tanam** | Bibit ditanam berjalur |
+| **Panen** | Matang dipanen dan ditanam ulang seketika |
 
-Fase yang sedang berjalan ikut ditampilkan di menu utama (baris **Tahap**).
+Tugas yang sedang dipegang ikut ditampilkan di menu utama (baris **Tahap**).
 
-Urutan inilah inti perbaikannya. Versi sebelumnya mencampur semuanya dalam satu
-sapuan — tanah dicangkul lebih dulu di kolom mana pun yang kebetulan disentuh,
-paritnya baru digali belakangan — sehingga petak yang keburu jadi farmland tanpa
-air balik lagi jadi tanah biasa. Sekarang **tidak ada satu petak pun dicangkul
+Bedanya dengan mesin fase yang lama bukan kosmetik. Dulu fase berikutnya tidak
+boleh dimulai sebelum fase sekarang selesai **seluruhnya**, jadi satu kolom yang
+tidak bisa ditimbun atau satu pohon yang tidak bisa ditebang mengunci seluruh
+ladang — dan dari luar itu terlihat persis seperti companion yang berdiri diam.
+Sekarang tugas yang tidak bisa dikerjakan **dilewati**, sisanya jalan terus:
+ladang yang separuh petaknya batu tetap jadi ladang, cuma lebih kecil.
+
+Yang tetap tidak boleh dibalik cuma satu: **tidak ada satu petak pun dicangkul
 sebelum benar-benar ada air yang menjangkaunya**, dihitung persis seperti aturan
-Minecraft: air dalam empat blok mendatar, setinggi atau satu di atas farmland.
+Minecraft — air dalam empat blok mendatar, setinggi atau satu di atas farmland.
+
+### Meratakan: pangkas dulu, baru timbun
+
+Urutan di dalam "ratakan" juga bukan selera. **Memangkas menghasilkan tanah,
+menimbun menghabiskannya**, jadi seluruh pangkasan dikerjakan lebih dulu — kalau
+tidak, petani menemui petak cekung pertama selagi petinya masih kosong, dan
+ladangnya berakhir seperti saringan berlubang padahal tanah timbunnya ada di
+gundukan sebelah.
+
+Kalau petinya benar-benar kosong dan tidak ada gundukan tersisa, petani
+**menggali tanahnya sendiri** di pinggir ladang — di dalam patok, di luar petak
+yang sedang digarap, dan **tidak pernah lebih rendah dari permukaan ladang**.
+Menggali lubang untuk menambal lubang adalah pekerjaan yang tidak pernah selesai,
+dan lubang barunya berubah jadi jebakan yang membuat petani jatuh ke dalamnya
+tiap kali lewat.
+
+Kolom yang permukaannya **tidak bisa dicangkul** — batu, pasir, kerikil — tidak
+lagi dibiarkan belang: satu blok dibongkar, dan denyut berikutnya membaca
+kolomnya sebagai cekung lalu menimbunnya dengan tanah.
+
+### Pohon di atas ladang
+
+Pohon **ditebang dari pangkalnya**, karena cuma pangkalnya yang bisa dijangkau
+sambil berdiri di tanah. Sesudah satu batang patah, batang di atasnya **melorot
+satu blok** mengisi lubangnya sendiri — jadi ayunan berikutnya lagi-lagi
+mengenai pangkal, dan pohon setinggi tujuh blok benar-benar habis, satu batang
+satu ayunan. Pohon yang tumbuh **di atas gundukan** ikut melorot bersama tanah
+yang dipangkas sampai pangkalnya sejajar permukaan ladang.
+
+Daun yang menggantung lebih dari lima blok di atas ladang **dibiarkan**: itu sisa
+pohon yang batangnya sudah ditebang, dan daun tanpa batang gugur sendiri di
+Minecraft. Dikejar, petani cuma berjalan bolak-balik di bawahnya menuju tempat
+berdiri yang memang tidak ada.
 
 ### 1. Stasiun
 
